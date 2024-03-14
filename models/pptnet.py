@@ -31,7 +31,6 @@ class Network(nn.Module):
         if aggregation == 'spvlad':
             self.aggregation = lp.SpatialPyramidNetVLAD(
                 feature_size=param["FEATURE_SIZE"],         # 256,256,256,256
-                max_samples=param["MAX_SAMPLES"],           # 64,256,1024,4096
                 cluster_size=param["CLUSTER_SIZE"],         # 1,4,16,64
                 output_dim=param["OUTPUT_DIM"],             # 256,256,256,256
                 gating=param['GATING'],                     # True
@@ -50,7 +49,7 @@ class Network(nn.Module):
         x = self.aggregation(f0, f1, f2, f3)   # B x C0x64x1, BxC1x256, BxC2x1024, BxC3x4096 -> Bx256
         
         if return_feat:
-            return x, feature
+            return x, f0
         else:
             return x
 
