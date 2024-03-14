@@ -1,6 +1,17 @@
-## Pyramid Point Cloud Transformer for Large-Scale Place Recognition  
+# Hierarchical Octree Transformer
+
+Created using the codebase for the paper: 
+
+#### Pyramid Point Cloud Transformer for Large-Scale Place Recognition
 
 by Le Hui, Hang Yang, Mingmei Cheng, Jin Xie, and Jian Yang
+
+and
+
+#### OctFormer: Octree-based Transformers for 3D Point Clouds
+by Peng-Shuai Wang.
+
+README is currently a copy of PPT-Net README, but will be progressively updated in the future.
 
 ### Benchmark Datasets
 
@@ -13,6 +24,15 @@ We use the same benchmark datasets introduced in [PointNetVLAD](https://arxiv.or
   * business district (B.D.)
 
 ### Project Code
+
+### NEW ENVIRONMENT SETUP
+```
+conda create -n hot-net python=3.8
+conda activate hot-net
+conda install pytorch==1.12.1 torchvision torchaudio cudatoolkit=11.3 -c pytorch
+pip install -r requirements.txt
+pip install libs/dwconv
+```
 
 #### Pre-requisites
 
