@@ -1,0 +1,13 @@
+minkloc3dv2.txt, config_AboveUnder_baseline45m.txt, MinkLoc_20240229_0006_final
+[Beetaloo]
+AR@1%: 2.31, AR@1: 0.00
+[Karawatha]
+AR@1%: 68.99, AR@1: 33.10
+[QCAT]
+AR@1%: 78.99, AR@1: 63.77
+[Robson]
+AR@1%: 16.95, AR@1: 0.97
+[Samford]
+AR@1%: 94.14, AR@1: 54.95
+
+Mean AR@1%: 52.28, Mean AR@1: 30.56

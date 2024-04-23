@@ -132,7 +132,6 @@ dmypy.json
 .vscode/
 
 # Repo specific
-saved_model/
-pickle_data/
 slurm-*
-exp/
+wandb/
+weights/

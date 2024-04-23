@@ -1,0 +1,21 @@
+[DEFAULT]
+dataset_folder = /scratch2/kni101/MinkLoc3Dv2_pooling/data/MulRan
+
+[TRAIN]
+num_workers = 8
+batch_size = 1536
+batch_split_size = 3
+val_batch_size = 256
+
+lr = 1e-3
+epochs = 100
+scheduler_milestones = 40,80
+aug_mode = 1
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+
+dataset_name = MulRan
+skip_same_run = False
+train_file = MulRan_training.pickle
