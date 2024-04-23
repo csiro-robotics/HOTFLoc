@@ -34,6 +34,15 @@ pip install -r requirements.txt
 pip install libs/dwconv
 ```
 
+**HPC**:
+```
+module load python pytorch open3d
+virtualenv --system-site-packages <save_path>
+source <save_path>/bin/activate
+pip install -r requirements.txt
+pip install libs/dwconv
+```
+
 #### Pre-requisites
 
 ```

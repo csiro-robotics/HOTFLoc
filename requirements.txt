@@ -3,21 +3,22 @@ ocnn
 thsolver==1.1.4
 numpy
 tqdm
-yacs
+# yacs
 scipy
 plyfile
 tensorboard
 tensorboardX
-protobuf>=3.1.0,<=3.20.0
+# protobuf>=3.1.0,<=3.20.0
+protobuf
 scikit-learn
 scikit-image
-trimesh
+# trimesh
 wget
-cyminiball
+# cyminiball
 timm
 pandas
 pyyaml
 matplotlib
 thop
-open3d
-pickle5
+# open3d
+# pickle5
