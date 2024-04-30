@@ -34,6 +34,7 @@ class SPoC(nn.Module):
 
 
 class GeM(nn.Module):
+    # TODO: Make compatible with Octrees (ocnn.OctreeGlobalPool is useful)
     def __init__(self, input_dim, p=3, eps=1e-6):
         super(GeM, self).__init__()
         self.input_dim = input_dim

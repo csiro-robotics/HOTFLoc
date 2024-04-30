@@ -1,6 +1,9 @@
-from models.layers.pooling import MAC, SPoC, GeM, NetVLADWrapper
+from typing import Union
+
 import torch.nn as nn
 import MinkowskiEngine as ME
+
+from models.layers.pooling import MAC, SPoC, GeM, NetVLADWrapper
 
 
 class PoolingWrapper(nn.Module):
@@ -32,5 +35,6 @@ class PoolingWrapper(nn.Module):
         else:
             raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
 
+    # TODO: Make compatible with Octrees 
     def forward(self, x: ME.SparseTensor):
         return self.pooling(x)
