@@ -1,3 +1,3 @@
 #!/bin/bash
 module load python pytorch open3d
-export PYTHONPATH=$PYTHONPATH:$(pwd)
+export PYTHONPATH=$PYTHONPATH:'/scratch3/gri317/repos/HOT-Net'
