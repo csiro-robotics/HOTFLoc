@@ -92,7 +92,7 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
     embeddings_l = []
     with torch.set_grad_enabled(False):
         for minibatch in batch:
-            minibatch = {e: minibatch[e].to(device) for e in minibatch}
+            minibatch = {e: minibatch[e].to(device, non_blocking=True) for e in minibatch}
             y = model(minibatch)
             embeddings_l.append(y['global'])
 
@@ -120,7 +120,7 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
         i = 0
         with torch.set_grad_enabled(True):
             for minibatch in batch:
-                minibatch = {e: minibatch[e].to(device) for e in minibatch}
+                minibatch = {e: minibatch[e].to(device, non_blocking=True) for e in minibatch}
                 y = model(minibatch)
                 embeddings = y['global']
                 minibatch_size = len(embeddings)
@@ -203,7 +203,8 @@ def do_train(params: TrainingParams):
     params_dict = {e: params.__dict__[e] for e in params.__dict__ if e != 'model_params'}
     model_params_dict = {"model_params." + e: params.model_params.__dict__[e] for e in params.model_params.__dict__}
     params_dict.update(model_params_dict)
-    wandb.init(project='MinkLoc2', config=params_dict)
+    if not params.debug:
+        wandb.init(project='HOT-Net', config=params_dict)
 
     ###########################################################################
     #
@@ -281,13 +282,15 @@ def do_train(params: TrainingParams):
 
         # ******* FINALIZE THE EPOCH *******
 
-        wandb.log(metrics)
+        if not params.debug:
+            wandb.log(metrics)
 
         if scheduler is not None:
             scheduler.step()
-
-        if params.save_freq > 0 and epoch % params.save_freq == 0:
-            torch.save(model.state_dict(), model_pathname + "_" + str(epoch) + ".pth")
+        
+        if not params.debug:
+            if params.save_freq > 0 and epoch % params.save_freq == 0:
+                torch.save(model.state_dict(), model_pathname + "_" + str(epoch) + ".pth")
 
         if params.batch_expansion_th is not None:
             # Dynamic batch size expansion based on number of non-zero triplets
@@ -300,9 +303,10 @@ def do_train(params: TrainingParams):
     print('')
 
     # Save final model weights
-    final_model_path = model_pathname + '_final.pth'
-    print(f"Saving weights: {final_model_path}")
-    torch.save(model.state_dict(), final_model_path)
+    if not params.debug:
+        final_model_path = model_pathname + '_final.pth'
+        print(f"Saving weights: {final_model_path}")
+        torch.save(model.state_dict(), final_model_path)
 
     # Evaluate the final
     # PointNetVLAD datasets evaluation protocol
