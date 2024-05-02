@@ -20,8 +20,4 @@ class AboveUnderPointCloudLoader(PointCloudLoader):
         pc = np.asarray(pc_o3d.points, dtype=np.float64)
         pc = np.float32(pc)
         
-        if(pc.size != 4096*3):
-            print("Error in pointcloud shape")
-            return np.array([])
-        
         return pc

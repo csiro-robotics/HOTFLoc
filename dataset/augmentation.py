@@ -10,9 +10,12 @@ from torchvision import transforms as transforms
 class TrainSetTransform:
     def __init__(self, aug_mode):
         self.aug_mode = aug_mode
+        self.transform = None
         if self.aug_mode == 1:
             t = [RandomRotation(max_theta=5, axis=np.array([0, 0, 1])),
                  RandomFlip([0.25, 0.25, 0.])]
+        elif self.aug_mode == 0:    # No augmentations
+            return None
         else:
             raise NotImplementedError('Unknown aug_mode: {}'.format(self.aug_mode))
         self.transform = transforms.Compose(t)
@@ -174,4 +177,20 @@ class RemoveRandomBlock:
             x, y, w, h = self.get_params(coords)     # Fronto-parallel cuboid to remove
             mask = (x < coords[..., 0]) & (coords[..., 0] < x+w) & (y < coords[..., 1]) & (coords[..., 1] < y+h)
             coords[mask] = torch.zeros_like(coords[mask])
+        return coords
+
+class Normalize:
+    """
+    Normalize cloud to [-scale, scale] range.
+    """    
+    def __init__(self, scale: float=1.0):
+        assert scale > 0, 'Scale must be positive'
+        self.scale = scale
+
+    def __call__(self, coords):
+        bbmin = coords.min(dim=0).values
+        bbmax = coords.max(dim=0).values
+        center = (bbmin + bbmax) * 0.5
+        box_size = (bbmax - bbmin).max() + 1.0e-6
+        coords = (coords - center) * (2.0 * self.scale / box_size)
         return coords

@@ -1,8 +1,10 @@
 # Pooling methods code based on: https://github.com/filipradenovic/cnnimageretrieval-pytorch
 
 import torch
+import ocnn
 import torch.nn as nn
 import MinkowskiEngine as ME
+from ocnn.octree import Octree
 
 from models.layers.netvlad import NetVLADLoupe
 
@@ -34,7 +36,6 @@ class SPoC(nn.Module):
 
 
 class GeM(nn.Module):
-    # TODO: Make compatible with Octrees (ocnn.OctreeGlobalPool is useful)
     def __init__(self, input_dim, p=3, eps=1e-6):
         super(GeM, self).__init__()
         self.input_dim = input_dim
@@ -52,6 +53,26 @@ class GeM(nn.Module):
                                coordinate_map_key = x.coordinate_map_key)
         temp = self.f(temp)             # Apply ME.MinkowskiGlobalAvgPooling
         return temp.F.pow(1./self.p)    # Return (batch_size, n_features) tensor
+
+
+class OctGeM(nn.Module):
+    """
+    Octree compatible version of GeM pooling.
+    """
+    def __init__(self, input_dim, p=3, eps=1e-6):
+        super(OctGeM, self).__init__()
+        self.input_dim = input_dim
+        # Same output number of channels as input number of channels
+        self.output_dim = self.input_dim
+        self.p = nn.Parameter(torch.ones(1) * p)
+        self.eps = eps
+        self.f = ocnn.nn.OctreeGlobalPool(nempty=True)
+
+    def forward(self, x: torch.Tensor, octree: Octree, depth: int):
+        # This implicitly applies ReLU on x (clamps negative values)
+        temp = x.clamp(min=self.eps).pow(self.p)
+        temp = self.f(temp, octree, depth)  # Apply GlobalAvgPooling
+        return temp.pow(1./self.p)          # Return (batch_size, n_features) tensor
 
 
 class NetVLADWrapper(nn.Module):

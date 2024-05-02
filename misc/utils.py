@@ -40,23 +40,46 @@ class ModelParams:
         # Use cosine similarity instead of Euclidean distance
         # When Euclidean distance is used, embedding normalization is optional
         self.normalize_embeddings = params.getboolean('normalize_embeddings', False)
-
-        # Size of the local features from backbone network (only for MinkNet based models)
         self.feature_size = params.getint('feature_size', 256)
-        if 'planes' in params:
-            self.planes = tuple([int(e) for e in params['planes'].split(',')])
-        else:
-            self.planes = tuple([32, 64, 64])
-
-        if 'layers' in params:
-            self.layers = tuple([int(e) for e in params['layers'].split(',')])
-        else:
-            self.layers = tuple([1, 1, 1])
-
-        self.num_top_down = params.getint('num_top_down', 1)
-        self.conv0_kernel_size = params.getint('conv0_kernel_size', 5)
-        self.block = params.get('block', 'BasicBlock')
         self.pooling = params.get('pooling', 'GeM')
+        self.num_top_down = params.getint('num_top_down', 1)
+
+        if 'MinkLoc' in self.model:
+        #######################################################################
+        # MinkLoc params
+        #######################################################################
+            # Size of the local features from backbone network (only for MinkNet based models)
+            if 'planes' in params:
+                self.planes = tuple([int(e) for e in params['planes'].split(',')])
+            else:
+                self.planes = tuple([32, 64, 64])
+
+            if 'layers' in params:
+                self.layers = tuple([int(e) for e in params['layers'].split(',')])
+            else:
+                self.layers = tuple([1, 1, 1])
+
+            self.conv0_kernel_size = params.getint('conv0_kernel_size', 5)
+            self.block = params.get('block', 'BasicBlock')
+
+        elif 'OctFormer' in self.model:
+            #######################################################################
+            # OctFormer params
+            #######################################################################
+            if 'channels' in params:  # num channels per OctFormer stage
+                self.channels = tuple([int(e) for e in params['channels'].split(',')])
+            else:
+                self.channels = tuple([96, 192, 384, 384])
+            if 'num_blocks' in params:  # num OctFormer blocks per stage
+                self.num_blocks = tuple([int(e) for e in params['num_blocks'].split(',')])
+            else:
+                self.num_blocks = tuple([2, 2, 6, 2])  # default to OctFormer-small
+            if 'num_heads' in params:  # num attention heads per stage
+                self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
+            else:
+                self.num_heads = tuple([6, 12, 24, 24])
+            self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
+            self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)        
 
     def print(self):
         print('Model parameters:')
@@ -160,7 +183,9 @@ class TrainingParams:
         assert self.similarity in ['cosine', 'euclidean']
 
         self.aug_mode = params.getint('aug_mode', 1)    # Augmentation mode (1 is default)
-        self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode (1 is default)
+        self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode applied to all batch samples (1 is default)
+        self.normalize_points = params.getboolean('normalize_points', False)    # Normalize points to [-1, 1]
+        self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
         self.train_file = params.get('train_file')
         self.val_file = params.get('val_file', None)
         self.validation = params.getboolean('validation', True)
@@ -170,6 +195,10 @@ class TrainingParams:
 
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path)
+
+        # Check if using octrees
+        self.load_octree = 'OctFormer' in self.model_params.model     # load octrees instead of sparse tensor for OctFormer
+        
         self._check_params()
 
     def _check_params(self):

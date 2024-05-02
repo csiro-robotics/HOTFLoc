@@ -13,7 +13,7 @@ source ../../env-setup.sh
 source /scratch3/gri317/venvs/hot-net/bin/activate
 
 python generate_train_test_tuples.py \
-	--root '/datasets/work/mlai-fsp-st-div/source/above-under/processed_submaps/hotnet_clouds/rad30m/postproc_voxel_ds_0.80m' \
-	--radius_max '30' \
+	--root '/datasets/work/mlai-fsp-st-div/source/above-under/processed_submaps/hotnet_clouds/rad45m/postproc_voxel_ds_0.80m' \
+	--radius_max '45' \
 	--buffer_thresh '60' \
 	--v2_only \

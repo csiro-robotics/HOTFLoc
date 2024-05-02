@@ -14,31 +14,30 @@ import ocnn
 from models.layers.pooling_wrapper import PoolingWrapper
 
 
-class OctFormer(torch.nn.Module):
-    def __init__(self, backbone: nn.Module, pooling: PoolingWrapper, normalize_embeddings: bool = False):
+class OctFormerPR(torch.nn.Module):
+    def __init__(self, backbone: nn.Module, pooling: PoolingWrapper,
+                 normalize_embeddings: bool = False, input_features='P'):
         super().__init__()
         self.backbone = backbone
         self.pooling = pooling
         self.normalize_embeddings = normalize_embeddings
+        self.input_features = input_features
         self.stats = {}
         
     def get_input_feature(self, octree):
-        # TODO: switch flags to cfg, and check if just xyz can be used as InputFeature
-        flags = self.FLAGS.MODEL
-        octree_feature = ocnn.modules.InputFeature('', flags.nempty)
+        octree_feature = ocnn.modules.InputFeature(self.input_features, nempty=True)  # P for global position, D for local displacement (check docs)
         data = octree_feature(octree)
         return data
 
     def forward(self, batch):
-        # x = ME.SparseTensor(batch['features'], coordinates=batch['coords'])
         octree = batch['octree']
         data = self.get_input_feature(octree)
         
-        x = self.backbone(data=data, octree=octree, depth=octree.depth)
+        x, output_depth = self.backbone(data=data, octree=octree, depth=octree.depth)
         # x is (num_points, n_features) tensor
         assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
                                                   f'Expected: {self.pooling.in_dim}'
-        x = self.pooling(x)
+        x = self.pooling(x, octree=octree, depth=output_depth)
         if hasattr(self.pooling, 'stats'):
             self.stats.update(self.pooling.stats)
 
@@ -54,7 +53,7 @@ class OctFormer(torch.nn.Module):
         return {'global': x}
 
     def print_info(self):
-        print('Model class: Octformer')
+        print('Model class: OctFormer')
         n_params = sum([param.nelement() for param in self.parameters()])
         print(f'Total parameters: {n_params}')
         n_params = sum([param.nelement() for param in self.backbone.parameters()])

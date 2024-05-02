@@ -1,9 +1,10 @@
 from typing import Union
 
+import torch
 import torch.nn as nn
 import MinkowskiEngine as ME
 
-from models.layers.pooling import MAC, SPoC, GeM, NetVLADWrapper
+from models.layers.pooling import MAC, SPoC, GeM, OctGeM, NetVLADWrapper
 
 
 class PoolingWrapper(nn.Module):
@@ -26,6 +27,10 @@ class PoolingWrapper(nn.Module):
             # Generalized mean pooling
             assert in_dim == output_dim
             self.pooling = GeM(input_dim=in_dim)
+        elif pool_method == 'OctGeM':
+            # Generalized mean pooling
+            assert in_dim == output_dim
+            self.pooling = OctGeM(input_dim=in_dim)
         elif self.pool_method == 'netvlad':
             # NetVLAD
             self.pooling = NetVLADWrapper(feature_size=in_dim, output_dim=output_dim, gating=False)
@@ -35,6 +40,8 @@ class PoolingWrapper(nn.Module):
         else:
             raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
 
-    # TODO: Make compatible with Octrees 
-    def forward(self, x: ME.SparseTensor):
-        return self.pooling(x)
+    def forward(self, x: Union[ME.SparseTensor, torch.Tensor], octree=None, depth=None):
+        if octree is None:
+            return self.pooling(x)
+        else:
+            return self.pooling(x, octree, depth)

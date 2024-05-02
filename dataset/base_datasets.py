@@ -6,6 +6,8 @@ from typing import Dict
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+import ocnn
+from ocnn.octree import Octree, Points
 
 
 class TrainingTuple:
@@ -42,7 +44,8 @@ class EvaluationTuple:
 
 
 class TrainingDataset(Dataset):
-    def __init__(self, dataset_path, query_filename, transform=None, set_transform=None):
+    def __init__(self, dataset_path, query_filename, transform=None, set_transform=None,
+                 load_octree=False, octree_depth=11, full_depth=2):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
         self.dataset_path = dataset_path
@@ -50,6 +53,10 @@ class TrainingDataset(Dataset):
         assert os.path.exists(self.query_filepath), 'Cannot access query file: {}'.format(self.query_filepath)
         self.transform = transform
         self.set_transform = set_transform
+        self.load_octree = load_octree
+        self.octree_depth = octree_depth
+        self.full_depth = full_depth
+        
         self.queries: Dict[int, TrainingTuple] = pickle.load(open(self.query_filepath, 'rb'))
         print('{} queries in the dataset'.format(len(self)))
 
@@ -63,10 +70,18 @@ class TrainingDataset(Dataset):
         # Load point cloud and apply transform
         file_pathname = os.path.join(self.dataset_path, self.queries[ndx].rel_scan_filepath)
         query_pc = self.pc_loader(file_pathname)
-        query_pc = torch.tensor(query_pc, dtype=torch.float)
+        data = torch.tensor(query_pc, dtype=torch.float)
         if self.transform is not None:
-            query_pc = self.transform(query_pc)
-        return query_pc, ndx
+            data = self.transform(data)
+            assert data.abs().max() <= 1.0
+        if self.load_octree:
+            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+            data = torch.clamp(data, -1, 1)
+            # Convert to ocnn Points object, then create Octree
+            points = Points(data)
+            data = Octree(self.octree_depth, self.full_depth)
+            data.build_octree(points)
+        return data, ndx
 
     def get_positives(self, ndx):
         return self.queries[ndx].positives
