@@ -271,7 +271,7 @@ class OctFormerStage(torch.nn.Module):
 				 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
 				 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
 				 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
-				 use_checkpoint: bool = True, num_blocks: int = 2,  # TODO: COMPARE VRAM AND RUNTIME WITH CHECKPOINTING DISABLED
+				 use_checkpoint: bool = False, num_blocks: int = 2,  # TODO: COMPARE VRAM AND RUNTIME WITH CHECKPOINTING DISABLED
 				 octformer_block=OctFormerBlock, **kwargs):
 		super().__init__()
 		self.num_blocks = num_blocks
