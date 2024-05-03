@@ -14,7 +14,7 @@ import ocnn
 from models.layers.pooling_wrapper import PoolingWrapper
 
 
-class OctFormerPR(torch.nn.Module):
+class OctFormerLoc(torch.nn.Module):
     def __init__(self, backbone: nn.Module, pooling: PoolingWrapper,
                  normalize_embeddings: bool = False, input_features='P'):
         super().__init__()

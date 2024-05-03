@@ -3,7 +3,7 @@
 import torch.nn as nn
 
 from models.minkloc import MinkLoc
-from models.octformer_pr import OctFormerPR
+from models.octformerloc import OctFormerLoc
 from models.octformer_backbone import OctFormer
 from misc.utils import ModelParams
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
@@ -41,7 +41,7 @@ def model_factory(model_params: ModelParams):
                              num_top_down=model_params.num_top_down)
         pooling = PoolingWrapper(pool_method=model_params.pooling, in_dim=model_params.feature_size,
                                  output_dim=model_params.output_dim)
-        model = OctFormerPR(backbone=backbone, pooling=pooling, normalize_embeddings=model_params.normalize_embeddings,
+        model = OctFormerLoc(backbone=backbone, pooling=pooling, normalize_embeddings=model_params.normalize_embeddings,
                             input_features=model_params.input_features)
     else:
         raise NotImplementedError('Model not implemented: {}'.format(model_params.model))
