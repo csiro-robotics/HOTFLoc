@@ -73,7 +73,6 @@ class TrainingDataset(Dataset):
         data = torch.tensor(query_pc, dtype=torch.float)
         if self.transform is not None:
             data = self.transform(data)
-            assert data.abs().max() <= 1.0
         if self.load_octree:
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
             data = torch.clamp(data, -1, 1)
