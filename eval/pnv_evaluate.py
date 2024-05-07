@@ -12,11 +12,14 @@ import torch
 import MinkowskiEngine as ME
 import random
 import tqdm
+import ocnn
+from ocnn.octree import Octree, Points
 
 from models.model_factory import model_factory
 from misc.utils import TrainingParams
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
+from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
 
 def evaluate(model, device, params: TrainingParams, log: bool = False, show_progress: bool = False):
@@ -88,9 +91,10 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
 def get_latent_vectors(model, set, device, params: TrainingParams):
     # Adapted from original PointNetVLAD code
 
-    if params.debug:
-        embeddings = np.random.rand(len(set), 256)
-        return embeddings
+    ### NOTE: Disabled so that eval can be tested during training debug mode
+    # if params.debug:
+    #     embeddings = np.random.rand(len(set), 256)
+    #     return embeddings
 
     if params.dataset_name in ['Oxford','Campus3D']:
         pc_loader = PNVPointCloudLoader()
@@ -101,10 +105,20 @@ def get_latent_vectors(model, set, device, params: TrainingParams):
     embeddings = None
     for i, elem_ndx in enumerate(set):
         pc_file_path = os.path.join(params.dataset_folder, set[elem_ndx]["query"])
-        pc = pc_loader(pc_file_path)
-        pc = torch.tensor(pc)
+        data = pc_loader(pc_file_path)
+        data = torch.tensor(data)
+        if params.normalize_points:
+            data = Normalize(scale=0.95)(data)
+        if params.load_octree:  # Convert to Octree format
+            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+            data = torch.clamp(data, -1, 1)
+            # Convert to ocnn Points object, then create Octree
+            points = Points(data)
+            data = Octree(params.octree_depth, full_depth=2)
+            data.build_octree(points)
+            data.construct_all_neigh()
 
-        embedding = compute_embedding(model, pc, device, params)
+        embedding = compute_embedding(model, data, device, params)
         if embeddings is None:
             embeddings = np.zeros((len(set), embedding.shape[1]), dtype=embedding.dtype)
         embeddings[i] = embedding
@@ -112,13 +126,15 @@ def get_latent_vectors(model, set, device, params: TrainingParams):
     return embeddings
 
 
-def compute_embedding(model, pc, device, params: TrainingParams):
-    coords, _ = params.model_params.quantizer(pc)
-    with torch.no_grad():
+def compute_embedding(model, data, device, params: TrainingParams):
+    if params.load_octree:
+        batch = {'octree': data.to(device)}
+    else:
+        coords, _ = params.model_params.quantizer(data)
         bcoords = ME.utils.batched_coordinates([coords])
         feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32)
         batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
-
+    with torch.inference_mode():
         # Compute global descriptor
         y = model(batch)
         embedding = y['global'].detach().cpu().numpy()
