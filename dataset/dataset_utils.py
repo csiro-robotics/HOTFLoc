@@ -12,6 +12,7 @@ from dataset.base_datasets import EvaluationTuple, TrainingDataset
 from dataset.augmentation import TrainSetTransform
 from dataset.pointnetvlad.pnv_train import PNVTrainingDataset
 from dataset.pointnetvlad.pnv_train import TrainTransform as PNVTrainTransform
+from dataset.pointnetvlad.pnv_train import ValTransform as PNVValTransform
 from dataset.AboveUnder.AboveUnder_train import AboveUnderTrainingDataset
 from dataset.AboveUnder.AboveUnder_train import TrainTransform as AboveUnderTrainTransform
 from dataset.AboveUnder.AboveUnder_train import ValTransform as AboveUnderValTransform
@@ -52,7 +53,10 @@ def make_datasets(params: TrainingParams, validation: bool = True):
                                                transform=train_transform, set_transform=train_set_transform,
                                                load_octree=params.load_octree, octree_depth=params.octree_depth)
         if validation:
-            datasets['val'] = PNVTrainingDataset(params.dataset_folder, params.val_file)
+            val_transform = PNVValTransform(normalize_points=params.normalize_points)
+            datasets['val'] = PNVTrainingDataset(params.dataset_folder, params.val_file,
+                                                 transform=val_transform,
+                                                 load_octree=params.load_octree, octree_depth=params.octree_depth)
 
     return datasets
 
