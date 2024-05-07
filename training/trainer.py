@@ -316,12 +316,13 @@ def do_train(params: TrainingParams):
     print('.')
 
     # Append key experimental metrics to experiment summary file
-    model_params_name = os.path.split(params.model_params.model_params_path)[1]
-    config_name = os.path.split(params.params_path)[1]
-    model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
-    prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
+    if not params.debug:
+        model_params_name = os.path.split(params.model_params.model_params_path)[1]
+        config_name = os.path.split(params.params_path)[1]
+        model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
+        prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
-    pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)
+        pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)
 
 
 def create_weights_folder(dataset_name : str):
