@@ -32,7 +32,7 @@ class TrainTransform:
         elif self.aug_mode == 2:
             # Augmentations with random rotation around z-axis 
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
-                      RandomRotation(max_theta=5, axis=np.array([0, 0, 1])),
+                      RandomRotation(max_theta=180, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 0:    # No augmentations
             pass
