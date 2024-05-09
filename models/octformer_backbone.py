@@ -303,27 +303,38 @@ class OctFormerStage(torch.nn.Module):
 class PatchEmbed(torch.nn.Module):
 
 	def __init__(self, in_channels: int = 3, dim: int = 96, num_down: int = 2,
-				 nempty: bool = True, **kwargs):
+				 nempty: bool = True, downsample_input_embeddings: bool = True,
+     			 **kwargs):
 		super().__init__()
 		self.num_stages = num_down
 		self.delta_depth = -num_down
-		channels = [int(dim * 2**i) for i in range(-self.num_stages, 1)]
+		self.downsample_input_embeddings = downsample_input_embeddings
 
-		self.convs = torch.nn.ModuleList([ocnn.modules.OctreeConvBnRelu(
+		if self.downsample_input_embeddings:
+			channels = [int(dim * 2**i) for i in range(-self.num_stages, 1)]
+			self.convs = torch.nn.ModuleList([ocnn.modules.OctreeConvBnRelu(
 				in_channels if i == 0 else channels[i], channels[i], kernel_size=[3],
 				stride=1, nempty=nempty) for i in range(self.num_stages)])
-		self.downsamples = torch.nn.ModuleList([ocnn.modules.OctreeConvBnRelu(
+			self.downsamples = torch.nn.ModuleList([ocnn.modules.OctreeConvBnRelu(
 				channels[i], channels[i+1], kernel_size=[2], stride=2, nempty=nempty)
 				for i in range(self.num_stages)])
-		self.proj = ocnn.modules.OctreeConvBnRelu(
+			self.proj = ocnn.modules.OctreeConvBnRelu(
 				channels[-1], dim, kernel_size=[3], stride=1, nempty=nempty)
+		else:
+			self.convs = torch.nn.ModuleList([ocnn.modules.OctreeConvBnRelu(
+				in_channels if i == 0 else dim, dim, kernel_size=[3],
+				stride=1, nempty=nempty) for i in range(self.num_stages)])
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-		for i in range(self.num_stages):
-			depth_i = depth - i
-			data = self.convs[i](data, octree, depth_i)
-			data = self.downsamples[i](data, octree, depth_i)
-		data = self.proj(data, octree, depth_i - 1)
+		if self.downsample_input_embeddings:
+			for i in range(self.num_stages):
+				depth_i = depth - i
+				data = self.convs[i](data, octree, depth_i)
+				data = self.downsamples[i](data, octree, depth_i)
+			data = self.proj(data, octree, depth_i - 1)
+		else:
+			for i in range(self.num_stages):
+				data = self.convs[i](data, octree, depth)
 		return data
 
 
@@ -349,16 +360,18 @@ class OctFormerBase(torch.nn.Module):
 				 num_blocks: List[int] = [2, 2, 18, 2],
 				 num_heads: List[int] = [6, 12, 24, 24],
 				 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
-				 nempty: bool = True, stem_down: int = 2, **kwargs):
+				 nempty: bool = True, stem_down: int = 2,
+     			 downsample_input_embeddings: bool = True, **kwargs):
 		super().__init__()
 		self.patch_size = patch_size
 		self.dilation = dilation
 		self.nempty = nempty
 		self.num_stages = len(num_blocks)
 		self.stem_down = stem_down
+		self.downsample_input_embeddings = downsample_input_embeddings
 		drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
-		self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down, nempty)
+		self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down, nempty, downsample_input_embeddings)
 		self.layers = torch.nn.ModuleList([OctFormerStage(
 				dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
 				drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
@@ -370,7 +383,8 @@ class OctFormerBase(torch.nn.Module):
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
 		data = self.patch_embed(data, octree, depth)
-		depth = depth - self.stem_down   # current octree depth
+		if self.downsample_input_embeddings:
+			depth = depth - self.stem_down   # current octree depth
 		octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
 						 max_depth=depth, start_depth=depth-self.num_stages+1)
 		features = {}
@@ -423,11 +437,12 @@ class OctFormer(torch.nn.Module):
 				 num_heads: List[int] = [6, 12, 24, 24],
 				 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,  # NOTE: disable drop path to ensure multistage backprop is not affected? (might only be dropout that affects it)
 				 nempty: bool = True, stem_down: int = 2, num_top_down: int = 2,
-				 fpn_channel: int = 168, **kwargs):
+				 fpn_channel: int = 168,
+     			 downsample_input_embeddings: bool = True, **kwargs):
 		super().__init__()
 		self.backbone = OctFormerBase(
 				in_channels, channels, num_blocks, num_heads, patch_size, dilation,
-				drop_path, nempty, stem_down)
+				drop_path, nempty, stem_down, downsample_input_embeddings)
 		self.head = FPNHeader(
 				channels, fpn_channel, nempty, num_top_down)
 		self.apply(self.init_weights)

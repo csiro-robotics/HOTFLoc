@@ -1,11 +1,12 @@
 [MODEL]
-model=OctFormer
+model=OctFormerSmall
 channels=96,192,384,384
 num_blocks=2,2,6,2
 num_heads=6,12,24,24
 num_top_down=2
 patch_size=32
 input_features=P
+downsample_input_embeddings=False
 feature_size=256
 output_dim=256
 pooling=OctGeM

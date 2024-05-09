@@ -79,7 +79,8 @@ class ModelParams:
             else:
                 self.num_heads = tuple([6, 12, 24, 24])
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
-            self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)        
+            self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
+            self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
 
     def print(self):
         print('Model parameters:')
