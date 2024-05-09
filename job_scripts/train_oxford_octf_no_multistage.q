@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --time=1-00:00:00
-#SBATCH --mem=32gb
+#SBATCH --time=3-00:00:00
+#SBATCH --mem=300gb
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 
@@ -15,5 +15,5 @@ source /scratch3/gri317/venvs/hot-net/bin/activate
 
 cd training/
 python train.py \
-	--config '../config/config_baseline.txt' \
-	--model_config '../models/minkloc3dv2.txt' \
+	--config '../config/config_baseline_octf_no_multistage.txt' \
+	--model_config '../models/octformer_cfg.txt' \

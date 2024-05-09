@@ -3,8 +3,7 @@ dataset_folder = /datasets/work/mlai-fsp-st-div/source/above-under/pointnetvlad_
 
 [TRAIN]
 num_workers = 8
-batch_size = 2048
-batch_split_size = 512
+batch_size = 256
 val_batch_size = 256
 save_freq = 50
 
