@@ -305,5 +305,5 @@ if __name__ == "__main__":
     model_name = os.path.split(args.weights)[1]
     model_name = os.path.splitext(model_name)[0]
     prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
-    pnv_write_eval_stats(f"pnv_{params.dataset_name}_{model_name}_results.txt", prefix, stats)
+    pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)
 
