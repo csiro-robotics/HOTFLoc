@@ -29,7 +29,7 @@ def print_global_stats(phase, stats):
     if 'ap' in stats:
         s += f"AP: {stats['ap']:.4f}   "
 
-    print(s)
+    print(s, flush=True)
 
 
 def print_stats(phase, stats):
