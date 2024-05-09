@@ -246,11 +246,12 @@ def pnv_write_eval_stats(file_name, prefix, stats):
             ave_1p_recall_l.append(ave_1p_recall)
             ave_recall = stats[ds]['ave_recall'][0]
             ave_recall_l.append(ave_recall)
-            s += "AR@1%: {:0.2f}, AR@1: {:0.2f}".format(ave_1p_recall, ave_recall)
+            s += "AR@1%: {:0.2f}, AR@1: {:0.2f}, AR@N:\n".format(ave_1p_recall, ave_recall)
+            s += str(stats[ds]['ave_recall'])
 
         mean_1p_recall = np.mean(ave_1p_recall_l)
         mean_recall = np.mean(ave_recall_l)
-        s += "\n\nMean AR@1%: {:0.2f}, Mean AR@1: {:0.2f}\n".format(mean_1p_recall, mean_recall)
+        s += "\n\nMean AR@1%: {:0.2f}, Mean AR@1: {:0.2f}\n\n".format(mean_1p_recall, mean_recall)
         f.write(s)
 
 
