@@ -7,6 +7,7 @@ num_top_down=2
 patch_size=32
 input_features=P
 downsample_input_embeddings=False
+grad_checkpoint=True
 feature_size=256
 output_dim=256
 pooling=OctGeM

@@ -38,7 +38,8 @@ def model_factory(model_params: ModelParams):
         in_channels = get_in_channels(model_params.input_features)
         backbone = OctFormer(in_channels=in_channels, channels=model_params.channels, num_blocks=model_params.num_blocks,
                              num_heads=model_params.num_heads, patch_size=model_params.patch_size, fpn_channel=model_params.feature_size,
-                             num_top_down=model_params.num_top_down, downsample_input_embeddings=model_params.downsample_input_embeddings)
+                             num_top_down=model_params.num_top_down, downsample_input_embeddings=model_params.downsample_input_embeddings,
+                             grad_checkpoint=model_params.grad_checkpoint)
         pooling = PoolingWrapper(pool_method=model_params.pooling, in_dim=model_params.feature_size,
                                  output_dim=model_params.output_dim)
         model = OctFormerLoc(backbone=backbone, pooling=pooling, normalize_embeddings=model_params.normalize_embeddings,

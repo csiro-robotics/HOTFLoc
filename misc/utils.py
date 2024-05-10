@@ -81,6 +81,7 @@ class ModelParams:
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
+            self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
 
     def print(self):
         print('Model parameters:')
