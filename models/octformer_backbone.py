@@ -442,12 +442,12 @@ class OctFormer(torch.nn.Module):
 				 fpn_channel: int = 168, grad_checkpoint: bool = True,
      			 downsample_input_embeddings: bool = True, **kwargs):
 		super().__init__()
-		self.base = OctFormerBase(
+		self.backbone = OctFormerBase(
 			in_channels, channels, num_blocks, num_heads, patch_size, dilation,
 			drop_path, nempty, stem_down, grad_checkpoint,
 			downsample_input_embeddings,
 		)
-		self.fpn = FPNHeader(channels, fpn_channel, nempty, num_top_down)
+		self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down)
 		self.apply(self.init_weights)
 
 	def init_weights(self, m):
@@ -457,6 +457,6 @@ class OctFormer(torch.nn.Module):
 				torch.nn.init.constant_(m.bias, 0)
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-		features = self.base(data, octree, depth)
-		output, output_depth = self.fpn(features, octree)
+		features = self.backbone(data, octree, depth)
+		output, output_depth = self.head(features, octree)
 		return output, output_depth
