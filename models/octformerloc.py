@@ -57,9 +57,22 @@ class OctFormerLoc(torch.nn.Module):
         n_params = sum([param.nelement() for param in self.parameters()])
         print(f'Total parameters: {n_params}')
         n_params = sum([param.nelement() for param in self.backbone.parameters()])
-        print(f'Backbone: {type(self.backbone).__name__} #parameters: {n_params}')
+        # Backbone
+        print(f'Backbone: {type(self.backbone).__name__}\t#parameters: {n_params}')
+        base_model = self.backbone.base
+        n_params = sum([param.nelement() for param in base_model.patch_embed.parameters()])
+        print(f"  ConvEmbed:\t#parameters: {n_params}")
+        for i, stage in enumerate(base_model.layers):
+            n_params = sum([param.nelement() for param in stage.parameters()])
+            if i < base_model.num_stages - 1:  # add downsample params
+                n_params += sum([param.nelement() for param in base_model.downsamples[i].parameters()])
+            print(f"  Stage {i}:\t#parameters: {n_params}")
+        # FPN
+        n_params = sum([param.nelement() for param in self.backbone.fpn.parameters()])
+        print(f"  FPN:\t\t#parameters: {n_params}")        
+        # Pooling
         n_params = sum([param.nelement() for param in self.pooling.parameters()])
-        print(f'Pooling method: {self.pooling.pool_method}   #parameters: {n_params}')
+        print(f'Pooling method: {self.pooling.pool_method}\t#parameters: {n_params}')
         print('# channels from the backbone: {}'.format(self.pooling.in_dim))
         print('# output channels : {}'.format(self.pooling.output_dim))
         print(f'Embedding normalization: {self.normalize_embeddings}')
