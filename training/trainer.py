@@ -36,6 +36,15 @@ def print_stats(phase, stats):
     print_global_stats(phase, stats['global'])
 
 
+def log_eval_stats(stats):
+    eval_stats = {}
+    for database_name in stats:
+        eval_stats[database_name] = {}
+        eval_stats[database_name]['recall@1%'] = stats[database_name]['ave_one_percent_recall']
+        eval_stats[database_name]['recall@1'] = stats[database_name]['ave_recall'][0]
+    return eval_stats
+
+
 def tensors_to_numbers(stats):
     stats = {e: stats[e].item() if torch.is_tensor(stats[e]) else stats[e] for e in stats}
     return stats
@@ -221,7 +230,7 @@ def do_train(params: TrainingParams):
         phases = ['train']
 
     for epoch in tqdm.tqdm(range(1, params.epochs + 1)):
-        metrics = {'train': {}, 'val': {}}      # Metrics for wandb reporting
+        metrics = {'train': {}, 'val': {}, 'test': {}}      # Metrics for wandb reporting
 
         for phase in phases:
             running_stats = []  # running stats for the current epoch and phase
@@ -281,16 +290,20 @@ def do_train(params: TrainingParams):
 
 
         # ******* FINALIZE THE EPOCH *******
-
-        if not params.debug:
-            wandb.log(metrics)
-
         if scheduler is not None:
             scheduler.step()
         
         if not params.debug:
             if params.save_freq > 0 and epoch % params.save_freq == 0:
                 torch.save(model.state_dict(), model_pathname + "_" + str(epoch) + ".pth")
+
+        if params.eval_freq > 0 and epoch % params.eval_freq == 0:
+            eval_stats = evaluate(model, device, params, log=False)
+            print_eval_stats(eval_stats)
+            metrics['test'] = log_eval_stats(eval_stats)
+
+        if not params.debug:
+            wandb.log(metrics)
 
         if params.batch_expansion_th is not None:
             # Dynamic batch size expansion based on number of non-zero triplets
