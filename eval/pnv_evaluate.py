@@ -2,6 +2,7 @@
 
 # Evaluation using PointNetVLAD evaluation protocol and test sets
 # Evaluation code adapted from PointNetVlad code: https://github.com/mikacuy/pointnetvlad
+# Adapted to process samples in batches by Ethan Griffiths (QUT & CSIRO Data61).
 
 from sklearn.neighbors import KDTree
 import numpy as np
@@ -66,11 +67,11 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
 
     model.eval()
 
-    for set in tqdm.tqdm(database_sets, disable=not show_progress, desc='Computing database embeddings'):
-        database_embeddings.append(get_latent_vectors(model, set, device, params))
+    for data_set in tqdm.tqdm(database_sets, disable=not show_progress, desc='Computing database embeddings'):
+        database_embeddings.append(get_latent_vectors(model, data_set, device, params))
 
-    for set in tqdm.tqdm(query_sets, disable=not show_progress, desc='Computing query embeddings'):
-        query_embeddings.append(get_latent_vectors(model, set, device, params))
+    for data_set in tqdm.tqdm(query_sets, disable=not show_progress, desc='Computing query embeddings'):
+        query_embeddings.append(get_latent_vectors(model, data_set, device, params))
 
     for i in range(len(query_sets)):
         for j in range(len(query_sets)):
@@ -88,7 +89,21 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     return stats
 
 
-def get_latent_vectors(model, set, device, params: TrainingParams):
+def collate_batch(data, device, params: TrainingParams):
+    if params.load_octree:
+        octrees = ocnn.octree.merge_octrees(data)
+        # NOTE: remember to construct the neighbor indices
+        octrees.construct_all_neigh()
+        batch = {'octree': octrees.to(device)}
+    else:
+        coords = [params.model_params.quantizer(e)[0] for e in data]
+        bcoords = ME.utils.batched_coordinates(coords)
+        # Assign a dummy feature equal to 1 to each point
+        feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32)
+        batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
+    return batch
+
+def get_latent_vectors(model, data_set, device, params: TrainingParams):
     # Adapted from original PointNetVLAD code
 
     ### NOTE: Disabled so that eval can be tested during training debug mode
@@ -102,9 +117,12 @@ def get_latent_vectors(model, set, device, params: TrainingParams):
         pc_loader = AboveUnderPointCloudLoader()
 
     model.eval()
+    bs = params.val_batch_size
     embeddings = None
-    for i, elem_ndx in enumerate(set):
-        pc_file_path = os.path.join(params.dataset_folder, set[elem_ndx]["query"])
+    curr_batch = []
+    count_batches = 0
+    for i, elem_ndx in enumerate(data_set):        
+        pc_file_path = os.path.join(params.dataset_folder, data_set[elem_ndx]["query"])
         data = pc_loader(pc_file_path)
         data = torch.tensor(data)
         if params.normalize_points:
@@ -116,24 +134,21 @@ def get_latent_vectors(model, set, device, params: TrainingParams):
             points = Points(data)
             data = Octree(params.octree_depth, full_depth=2)
             data.build_octree(points)
-            data.construct_all_neigh()
-
-        embedding = compute_embedding(model, data, device, params)
-        if embeddings is None:
-            embeddings = np.zeros((len(set), embedding.shape[1]), dtype=embedding.dtype)
-        embeddings[i] = embedding
+        curr_batch.append(data)
+        
+        if len(curr_batch) >= bs or i == (len(data_set)-1):
+            batch = collate_batch(curr_batch, device, params)
+            embedding = compute_embedding(model, batch)
+            if embeddings is None:
+                embeddings = np.zeros((len(data_set), embedding.shape[1]), dtype=embedding.dtype)
+            embeddings[count_batches*bs:count_batches*bs+len(curr_batch)] = embedding
+            curr_batch = []
+            count_batches += 1
 
     return embeddings
 
 
-def compute_embedding(model, data, device, params: TrainingParams):
-    if params.load_octree:
-        batch = {'octree': data.to(device)}
-    else:
-        coords, _ = params.model_params.quantizer(data)
-        bcoords = ME.utils.batched_coordinates([coords])
-        feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32)
-        batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
+def compute_embedding(model, batch):
     with torch.inference_mode():
         # Compute global descriptor
         y = model(batch)
