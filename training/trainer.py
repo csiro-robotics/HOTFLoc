@@ -78,7 +78,7 @@ def training_step(global_iter, model, phase, device, optimizer, loss_fn):
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
-    return stats
+    return stats, embeddings[:10].detach().cpu()  # return first 10 embeddings for debugging
 
 
 def multistaged_training_step(global_iter, model, phase, device, optimizer, loss_fn):
@@ -142,8 +142,10 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
             optimizer.step()
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
-
-    return stats
+    if embeddings is not None:
+        return stats, embeddings[:10].detach().cpu()  # return first 10 embeddings for debugging
+    else:
+        return stats, embeddings
 
 
 def do_train(params: TrainingParams):
@@ -235,6 +237,7 @@ def do_train(params: TrainingParams):
         for phase in phases:
             running_stats = []  # running stats for the current epoch and phase
             count_batches = 0
+            epoch_embeddings = None
 
             if phase == 'train':
                 global_iter = iter(dataloaders['train'])
@@ -248,7 +251,7 @@ def do_train(params: TrainingParams):
                     break
 
                 try:
-                    temp_stats = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn)
+                    temp_stats, temp_embeddings = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn)
                     batch_stats['global'] = temp_stats
 
                 except StopIteration:
@@ -256,6 +259,8 @@ def do_train(params: TrainingParams):
                     break
 
                 running_stats.append(batch_stats)
+                if count_batches == 1 and phase == 'train':  # log embeddings once per epoch
+                    epoch_embeddings = temp_embeddings                    
 
             # Compute mean stats for the phase
             epoch_stats = {}
@@ -288,6 +293,8 @@ def do_train(params: TrainingParams):
             if 'ap' in epoch_stats['global']:
                 metrics[phase]['AP'] = epoch_stats['global']['ap']
 
+            if epoch_embeddings is not None:
+                metrics[phase]['embeddings'] = wandb.Table(data=epoch_embeddings.numpy(), columns=[f'D{i}' for i in range(256)])
 
         # ******* FINALIZE THE EPOCH *******
         if scheduler is not None:
