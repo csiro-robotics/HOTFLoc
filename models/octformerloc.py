@@ -70,7 +70,7 @@ class OctFormerLoc(torch.nn.Module):
             print(f"  Stage {i}:\t#parameters: {n_params}")
         # FPN
         n_params = sum([param.nelement() for param in self.backbone.head.parameters()])
-        print(f"  FPN:\t\t#parameters: {n_params}")        
+        print(f"  FPN:\t#parameters: {n_params}")        
         # Pooling
         n_params = sum([param.nelement() for param in self.pooling.parameters()])
         print(f'Pooling method: {self.pooling.pool_method}\t#parameters: {n_params}')
