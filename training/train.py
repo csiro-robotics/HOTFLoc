@@ -5,7 +5,7 @@ import argparse
 import torch
 
 from training.trainer import do_train
-from misc.utils import TrainingParams
+from misc.utils import TrainingParams, set_seed
 
 
 if __name__ == '__main__':
@@ -20,6 +20,9 @@ if __name__ == '__main__':
     print('Model config path: {}'.format(args.model_config))
     print('Debug mode: {}'.format(args.debug))
 
+    set_seed()  # Seed RNG
+    print('Determinism: Enabled')
+    
     params = TrainingParams(args.config, args.model_config, debug=args.debug)
     params.print()
 

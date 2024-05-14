@@ -17,7 +17,7 @@ import ocnn
 from ocnn.octree import Octree, Points
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams
+from misc.utils import TrainingParams, set_seed
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
@@ -293,6 +293,9 @@ if __name__ == "__main__":
     print('Debug mode: {}'.format(args.debug))
     print('Log search results: {}'.format(args.log))
     print('')
+
+    set_seed()  # Seed RNG
+    print('Determinism: Enabled')
 
     params = TrainingParams(args.config, args.model_config, debug=args.debug)
     params.print()

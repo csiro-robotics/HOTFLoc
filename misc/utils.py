@@ -3,6 +3,8 @@
 import os
 import configparser
 import time
+import random
+import torch
 import numpy as np
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
@@ -102,6 +104,18 @@ class ModelParams:
 def get_datetime():
     return time.strftime("%Y%m%d_%H%M")
 
+
+def set_seed(seed: int = 42):
+    """
+    Enable (mostly) deterministic behaviour in PyTorch.
+    """
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    random.seed(seed)
+    
 
 class TrainingParams:
     """
