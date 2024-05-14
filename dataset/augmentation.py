@@ -12,7 +12,7 @@ class TrainSetTransform:
         self.aug_mode = aug_mode
         self.transform = None
         if self.aug_mode == 1:
-            t = [RandomRotation(max_theta=180, axis=np.array([0, 0, 1])),
+            t = [RandomRotation(max_theta=5, axis=np.array([0, 0, 1])),
                  RandomFlip([0.25, 0.25, 0.])]
         elif self.aug_mode == 0:    # No augmentations
             return None
