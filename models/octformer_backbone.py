@@ -245,11 +245,13 @@ class OctFormerBlock(torch.nn.Module):
 				 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
 				 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
 				 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
-				 activation: torch.nn.Module = torch.nn.GELU, **kwargs):
+				 activation: torch.nn.Module = torch.nn.GELU,
+     			 disable_RPE: bool = False, **kwargs):
 		super().__init__()
 		self.norm1 = torch.nn.LayerNorm(dim)
 		self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
-										 qk_scale, attn_drop, proj_drop, dilation)
+										 qk_scale, attn_drop, proj_drop, dilation,
+           								 use_rpe=(not disable_RPE))
 		self.norm2 = torch.nn.LayerNorm(dim)
 		self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
 		self.drop_path = ocnn.nn.OctreeDropPath(drop_path, nempty)
@@ -271,8 +273,8 @@ class OctFormerStage(torch.nn.Module):
 				 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
 				 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
 				 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
-				 grad_checkpoint: bool = True, num_blocks: int = 2,
-				 octformer_block=OctFormerBlock, **kwargs):
+				 disable_RPE: bool = False, grad_checkpoint: bool = True,
+     			 num_blocks: int = 2, octformer_block=OctFormerBlock, **kwargs):
 		super().__init__()
 		self.num_blocks = num_blocks
 		self.grad_checkpoint = grad_checkpoint
@@ -285,7 +287,8 @@ class OctFormerStage(torch.nn.Module):
 				mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
 				attn_drop=attn_drop, proj_drop=proj_drop,
 				drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-				nempty=nempty, activation=activation) for i in range(num_blocks)])
+				nempty=nempty, activation=activation,
+    			disable_RPE=disable_RPE) for i in range(num_blocks)])
 		# self.norms = torch.nn.ModuleList([
 		#     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
 
@@ -362,7 +365,8 @@ class OctFormerBase(torch.nn.Module):
 				 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
 				 nempty: bool = True, stem_down: int = 2,
          		 grad_checkpoint: bool = True, 
-     			 downsample_input_embeddings: bool = True, **kwargs):
+     			 downsample_input_embeddings: bool = True,
+         		 disable_RPE: bool = False, **kwargs):
 		super().__init__()
 		self.patch_size = patch_size
 		self.dilation = dilation
@@ -376,7 +380,7 @@ class OctFormerBase(torch.nn.Module):
 		self.layers = torch.nn.ModuleList([OctFormerStage(
 				dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
 				drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
-				dilation=dilation, nempty=nempty,
+				dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
     			grad_checkpoint=grad_checkpoint, num_blocks=num_blocks[i],)
 				for i in range(self.num_stages)])
 		self.downsamples = torch.nn.ModuleList([Downsample(
@@ -440,12 +444,13 @@ class OctFormer(torch.nn.Module):
 				 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,  # NOTE: disable drop path to ensure multistage backprop is not affected? (might only be dropout that affects it)
 				 nempty: bool = True, stem_down: int = 2, num_top_down: int = 2,
 				 fpn_channel: int = 168, grad_checkpoint: bool = True,
-     			 downsample_input_embeddings: bool = True, **kwargs):
+     			 downsample_input_embeddings: bool = True,
+         		 disable_RPE: bool = False, **kwargs):
 		super().__init__()
 		self.backbone = OctFormerBase(
 			in_channels, channels, num_blocks, num_heads, patch_size, dilation,
 			drop_path, nempty, stem_down, grad_checkpoint,
-			downsample_input_embeddings,
+			downsample_input_embeddings, disable_RPE,
 		)
 		self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down)
 		self.apply(self.init_weights)
