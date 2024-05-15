@@ -9,7 +9,7 @@ val_batch_size = 256
 save_freq = 25
 eval_freq = 25
 
-lr = 1e-2
+lr = 1e-3
 epochs = 400
 scheduler = CosineAnnealingLR
 min_lr = 1e-6
