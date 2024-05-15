@@ -81,6 +81,7 @@ class ModelParams:
             else:
                 self.num_heads = tuple([6, 12, 24, 24])
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
+            self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
             self.disable_RPE = params.getboolean('disable_RPE', False)
