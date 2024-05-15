@@ -8,6 +8,9 @@ import torch
 import tqdm
 import pathlib
 import wandb
+import wandb_osh
+from wandb_osh.hooks import TriggerWandbSyncHook
+wandb_osh.set_log_level("ERROR")
 
 from misc.utils import TrainingParams, get_datetime
 from models.losses.loss import make_losses
@@ -215,6 +218,7 @@ def do_train(params: TrainingParams):
     model_params_dict = {"model_params." + e: params.model_params.__dict__[e] for e in params.model_params.__dict__}
     params_dict.update(model_params_dict)
     if not params.debug:
+        trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
         wandb.init(project='HOT-Net', config=params_dict)
         # wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
 
@@ -315,6 +319,7 @@ def do_train(params: TrainingParams):
 
         if not params.debug:
             wandb.log(metrics)
+            trigger_sync()
 
         if params.batch_expansion_th is not None:
             # Dynamic batch size expansion based on number of non-zero triplets
