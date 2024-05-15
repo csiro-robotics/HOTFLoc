@@ -15,5 +15,5 @@ source /scratch3/gri317/venvs/hot-net/bin/activate
 
 cd training/
 python train.py \
-	--config '../config/config_baseline_octf_lr1e-2.txt' \
-	--model_config '../models/octformer_cfg.txt' \
+	--config '../config/config_baseline_octf_depth5.txt' \
+	--model_config '../models/octformer_light_cfg.txt' \

@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --time=3-00:00:00
-#SBATCH --mem=300gb
+#SBATCH --time=7-00:00:00
+#SBATCH --mem=32gb
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
 #SBATCH --ntasks-per-node=1
