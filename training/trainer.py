@@ -200,7 +200,9 @@ def do_train(params: TrainingParams):
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=params.epochs+1,
                                                                    eta_min=params.min_lr)
         elif params.scheduler == 'MultiStepLR':
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, params.scheduler_milestones, gamma=0.1)
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, params.scheduler_milestones, gamma=params.gamma)
+        elif params.scheduler == 'ExponentialLR':
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=params.gamma)
         else:
             raise NotImplementedError('Unsupported LR scheduler: {}'.format(params.scheduler))
 

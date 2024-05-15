@@ -177,11 +177,14 @@ class TrainingParams:
             if self.scheduler == 'CosineAnnealingLR':
                 self.min_lr = params.getfloat('min_lr')
             elif self.scheduler == 'MultiStepLR':
+                self.gamma = params.getfloat('gamma', 0.1)
                 if 'scheduler_milestones' in params:
                     scheduler_milestones = params.get('scheduler_milestones')
                     self.scheduler_milestones = [int(e) for e in scheduler_milestones.split(',')]
                 else:
-                    self.scheduler_milestones = [self.epochs+1]
+                    self.scheduler_milestones = [self.epochs+1]            
+            elif self.scheduler == 'ExponentialLR':
+                self.gamma = params.getfloat('gamma', 0.5)
             else:
                 raise NotImplementedError('Unsupported LR scheduler: {}'.format(self.scheduler))
 
