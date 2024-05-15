@@ -144,6 +144,8 @@ class TrainingParams:
         params = config['TRAIN']
         self.save_freq = params.getint('save_freq', 0)          # Model saving frequency (in epochs)
         self.eval_freq = params.getint('eval_freq', 0)          # Model eval frequency (in epochs)
+        self.embeddings_log_freq = params.getint('embeddings_log_freq', 5)  # Embeddings logging frequency (in epochs)
+        self.num_embeddings_logged = params.getint('num_embeddings_logged', 20)  # Number of embeddings to log at each epoch
         self.num_workers = params.getint('num_workers', 0)
 
         # Initial batch size for global descriptors (for both main and secondary dataset)

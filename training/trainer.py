@@ -3,6 +3,7 @@
 
 import os
 import numpy as np
+import pandas as pd
 import torch
 import tqdm
 import pathlib
@@ -50,7 +51,7 @@ def tensors_to_numbers(stats):
     return stats
 
 
-def training_step(global_iter, model, phase, device, optimizer, loss_fn):
+def training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged):
     assert phase in ['train', 'val']
 
     batch, positives_mask, negatives_mask = next(global_iter)
@@ -78,10 +79,10 @@ def training_step(global_iter, model, phase, device, optimizer, loss_fn):
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
-    return stats, embeddings[:10].detach().cpu()  # return first 10 embeddings for debugging
+    return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
 
 
-def multistaged_training_step(global_iter, model, phase, device, optimizer, loss_fn):
+def multistaged_training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged):
     # Training step using multistaged backpropagation algorithm as per:
     # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
     # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
@@ -143,14 +144,13 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
     if embeddings is not None:
-        return stats, embeddings[:10].detach().cpu()  # return first 10 embeddings for debugging
+        return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
     else:
         return stats, embeddings
 
 
 def do_train(params: TrainingParams):
     # Create model class
-
     s = get_datetime()
     model = model_factory(params.model_params)
     model_name = params.model_params.model + '_' + s
@@ -216,6 +216,7 @@ def do_train(params: TrainingParams):
     params_dict.update(model_params_dict)
     if not params.debug:
         wandb.init(project='HOT-Net', config=params_dict)
+        # wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
 
     ###########################################################################
     #
@@ -251,7 +252,7 @@ def do_train(params: TrainingParams):
                     break
 
                 try:
-                    temp_stats, temp_embeddings = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn)
+                    temp_stats, temp_embeddings = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn, params.num_embeddings_logged)
                     batch_stats['global'] = temp_stats
 
                 except StopIteration:
@@ -259,8 +260,9 @@ def do_train(params: TrainingParams):
                     break
 
                 running_stats.append(batch_stats)
-                if count_batches == 1 and phase == 'train':  # log embeddings once per epoch
-                    epoch_embeddings = temp_embeddings                    
+                if (epoch % params.embeddings_log_freq == 0
+                    and count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
+                    epoch_embeddings = temp_embeddings
 
             # Compute mean stats for the phase
             epoch_stats = {}
@@ -293,8 +295,10 @@ def do_train(params: TrainingParams):
             if 'ap' in epoch_stats['global']:
                 metrics[phase]['AP'] = epoch_stats['global']['ap']
 
-            if epoch_embeddings is not None:
-                metrics[phase]['embeddings'] = wandb.Table(data=epoch_embeddings.numpy(), columns=[f'D{i}' for i in range(256)])
+            # TODO: currently broken, need to debug why wandb isn't logging correctly
+            # if epoch_embeddings is not None:
+            #     embeddings_dataframe = pd.DataFrame(epoch_embeddings, columns=[f'D{i}' for i in range(256)])
+            #     metrics['embeddings'] = wandb.Table(dataframe=embeddings_dataframe)
 
         # ******* FINALIZE THE EPOCH *******
         if scheduler is not None:
