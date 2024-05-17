@@ -25,43 +25,6 @@ from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
 
-""" OLD CODE """
-    # query_details = query_sets[0][0]
-    # query_path = query_details['query']
-    # positives_paths = []
-    # # negatives_paths = []
-    # all_positives = {i: set() for i in range(len(query_sets))}
-    # all_positives[0].add(0)  # add query
-    # for idx, data_set in enumerate(query_sets):
-    #     if idx in query_details:
-    #         all_positives[idx].update(query_details[idx])
-    #         for positive_idx in query_details[idx]:
-    #             positives_paths.append(data_set[positive_idx]['query'])
-                
-    # TODO: Don't explicitly sample negatives, instead use other query groups 
-    # NUM_NEGATIVES = len(positives_paths)
-    # for _ in range(NUM_NEGATIVES):
-    #     idx = random.randint(1,len(database_sets)-1)
-    #     while True:  # loop until valid negative is chosen
-    #         negative_path = random.choice(database_sets[idx])['query']
-    #         # TODO: Redo this
-    #         if negative_path not in all_positives[idx]:
-    #             negatives_paths.append(negative_path)
-    #             break
-
-    # TODO: Check that first query is valid, otherwise select one with fixed idx in the middle
-
-    # TODO: Generate embeddings for query, pos, and neg
-    # embeddings = get_latent_vectors(model, [query_path, *positives_paths, *negatives_paths], device, params)
-    # query_embeddings = embeddings[0]
-    # positives_embeddings = embeddings[1:len(positives_paths)+1]
-    # negatives_embeddings = embeddings[len(positives_paths)+1:]
-    # colours = [0, *[1]*len(positives_paths), *[2]*len(negatives_paths)]
-    
-    # query_embeddings = get_latent_vectors(model, [query_path], device, params)
-    # positives_embeddings = get_latent_vectors(model, positives_paths, device, params)
-    # negatives_embeddings = get_latent_vectors(model, negatives_paths, device, params)
-""" END OLD CODE"""
 
 def query_distance(query, query_list: list[dict]) -> float:
     """
