@@ -9,9 +9,10 @@ val_batch_size = 256
 save_freq = 25
 eval_freq = 25
 
-lr = 1e-3
+lr = 3e-4
 epochs = 150
-scheduler = ExponentialLR
+scheduler = CosineAnnealingLR
+min_lr = 1e-6
 aug_mode = 2
 set_aug_mode = 0
 normalize_points = False

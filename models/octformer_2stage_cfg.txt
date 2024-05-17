@@ -1,7 +1,7 @@
 [MODEL]
-model=OctFormer2Stage
+model=OctFormer2StageBigger
 channels=64,128
-num_blocks=2,6
+num_blocks=6,6
 num_heads=4,8
 num_top_down=1
 patch_size=32

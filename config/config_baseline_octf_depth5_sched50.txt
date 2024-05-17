@@ -10,8 +10,8 @@ save_freq = 25
 eval_freq = 25
 
 lr = 1e-3
-epochs = 250
-scheduler_milestones = 50, 150
+epochs = 150
+scheduler_milestones = 50, 100
 aug_mode = 2
 set_aug_mode = 0
 normalize_points = False

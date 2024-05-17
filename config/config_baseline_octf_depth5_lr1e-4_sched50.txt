@@ -7,7 +7,7 @@ batch_size = 2048
 batch_split_size = 128
 val_batch_size = 256
 save_freq = 25
-eval_freq = 25
+eval_freq = 10
 
 lr = 1e-4
 epochs = 150

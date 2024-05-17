@@ -1,5 +1,5 @@
 [MODEL]
-model=OctFormerSmall
+model=OctFormerSmallDS
 channels=96,192,384,384
 num_blocks=2,2,6,2
 num_heads=6,12,24,24

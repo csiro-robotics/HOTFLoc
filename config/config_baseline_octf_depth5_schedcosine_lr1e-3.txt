@@ -10,7 +10,7 @@ save_freq = 25
 eval_freq = 25
 
 lr = 1e-3
-epochs = 400
+epochs = 150
 scheduler = CosineAnnealingLR
 min_lr = 1e-6
 aug_mode = 2
