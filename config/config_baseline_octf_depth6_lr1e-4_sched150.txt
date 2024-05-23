@@ -11,11 +11,11 @@ eval_freq = 10
 
 lr = 1e-4
 epochs = 400
-scheduler_milestones = 250, 350
+scheduler_milestones = 150, 250
 aug_mode = 2
 set_aug_mode = 0
 normalize_points = False
-octree_depth = 5
+octree_depth = 6
 weight_decay = 1e-4
 loss = TruncatedSmoothAP
 tau1 = 0.01

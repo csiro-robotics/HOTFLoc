@@ -3,8 +3,7 @@ dataset_folder = /datasets/work/mlai-fsp-st-div/source/above-under/pointnetvlad_
 
 [TRAIN]
 num_workers = 4
-batch_size = 2048
-batch_split_size = 128
+batch_size = 32
 val_batch_size = 256
 save_freq = 25
 eval_freq = 10
@@ -15,11 +14,10 @@ scheduler_milestones = 250, 350
 aug_mode = 2
 set_aug_mode = 0
 normalize_points = False
-octree_depth = 5
+octree_depth = 6
 weight_decay = 1e-4
-loss = TruncatedSmoothAP
-tau1 = 0.01
-positives_per_query = 4
+loss = BatchHardTripletMarginLoss
+margin = 0.2
 
 dataset_name = Oxford
 skip_same_run = True
