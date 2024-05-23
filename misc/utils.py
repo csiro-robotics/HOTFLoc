@@ -6,6 +6,7 @@ import time
 import random
 import torch
 import numpy as np
+from ocnn.octree import Octree, Points
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
 
@@ -84,7 +85,9 @@ class ModelParams:
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
+            self.num_input_downsamples = params.getint('num_input_downsamples', 2)  # number of downsampling stages in ConvEmbed
             self.disable_RPE = params.getboolean('disable_RPE', False)
+            self.swap_batchnorm = params.getboolean('swap_batchnorm', False)  # swap all batchnorm for layernorm
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
 
     def print(self):
@@ -118,6 +121,20 @@ def set_seed(seed: int = 42):
     np.random.seed(seed)
     random.seed(seed)
     
+
+def octree_to_points(octree: Octree) -> torch.Tensor:
+    ''' Converts averaged points in the octree to a point cloud.
+
+    Args:
+        octree (Octree): The octree to convert to a point cloud.
+    '''
+    depth = octree.depth
+
+    # normalize xyz to [-1, 1] since the average points are in range [0, 2^d]
+    scale = 2 ** (1 - depth)
+    xyz = octree.points[depth] * scale - 1.0
+    
+    return xyz
 
 class TrainingParams:
     """
