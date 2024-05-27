@@ -14,7 +14,23 @@ import dwconv
 from ocnn.octree import Octree
 from typing import Optional, List, Dict
 from torch.utils.checkpoint import checkpoint
+from models.layers.mask_powernorm import MaskPowerNorm
 
+
+def get_norm_layer(channels: int, norm_type: str = 'batchnorm'):
+	"""
+	Return the desired normalisation layer.
+	"""
+	norm_type = norm_type.lower()
+	if norm_type == 'batchnorm':
+		norm_layer = torch.nn.BatchNorm1d(channels)
+	elif norm_type == 'layernorm':
+		norm_layer = torch.nn.LayerNorm(channels)
+	elif norm_type == 'powernorm':
+		norm_layer = MaskPowerNorm(channels)
+	else:
+		raise ValueError("Norm type must be either 'batchnorm' or 'layernorm'")
+	return norm_layer
 
 class OctreeT(Octree):
 
@@ -117,16 +133,11 @@ class MLP(torch.nn.Module):
 class OctreeDWConvNorm(torch.nn.Module):
 
 	def __init__(self, in_channels: int, kernel_size: List[int] = [3],
-				 stride: int = 1, nempty: bool = False, norm: str = 'batchnorm'):
+				 stride: int = 1, nempty: bool = False, conv_norm: str = 'batchnorm'):
 		super().__init__()
 		self.conv = dwconv.OctreeDWConv(
 			in_channels, kernel_size, nempty, use_bias=False)
-		if norm.lower() == 'batchnorm':
-			self.norm = torch.nn.BatchNorm1d(in_channels)
-		elif norm.lower() == 'layernorm':
-			self.norm = torch.nn.LayerNorm(in_channels)
-		else:
-			raise ValueError("Norm type must be either 'batchnorm' or 'layernorm'")
+		self.norm = get_norm_layer(in_channels, conv_norm)
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
 		out = self.conv(data, octree, depth)
@@ -141,16 +152,11 @@ class OctreeConvNormRelu(torch.nn.Module):
 
 	def __init__(self, in_channels: int, out_channels: int,
                  kernel_size: List[int] = [3], stride: int = 1,
-                 nempty: bool = False, norm: str = 'batchnorm'):
+                 nempty: bool = False, conv_norm: str = 'batchnorm'):
 		super().__init__()
 		self.conv = ocnn.nn.OctreeConv(
         	in_channels, out_channels, kernel_size, stride, nempty)
-		if norm.lower() == 'batchnorm':
-			self.norm = torch.nn.BatchNorm1d(out_channels)
-		elif norm.lower() == 'layernorm':
-			self.norm = torch.nn.LayerNorm(out_channels)
-		else:
-			raise ValueError("Norm type must be either 'batchnorm' or 'layernorm'")
+		self.norm = get_norm_layer(out_channels, conv_norm)
 		self.relu = torch.nn.ReLU(inplace=True)
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
@@ -167,16 +173,11 @@ class OctreeDeconvNormRelu(torch.nn.Module):
 
 	def __init__(self, in_channels: int, out_channels: int,
                  kernel_size: List[int] = [3], stride: int = 1,
-                 nempty: bool = False, norm: str = 'batchnorm'):
+                 nempty: bool = False, conv_norm: str = 'batchnorm'):
 		super().__init__()
 		self.deconv = ocnn.nn.OctreeDeconv(
         	in_channels, out_channels, kernel_size, stride, nempty)
-		if norm.lower() == 'batchnorm':
-			self.norm = torch.nn.BatchNorm1d(out_channels)
-		elif norm.lower() == 'layernorm':
-			self.norm = torch.nn.LayerNorm(out_channels)
-		else:
-			raise ValueError("Norm type must be either 'batchnorm' or 'layernorm'")
+		self.norm = get_norm_layer(out_channels, conv_norm)
 		self.relu = torch.nn.ReLU(inplace=True)
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
@@ -303,7 +304,7 @@ class OctFormerBlock(torch.nn.Module):
 				 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
 				 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
 				 activation: torch.nn.Module = torch.nn.GELU,
-     			 disable_RPE: bool = False, swap_batchnorm: bool = False, **kwargs):
+     			 disable_RPE: bool = False, conv_norm: str = 'batchnorm', **kwargs):
 		super().__init__()
 		self.norm1 = torch.nn.LayerNorm(dim)
 		self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
@@ -312,8 +313,7 @@ class OctFormerBlock(torch.nn.Module):
 		self.norm2 = torch.nn.LayerNorm(dim)
 		self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
 		self.drop_path = ocnn.nn.OctreeDropPath(drop_path, nempty)
-		conv_norm = 'layernorm' if swap_batchnorm else 'batchnorm'
-		self.cpe = OctreeDWConvNorm(dim, nempty=nempty, norm=conv_norm)
+		self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
 
 	def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
 		data = self.cpe(data, octree, depth) + data
@@ -332,14 +332,13 @@ class OctFormerStage(torch.nn.Module):
 				 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
 				 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
 				 disable_RPE: bool = False, grad_checkpoint: bool = True,
-     			 num_blocks: int = 2, swap_batchnorm: bool = False,
+     			 num_blocks: int = 2, conv_norm: str = 'batchnorm',
          		 octformer_block=OctFormerBlock, **kwargs):
 		super().__init__()
 		self.num_blocks = num_blocks
 		self.grad_checkpoint = grad_checkpoint
 		self.interval = interval  # normalization interval
 		self.num_norms = (num_blocks - 1) // self.interval
-		self.swap_batchnorm = swap_batchnorm
 
 		self.blocks = torch.nn.ModuleList([octformer_block(
 				dim=dim, num_heads=num_heads, patch_size=patch_size,
@@ -348,7 +347,7 @@ class OctFormerStage(torch.nn.Module):
 				attn_drop=attn_drop, proj_drop=proj_drop,
 				drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
 				nempty=nempty, activation=activation,
-    			disable_RPE=disable_RPE, swap_batchnorm=swap_batchnorm) for i in range(num_blocks)])
+    			disable_RPE=disable_RPE, conv_norm=conv_norm) for i in range(num_blocks)])
 		# self.norms = torch.nn.ModuleList([
 		#     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
 
@@ -367,27 +366,26 @@ class PatchEmbed(torch.nn.Module):
 
 	def __init__(self, in_channels: int = 3, dim: int = 96, num_down: int = 2,
 				 nempty: bool = True, downsample_input_embeddings: bool = True,
-				 swap_batchnorm: bool = False, **kwargs):
+				 conv_norm: str = 'batchnorm', **kwargs):
 		super().__init__()
 		self.num_stages = num_down
 		self.delta_depth = -num_down
 		self.downsample_input_embeddings = downsample_input_embeddings
-		self.conv_norm = 'layernorm' if swap_batchnorm else 'batchnorm'
   
 		if self.downsample_input_embeddings:
 			channels = [int(dim * 2**i) for i in range(-self.num_stages, 1)]
 			self.convs = torch.nn.ModuleList([OctreeConvNormRelu(
 				in_channels if i == 0 else channels[i], channels[i], kernel_size=[3],
-				stride=1, nempty=nempty, norm=self.conv_norm) for i in range(self.num_stages)])
+				stride=1, nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages)])
 			self.downsamples = torch.nn.ModuleList([OctreeConvNormRelu(
-				channels[i], channels[i+1], kernel_size=[2], stride=2, nempty=nempty, norm=self.conv_norm)
+				channels[i], channels[i+1], kernel_size=[2], stride=2, nempty=nempty, conv_norm=conv_norm)
 				for i in range(self.num_stages)])
 			self.proj = OctreeConvNormRelu(
-				channels[-1], dim, kernel_size=[3], stride=1, nempty=nempty, norm=self.conv_norm)
+				channels[-1], dim, kernel_size=[3], stride=1, nempty=nempty, conv_norm=conv_norm)
 		else:
 			self.convs = torch.nn.ModuleList([OctreeConvNormRelu(
 				in_channels if i == 0 else dim, dim, kernel_size=[3],
-				stride=1, nempty=nempty, norm=self.conv_norm) for i in range(self.num_stages)])
+				stride=1, nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages)])
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
 		if self.downsample_input_embeddings:
@@ -406,14 +404,11 @@ class Downsample(torch.nn.Module):
 
 	def __init__(self, in_channels: int, out_channels: int,
 				 kernel_size: List[int] = [2], nempty: bool = True,
-     			 swap_batchnorm: bool = False):
+     			 conv_norm: str = 'batchnorm'):
 		super().__init__()
 		self.conv = ocnn.nn.OctreeConv(in_channels, out_channels, kernel_size,
-									   stride=2, nempty=nempty, use_bias=True)
-		if swap_batchnorm:
-			self.norm = torch.nn.LayerNorm(out_channels)
-		else:
-			self.norm = torch.nn.BatchNorm1d(out_channels)
+									   stride=2, nempty=nempty, use_bias=True)		
+		self.norm = get_norm_layer(out_channels, conv_norm)
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
 		data = self.conv(data, octree, depth)
@@ -431,7 +426,7 @@ class OctFormerBase(torch.nn.Module):
 				 nempty: bool = True, stem_down: int = 2,
          		 grad_checkpoint: bool = True, 
      			 downsample_input_embeddings: bool = True,
-         		 disable_RPE: bool = False, swap_batchnorm: bool = False, **kwargs):
+         		 disable_RPE: bool = False, conv_norm: str = 'batchnorm', **kwargs):
 		super().__init__()
 		self.patch_size = patch_size
 		self.dilation = dilation
@@ -441,17 +436,17 @@ class OctFormerBase(torch.nn.Module):
 		self.downsample_input_embeddings = downsample_input_embeddings
 		drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
-		self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down, nempty, downsample_input_embeddings, swap_batchnorm)
+		self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down, nempty, downsample_input_embeddings, conv_norm)
 		self.layers = torch.nn.ModuleList([OctFormerStage(
 				dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
 				drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
 				dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
     			grad_checkpoint=grad_checkpoint, num_blocks=num_blocks[i],
-       			swap_batchnorm=swap_batchnorm)
+       			conv_norm=conv_norm)
 				for i in range(self.num_stages)])
 		self.downsamples = torch.nn.ModuleList([Downsample(
 				channels[i], channels[i + 1], kernel_size=[2],
-				nempty=nempty, swap_batchnorm=swap_batchnorm) for i in range(self.num_stages - 1)])
+				nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages - 1)])
 
 	def forward(self, data: torch.Tensor, octree: Octree, depth: int):
 		data = self.patch_embed(data, octree, depth)
@@ -472,12 +467,11 @@ class OctFormerBase(torch.nn.Module):
 class FPNHeader(torch.nn.Module):
 
 	def __init__(self, channels: List[int], fpn_channel: int, nempty: bool,
-				 num_top_down: int = 1, swap_batchnorm: bool = False):
+				 num_top_down: int = 1, conv_norm: str = 'batchnorm'):
 		super().__init__()
 		self.num_top_down = num_top_down
 		self.conv1x1 = torch.nn.ModuleList()  # lateral connections
 		self.up_conv = torch.nn.ModuleList()  # top-down transposed convolutions
-		self.conv_norm = 'layernorm' if swap_batchnorm else 'batchnorm'
 
 		# Generate top-down path
 		for i in range(self.num_top_down):
@@ -485,7 +479,7 @@ class FPNHeader(torch.nn.Module):
        			channels[-1 - i], fpn_channel, use_bias=True))
 			self.up_conv.append(OctreeDeconvNormRelu(
 				fpn_channel, fpn_channel, kernel_size=[2],
-				stride=2, nempty=nempty, norm=self.conv_norm))
+				stride=2, nempty=nempty, conv_norm=conv_norm))
 
 		# Final lateral connection from Conv block 1 or above
 		self.conv1x1.append(torch.nn.Linear(channels[-1 - self.num_top_down], fpn_channel))
@@ -513,14 +507,14 @@ class OctFormer(torch.nn.Module):
 				 nempty: bool = True, stem_down: int = 2, num_top_down: int = 2,
 				 fpn_channel: int = 168, grad_checkpoint: bool = True,
      			 downsample_input_embeddings: bool = True,
-         		 disable_RPE: bool = False, swap_batchnorm: bool = False, **kwargs):
+         		 disable_RPE: bool = False, conv_norm: str = 'batchnorm', **kwargs):
 		super().__init__()
 		self.backbone = OctFormerBase(
 			in_channels, channels, num_blocks, num_heads, patch_size, dilation,
 			drop_path, nempty, stem_down, grad_checkpoint,
-			downsample_input_embeddings, disable_RPE, swap_batchnorm
+			downsample_input_embeddings, disable_RPE, conv_norm
 		)
-		self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, swap_batchnorm)
+		self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
 		self.apply(self.init_weights)
 
 	def init_weights(self, m):

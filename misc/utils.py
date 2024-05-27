@@ -87,7 +87,8 @@ class ModelParams:
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
             self.num_input_downsamples = params.getint('num_input_downsamples', 2)  # number of downsampling stages in ConvEmbed
             self.disable_RPE = params.getboolean('disable_RPE', False)
-            self.swap_batchnorm = params.getboolean('swap_batchnorm', False)  # swap all batchnorm for layernorm
+            self.conv_norm = params.get('conv_norm', 'batchnorm')  # choose normalisation layer after convolution layers
+            assert self.conv_norm in ['batchnorm', 'layernorm', 'powernorm']
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
 
     def print(self):
