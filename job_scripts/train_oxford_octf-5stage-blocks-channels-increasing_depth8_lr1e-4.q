@@ -16,4 +16,4 @@ source /scratch3/gri317/venvs/hot-net/bin/activate
 cd training/
 python train.py \
 	--config '../config/config_baseline_octf_depth8_lr1e-4.txt' \
-	--model_config '../models/octformer_5stage_cfg.txt' \
+	--model_config '../models/octformer_5stage_blocks_channels_increasing_cfg.txt' \
