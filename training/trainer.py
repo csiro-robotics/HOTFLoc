@@ -312,7 +312,9 @@ def do_train(params: TrainingParams):
         
         if not params.debug:
             if params.save_freq > 0 and epoch % params.save_freq == 0:
-                torch.save(model.state_dict(), model_pathname + "_" + str(epoch) + ".pth")
+                epoch_pathname = f"{model_pathname}_{epoch}.pth"
+                print(f"Saving weights: {epoch_pathname}")
+                torch.save(model.state_dict(), epoch_pathname)
 
         if params.eval_freq > 0 and epoch % params.eval_freq == 0:
             eval_stats = evaluate(model, device, params, log=False)
