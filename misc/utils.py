@@ -189,6 +189,7 @@ class TrainingParams:
 
         self.lr = params.getfloat('lr', 1e-3)
         self.epochs = params.getint('epochs', 20)
+        self.warmup_epochs = params.getint('warmup_epochs', None)
         self.optimizer = params.get('optimizer', 'Adam')
         self.scheduler = params.get('scheduler', 'MultiStepLR')
         if self.scheduler is not None:

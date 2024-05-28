@@ -19,6 +19,11 @@ from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 
 
+def warmup(epoch: int):
+    # Logarithmic scaling lr warmup
+    return 1 / (10 ** (float(num_warmup_epochs - epoch)))
+
+
 def print_global_stats(phase, stats):
     s = f"{phase}  loss: {stats['loss']:.4f}   embedding norm: {stats['avg_embedding_norm']:.3f}  "
     if 'num_triplets' in stats:
@@ -205,6 +210,12 @@ def do_train(params: TrainingParams):
             scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=params.gamma)
         else:
             raise NotImplementedError('Unsupported LR scheduler: {}'.format(params.scheduler))
+
+    if params.warmup_epochs is not None:
+        global num_warmup_epochs
+        num_warmup_epochs = params.warmup_epochs
+        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, scheduler], [params.warmup_epochs])
 
     if params.batch_split_size is None or params.batch_split_size == 0:
         train_step_fn = training_step
