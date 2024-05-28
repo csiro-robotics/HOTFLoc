@@ -1,8 +1,8 @@
 [DEFAULT]
-dataset_folder = /datasets/work/mlai-fsp-st-div/source/above-under/pointnetvlad_datasets
+dataset_folder = /scratch3/gri317/datasets/pointnetvlad_datasets
 
 [TRAIN]
-num_workers = 4
+num_workers = 3
 batch_size = 2048
 batch_split_size = 128
 val_batch_size = 256
@@ -11,6 +11,7 @@ eval_freq = 10
 
 lr = 1e-4
 epochs = 150
+warmup_epochs = 5
 scheduler_milestones = 50, 100
 aug_mode = 2
 set_aug_mode = 0
