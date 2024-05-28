@@ -20,8 +20,9 @@ from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 
 
 def warmup(epoch: int):
-    # Logarithmic scaling lr warmup
-    return 1 / (10 ** (float(num_warmup_epochs - epoch)))
+    # Linear scaling lr warmup
+    min_factor = 1e-3
+    return max(float(epoch / num_warmup_epochs), min_factor)
 
 
 def print_global_stats(phase, stats):
