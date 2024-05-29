@@ -6,8 +6,6 @@ from typing import Dict
 import torch
 import numpy as np
 from torch.utils.data import Dataset
-import ocnn
-from ocnn.octree import Octree, Points
 
 
 class TrainingTuple:
@@ -76,10 +74,6 @@ class TrainingDataset(Dataset):
         if self.load_octree:
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
             data = torch.clamp(data, -1, 1)
-            # Convert to ocnn Points object, then create Octree
-            points = Points(data)
-            data = Octree(self.octree_depth, self.full_depth)
-            data.build_octree(points)
         return data, ndx
 
     def get_positives(self, ndx):

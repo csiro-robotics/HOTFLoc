@@ -229,6 +229,7 @@ class TrainingParams:
         self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode applied to all batch samples (1 is default)
         self.normalize_points = params.getboolean('normalize_points', False)    # Normalize points to [-1, 1]
         self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
+        self.full_depth = params.getint('full_depth', 2)    # Depth of octree that is fully populated
         self.train_file = params.get('train_file')
         self.val_file = params.get('val_file', None)
         self.validation = params.getboolean('validation', True)
