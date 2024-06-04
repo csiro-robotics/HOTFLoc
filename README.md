@@ -16,11 +16,25 @@ README is currently a copy of MinkLoc3Dv2 README, but will be progressively upda
 On HPC, do the following:
 ```
 module load python pytorch open3d
-virtualenv --system-site-packages <save_path>
-source <save_path>/bin/activate
+virtualenv --system-site-packages <env_path>
+source <env_path>/bin/activate
 pip install -r requirements.txt
 pip install libs/dwconv
 ```
+
+## Training
+To train the network, follow the general layout of any training job script in `job_scripts`. This will usually involve the following commands:
+```
+export PYTHONPATH=$PYTHONPATH:'<path/to/repo>'
+cd training/
+python train.py \
+	--config '../config/config_file.txt'
+	--model_config '../models/octformer_cfg_file.txt' 
+```
+Change these config files to your liking. Each config option is described in `/misc/utils.py` in the `ModelParams` and `TrainingParams` classes. The current best OctFormer performance of AR@1 = 96.1% on Oxford is obtained with the config file `config_baseline_octf_depth8_lr1e-4_sched100_350.txt`, and model config file `octformer_5stage_18blocks_middle_cfg.txt`.
+
+Note that the Octree depth for OctFormer should be configured on a per-dataset basis, and point clouds **must** either be pre-processed to [-1,1] range, or normalised to this range using `normalize_points=True` config option. You can work out the leaf node size with $\frac{w}{2^d}$, where w is the width of the largest point cloud, and d is the octree depth. 
+
 
 # Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training
 ## MinkLoc3Dv2 is an improved version of our earlier point cloud descriptor MinkLoc3D. MinkLoc3Dv2 outperforms SOTA on standard benchmarks (as per February 2022).  
