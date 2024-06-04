@@ -1,126 +1,218 @@
 # Hierarchical Octree Transformer
 
-Created using the codebase for the paper: 
+Created using the codebase for the paper:
+### Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training
 
-#### Pyramid Point Cloud Transformer for Large-Scale Place Recognition
-
-by Le Hui, Hang Yang, Mingmei Cheng, Jin Xie, and Jian Yang
+by Jacek Komorowski
 
 and
+### OctFormer: Octree-based Transformers for 3D Point Clouds
 
-#### OctFormer: Octree-based Transformers for 3D Point Clouds
 by Peng-Shuai Wang.
 
-README is currently a copy of PPT-Net README, but will be progressively updated in the future.
+README is currently a copy of MinkLoc3Dv2 README, but will be progressively updated in the future.
 
-### Benchmark Datasets
-
-We use the same benchmark datasets introduced in [PointNetVLAD](https://arxiv.org/abs/1804.03492) for point cloud based place recognition, and they can be downloaded [here](https://drive.google.com/open?id=1H9Ep76l8KkUpwILY-13owsEMbVCYTmyx).
-
-* Oxford dataset
-* NUS (in-house) Datasets
-  * university sector (U.S.)
-  * residential area (R.A.)
-  * business district (B.D.)
-
-### Project Code
-
-### NEW ENVIRONMENT SETUP
-```
-conda create -n hot-net python=3.8
-conda activate hot-net
-conda install pytorch==1.12.1 torchvision torchaudio cudatoolkit=11.3 -c pytorch
-pip install -r requirements.txt
-pip install libs/dwconv
-```
-
-**HPC**:
+## Environment Setup
+On HPC, do the following:
 ```
 module load python pytorch open3d
-virtualenv --system-site-packages <save_path>
-source <save_path>/bin/activate
+virtualenv --system-site-packages <env_path>
+source <env_path>/bin/activate
 pip install -r requirements.txt
 pip install libs/dwconv
 ```
 
-#### Pre-requisites
-
+## Training
+To train the network, follow the general layout of any training job script in `job_scripts`. This will usually involve the following commands:
 ```
-Python 3.6+
-Pytorch 1.2
-CUDA 10.0
+export PYTHONPATH=$PYTHONPATH:'<path/to/repo>'
+cd training/
+python train.py \
+	--config '../config/config_file.txt'
+	--model_config '../models/octformer_cfg_file.txt' 
 ```
+Change these config files to your liking. Each config option is described in `/misc/utils.py` in the `ModelParams` and `TrainingParams` classes. The current best OctFormer performance of AR@1 = 96.1% on Oxford is obtained with the config file `config_baseline_octf_depth8_lr1e-4_sched100_350.txt`, and model config file `octformer_5stage_18blocks_middle_cfg.txt`.
 
-#### Dataset set-up
-
-* Download the zip file of the benchmark datasets found [here](https://drive.google.com/open?id=1H9Ep76l8KkUpwILY-13owsEMbVCYTmyx) and extract the folder. Therefore, you have two folders: 1) benchmark_datasets/ and 2) PPT-Net/
-
-* Generate pickle files: We store the positive and negative point clouds to each anchor on pickle files that are used in our training and evaluation codes. The files only need to be generated once. The generation of these files may take a few minutes.
-	```
-    cd generating_queries/ 
-  
-    # For network training! Note that "base_path" should be modified to your path.
-    python generate_training_tuples_baseline.py
-  
-    # For network evaluation! Note that "base_path" should be modified to your path.
-    python generate_test_sets.py
-  ```
-
-#### Training and Evaluation
-
-* build the ops
-
-  ```
-  cd libs/pointops && python setup.py install && cd ../../
-  ```
-  **NOTE**, for HPC do the following instead:
-  ```
-  module load cuda/11.1.1
-  module load gcc/9.3.0
-  conda create -n ppt-net python=3.7
-  conda activate ppt-net
-  pip install torch==1.2.0
-  # check that cuda is working
-  python -c "import torch; print(torch.cuda.is_available())" 
-  cd libs/pointops && python setup.py install && cd ../../
-  pip install scikit-learn pandas pyyaml matplotlib tqdm thop scipy tensorboard tensorboardX open3d
-  ```
-  
-
-* To train and evaluate PPT-Net, run the following command:
-
-    ```
-    # Train & Eval
-    # Note that you should change the paths in the yaml file.
-    
-    sh train.sh pptnet configs/pptnet.yaml
-    
-    python evaluate.py --config configs/pptnet.yaml --save_path exp/pptnet --model_name train_epoch_29_end.pth
-    ```
+Note that the Octree depth for OctFormer should be configured on a per-dataset basis, and point clouds **must** either be pre-processed to [-1,1] range, or normalised to this range using `normalize_points=True` config option. You can work out the leaf node size with $\frac{w}{2^d}$, where w is the width of the largest point cloud, and d is the octree depth. 
 
 
-#### Citation
+# Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training
+## MinkLoc3Dv2 is an improved version of our earlier point cloud descriptor MinkLoc3D. MinkLoc3Dv2 outperforms SOTA on standard benchmarks (as per February 2022).  
 
-If you find the code or trained models useful, please consider citing:
+Paper: [Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training](https://ieeexplore.ieee.org/document/9956458)
+26th International Conference on Pattern Recognition (ICPR 2022)
+[arXiv](https://arxiv.org/pdf/2203.00972v1.pdf) 
 
-```
-@inproceedings{hui2021pptnet,
-  title={Pyramid Point Cloud Transformer for Large-Scale Place Recognition},
-  author={Hui, Le and Yang, Hang and Cheng, Mingmei and Xie, Jin and Yang, Jian},
-  booktitle={ICCV},
-  year={2021}
-}
+[Jacek Komorowski](mailto:jacek.komorowski@pw.edu.pl)
+Warsaw University of Technology
 
-@article{hui2021epcnet,
-  title={Efficient 3{D} Point Cloud Feature Learning for Large-Scale Place Recognition},
-  author={Hui, Le and Cheng, Mingmei and Xie, Jin and Yang, Jian and Cheng Ming-Ming},
-  journal={Transactions on Image Processing},
-  year={2021}
-}
+### What's new ###
+* [2022-02-01] Evaluation code and trained model of MinkLoc3Dv2 is released. 
+* [2022-04-07] Training code released. 
+
+### Our other projects ###
+* MinkLoc3D: Point Cloud Based Large-Scale Place Recognition (WACV 2021): [MinkLoc3D](https://github.com/jac99/MinkLoc3D)
+* MinkLoc++: Lidar and Monocular Image Fusion for Place Recognition (IJCNN 2021): [MinkLoc++](https://github.com/jac99/MinkLocMultimodal)
+* Large-Scale Topological Radar Localization Using Learned Descriptors (ICONIP 2021): [RadarLoc](https://github.com/jac99/RadarLoc)
+* EgonNN: Egocentric Neural Network for Point Cloud Based 6DoF Relocalization at the City Scale (IEEE Robotics and Automation Letters April 2022): [EgoNN](https://github.com/jac99/Egonn) 
+
+### Introduction
+The paper presents a simple and effective learning-based method for computing a discriminative 3D point cloud descriptor for place recognition purposes. 
+Recent state-of-the-art methods have relatively complex architectures such as multi-scale pyramid of point Transformers combined with a pyramid of feature aggregation modules.
+Our method uses a simple and efficient 3D convolutional feature extraction, based on a sparse voxelized representation, enhanced with channel attention blocks. 
+We employ recent advances in image retrieval and propose a modified version of a loss function based on a differentiable average precision approximation. Such loss function requires training with very large batches for the best results. This is enabled by using multistaged backpropagation.
+Experimental evaluation on the popular benchmarks proves the effectiveness of our approach, with a consistent improvement over state of the art.
+
+![Overview](media/overview.png)
+
+### Citation
+If you find this work useful, please consider citing:
+
+    @INPROCEEDINGS{9956458,  
+                  author={Komorowski, Jacek},  
+                  booktitle={2022 26th International Conference on Pattern Recognition (ICPR)},
+                  title={Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training},   
+                  year={2022},  
+                  volume={},  
+                  number={},  
+                  pages={3699-3705},  
+                  doi={10.1109/ICPR56361.2022.9956458}
+    }
+
+### Environment and Dependencies
+Code was tested using Python 3.8 with PyTorch 1.10.1 and MinkowskiEngine 0.5.4 on Ubuntu 20.04 with CUDA 10.2.
+Note: CUDA 11.1 is not recommended as there are some issues with MinkowskiEngine 0.5.4 on CUDA 11.1. 
+
+The following Python packages are required:
+* PyTorch (version 1.10.1)
+* MinkowskiEngine (version 0.5.4)
+* pytorch_metric_learning (version 1.1 or above)
+* pandas
+* wandb
+
+Modify the `PYTHONPATH` environment variable to include absolute path to the project root folder: 
+```export PYTHONPATH
+export PYTHONPATH=$PYTHONPATH:/home/.../MinkLoc3Dv2
 ```
 
+### Datasets
+
+**MinkLoc3Dv2** is trained on a subset of Oxford RobotCar and In-house (U.S., R.A., B.D.) datasets introduced in
+*PointNetVLAD: Deep Point Cloud Based Retrieval for Large-Scale Place Recognition* paper ([link](https://arxiv.org/pdf/1804.03492)).
+There are two training datasets:
+- Baseline Dataset - consists of a training subset of Oxford RobotCar
+- Refined Dataset - consists of training subset of Oxford RobotCar and training subset of In-house
+
+For dataset description see PointNetVLAD paper or github repository ([link](https://github.com/mikacuy/pointnetvlad)).
+
+You can download training and evaluation datasets from 
+[here](https://drive.google.com/open?id=1rflmyfZ1v9cGGH0RL4qXRrKhg-8A-U9q) 
+([alternative link](https://drive.google.com/file/d/1-1HA9Etw2PpZ8zHd3cjrfiZa8xzbp41J/view?usp=sharing)). 
+
+Before the network training or evaluation, run the below code to generate pickles with positive and negative point clouds for each anchor point cloud. 
+
+```generate pickles
+cd generating_queries/ 
+
+# Generate training tuples for the Baseline Dataset
+python generate_training_tuples_baseline.py --dataset_root <dataset_root_path>
+
+# Generate training tuples for the Refined Dataset
+python generate_training_tuples_refine.py --dataset_root <dataset_root_path>
+
+# Generate evaluation tuples
+python generate_test_sets.py --dataset_root <dataset_root_path>
+```
+`<dataset_root_path>` is a path to dataset root folder, e.g. `/data/pointnetvlad/benchmark_datasets/`.
+Before running the code, ensure you have read/write rights to `<dataset_root_path>`, as training and evaluation pickles
+are saved there. 
+
+### Training
+
+To train **MinkLoc3Dv2** model, download and decompress the dataset and generate training pickles as described above.
+Edit the configuration file (`config_baseline.txt` or `config_refined.txt`). 
+Set `dataset_folder` parameter to the dataset root folder.
+If running out of GPU memory, decrease `batch_split_size` parameter value. 
+
+To train the network, run:
+
+```train baseline
+cd training
+
+# To train minkloc3d model on the Baseline Dataset
+python train.py --config ../config/config_baseline.txt --model_config ../models/minkloc3dv2.txt
+
+# To train minkloc3d model on the Refined Dataset
+python train.py --config ../config/config_refined.txt --model_config ../models/minkloc3dv2.txt
+```
+
+### Pre-trained Models
+
+Pretrained models are available in `weights` directory
+- `minkloc3dv2_baseline.pth` trained on the Baseline Dataset 
+- `minkloc3dv2_refined.pth` trained on the Refined Dataset 
+
+### Evaluation
+
+To evaluate pretrained models run the following commands:
+
+```eval baseline
+cd eval
+
+# To evaluate the model trained on the Baseline Dataset
+python evaluate.py --config ../config/config_baseline.txt --model_config ../models/minkloc3dv2.txt --weights ../weights/minkloc3dv2_baseline.pth
+
+# To evaluate the model trained on the Refined Dataset
+python evaluate.py --config ../config/config_refined.txt --model_config ../models/minkloc3dv2.txt --weights ../weights/minkloc3dv2_refined.pth
+```
+
+## Results
+
+**MinkLoc3Dv2** performance (measured by Average Recall@1) compared to the state of the art:
+
+### Trained on Baseline Dataset
+
+| Method                   | Oxford     | U.S.       | R.A.       | B.D        | Average    |
+|--------------------------|------------|------------|------------|------------|------------|
+| PointNetVLAD [1]         | 62.8       | 63.2       | 56.1       | 57.2       | 59.8       |
+| PCAN [2]                 | 69.1       | 62.4       | 56.9       | 58.1       | 61.6       |
+| LPD-Net [4]              | 86.3       | 87.0       | 83.1       | 82.5       | 94.7       |
+| EPC-Net [5]              | 86.2       | -          | -          | -          | -          | 
+| NDT-Transformer [7]      | 93.8       | -          | -          | -          | -          |
+| MinkLoc3D [8]            | 93.0       | 86.7       | 80.4       | 81.5       | 85.4       |
+| PPT-Net [9]              | 93.5       | 90.1       | 84.1       | 84.6       | 88.1       |
+| SVT-Net [10]             | 93.7       | 90.1       | 84.4       | 85.5       | 88.4       |
+| TransLoc3D [11]          | 95.0       | -          | -          | -          | -          |
+| ***MinkLoc3Dv2 (ours)*** | ***96.3*** | ***90.9*** | ***86.5*** | ***86.3*** | ***90.0*** |
 
 
-#### Acknowledgement
+### Trained on Refined Dataset
 
-Our code refers to [PointNetVLAD](https://github.com/mikacuy/pointnetvlad) and [PointWeb](https://github.com/hszhao/PointWeb).
+
+| Method                   | Oxford     | U.S.       | R.A.       | B.D         | Average    |
+|--------------------------|------------|------------|------------|-------------|------------|
+| PointNetVLAD [1]         | 63.3       | 86.1       | 82.7       | 80.1        | 78.0       |
+| PCAN [2]                 | 70.7       | 83.7       | 82.5       | 80.3        | 79.3       |
+| DAGC [3]                 | 71.5       | 86.3       | 82.8       | 81.3        | 80.5       |
+| LPD-Net [4]              | 86.6       | 94.4       | 90.8       | 90.8        | 90.7       |
+| SOE-Net [6]              | 89.3       | 91.8       | 90.2       | 89.0        | 90.1       | 
+| MinkLoc3D [8]            | 94.8       | 97.2       | 96.7       | 94.0        | 95.7       |
+| SVT-Net [10]             | 93.7       | 97.0       | 95.2       | 94.4        | 95.3       |
+| TransLoc3D [11]          | 95.0       | 97.5       | 97.3       | 94.8        | 96.2       |
+| ***MinkLoc3Dv2 (ours)*** | ***96.9*** | ***99.0*** | ***98.3*** | ***97.6***  | ***97.9*** |
+
+1. M. A. Uy and G. H. Lee, "PointNetVLAD: Deep Point Cloud Based Retrieval for Large-Scale Place Recognition", 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+2. W. Zhang and C. Xiao, "PCAN: 3D Attention Map Learning Using Contextual Information for Point Cloud Based Retrieval", 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+3. Q. Sun et al., "DAGC: Employing Dual Attention and Graph Convolution for Point Cloud based Place Recognition", 2020 International Conference on Multimedia Retrieval
+4. Z. Liu et al., "LPD-Net: 3D Point Cloud Learning for Large-Scale Place Recognition and Environment Analysis", 2019 IEEE/CVF International Conference on Computer Vision (ICCV)
+5. L. Hui et al., "Efficient 3D Point Cloud Feature Learning for Large-Scale Place Recognition", preprint arXiv:2101.02374 (2021)
+6. Y. Xia et al., "SOE-Net: A Self-Attention and Orientation Encoding Network for Point Cloud based Place Recognition", 2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+7. Z. Zhou et al., "NDT-Transformer: Large-scale 3D Point Cloud Localisation Using the Normal Distribution Transform Representation", 
+   2021 IEEE International Conference on Robotics and Automation (ICRA)
+8. J. Komorowski, "MinkLoc3D: Point Cloud Based Large-Scale Place Recognition", 2021 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)
+9. L. Hui et al.,"Pyramid Point Cloud Transformer for Large-Scale Place Recognition", 2021 IEEE/CVF International Conference on Computer Vision
+10. Z. Fan et al., "SVT-Net: Super lightweight Sparse Voxel Transformer for Large Scale Place Recognition", arXiv:2105.00149 (2021)
+11. T. Xu et al., "TransLoc3d: Point Cloud Based Large-Scale Place Recognition using Adaptive Receptive Fields", arXiv:2105.11605 (2021)
+
+### License
+Our code is released under the MIT License (see LICENSE file for details).

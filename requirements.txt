@@ -1,24 +1,23 @@
 torch
+torchvision
+pytorch-metric-learning
+numpy
+pandas
+scipy
 ocnn
 thsolver==1.1.4
-numpy
 tqdm
-# yacs
-scipy
 plyfile
 tensorboard
 tensorboardX
-# protobuf>=3.1.0,<=3.20.0
 protobuf
 scikit-learn
 scikit-image
-# trimesh
 wget
-# cyminiball
 timm
-pandas
 pyyaml
 matplotlib
 thop
-# open3d
-# pickle5
+wandb
+wandb-osh
+open3d

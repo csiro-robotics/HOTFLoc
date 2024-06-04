@@ -1,0 +1,5 @@
+minkloc3dv2.txt, config_AboveUnder.txt, MinkLoc_AboveUnder_20240216_1344_final
+[above-under]
+AR@1%: 99.55, AR@1: 84.23
+
+Mean AR@1%: 99.55, Mean AR@1: 84.23

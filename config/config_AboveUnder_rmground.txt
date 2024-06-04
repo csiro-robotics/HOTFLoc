@@ -1,0 +1,24 @@
+[DEFAULT]
+dataset_folder = /datasets/work/mlai-fsp-st-div/source/above-under/processed_submaps/latest/rad30m/postproc_pnvlad_ds_4096_removeground_normalised
+
+[TRAIN]
+num_workers = 4
+batch_size = 2048
+batch_split_size = 64
+val_batch_size = 256
+save_freq = 25
+
+lr = 1e-3
+epochs = 400
+scheduler_milestones = 250, 350
+aug_mode = 1
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+
+dataset_name = AboveUnder_rmground
+skip_same_run = True
+train_file = training_tuples_above-under_refined_v2.pickle
+val_file = test_tuples_above-under_v2.pickle
+validation = True

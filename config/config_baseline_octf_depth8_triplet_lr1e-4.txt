@@ -1,0 +1,29 @@
+[DEFAULT]
+dataset_folder = /scratch3/gri317/datasets/pointnetvlad_datasets
+
+[TRAIN]
+num_workers = 4
+batch_size = 16
+batch_size_limit = 256
+batch_expansion_rate = 1.4
+batch_expansion_th = 0.7
+save_freq = 25
+eval_freq = 5
+
+lr = 1e-4
+epochs = 400
+warmup_epochs = 5
+scheduler_milestones = 250, 350
+aug_mode = 1
+set_aug_mode = 1
+weight_decay = 1e-4
+normalize_points = False
+octree_depth = 8
+
+loss = BatchHardTripletMarginLoss
+margin = 0.2
+
+dataset_name = Oxford
+skip_same_run = True
+train_file = training_queries_baseline2.pickle
+val_file = test_queries_baseline2.pickle
