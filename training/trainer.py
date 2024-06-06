@@ -367,8 +367,8 @@ def do_train(params: TrainingParams):
         model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
         prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
-        pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)
-
+        pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)        
+        trigger_sync()
 
 def create_weights_folder(dataset_name : str):
     # Create a folder to save weights of trained models
