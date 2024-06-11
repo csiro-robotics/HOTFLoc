@@ -51,7 +51,7 @@ def main():
             nempty=True, max_depth=octree.depth, start_depth=octree.full_depth,
         )
         # Initialise figure        
-        fig = plt.figure(figsize=(14,9))
+        fig = plt.figure(figsize=(11,9))
         fig.suptitle(f"{cloud_path.split('/')[-1]}")
         # Iterate through octree depths
         for idx, depth in enumerate(range(args.max_depth, args.min_depth-1, -1)):
