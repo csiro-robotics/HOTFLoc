@@ -24,7 +24,7 @@ from misc.utils import rescale_octree_points
 def main():
     binPointCloudLoader = PNVPointCloudLoader()
     pcdPointCloudLoader = AboveUnderPointCloudLoader()
-    # Get all valid point cloud files
+    # Get every 20th valid point cloud file
     clouds = sorted(glob(f"{args.clouds_path}/*.pcd") + glob(f"{args.clouds_path}/*.bin"))[::20]
     assert len(clouds) > 0, "No valid point cloud files found"
     
@@ -94,7 +94,7 @@ def main():
             ax.set_ylabel('y')
             ax.set_zlabel('z')
             ax.set_aspect('equal', adjustable='box')
-            ax.set_title(f"depth {depth}")
+            ax.set_title(f"depth {depth} - {num_windows} windows")
             
         plt.tight_layout()
         plt.show()
