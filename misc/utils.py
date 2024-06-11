@@ -122,20 +122,28 @@ def set_seed(seed: int = 42):
     np.random.seed(seed)
     random.seed(seed)
     
+def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
+    """ Rescale points stored in octree to original scale.
 
-def octree_to_points(octree: Octree) -> torch.Tensor:
+    Args:
+        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
+        depth (int): Octree depth used to rescale values
+    """
+    # normalize points to [-1, 1] since octree points are in range [0, 2^d]
+    scale = 2 ** (1 - depth)
+    points_scaled = points * scale - 1.0
+    return points_scaled
+
+def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
     ''' Converts averaged points in the octree to a point cloud.
 
     Args:
         octree (Octree): The octree to convert to a point cloud.
+        depth (int): Octree depth to query points from.
     '''
-    depth = octree.depth
-
-    # normalize xyz to [-1, 1] since the average points are in range [0, 2^d]
-    scale = 2 ** (1 - depth)
-    xyz = octree.points[depth] * scale - 1.0
-    
-    return xyz
+    points = octree.points[depth]
+    points_scaled = rescale_octree_points(points, depth)
+    return points_scaled
 
 class TrainingParams:
     """
