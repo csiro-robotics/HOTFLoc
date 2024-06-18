@@ -1,5 +1,5 @@
 [MODEL]
-model=OctFormer4Stage18Blocks2DS2TopDown
+model=OctFormer4Stage18Blocks3rdStage2DS2TopDown
 channels=64,128,256,128
 num_blocks=2,2,18,2
 num_heads=4,8,16,8
