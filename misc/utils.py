@@ -47,7 +47,7 @@ class ModelParams:
         self.pooling = params.get('pooling', 'GeM')
         self.num_top_down = params.getint('num_top_down', 1)
 
-        if 'MinkLoc' in self.model:
+        if 'minkloc' in self.model.lower():
         #######################################################################
         # MinkLoc params
         #######################################################################
@@ -65,7 +65,7 @@ class ModelParams:
             self.conv0_kernel_size = params.getint('conv0_kernel_size', 5)
             self.block = params.get('block', 'BasicBlock')
 
-        elif 'OctFormer' in self.model:
+        elif any(model in self.model.lower() for model in ('octformer', 'hotformer')):
             #######################################################################
             # OctFormer params
             #######################################################################
@@ -79,10 +79,13 @@ class ModelParams:
                 self.num_blocks = tuple([2, 2, 6, 2])  # default to OctFormer-small
             if 'num_heads' in params:  # num attention heads per stage
                 self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
+            if 'HAT_layers' in params:  # using hierarchical attention per stage
+                self.HAT_layers = tuple([e == 'True' for e in params['HAT_layers'].split(',')])
             else:
-                self.num_heads = tuple([6, 12, 24, 24])
+                self.HAT_layers = tuple([False, False, False, False])
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
+            self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)
@@ -249,8 +252,8 @@ class TrainingParams:
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path)
 
-        # Check if using octrees
-        self.load_octree = 'OctFormer' in self.model_params.model     # load octrees instead of sparse tensor for OctFormer
+        # Check if using octrees, load octrees instead of sparse tensor for OctFormer
+        self.load_octree = any(model in self.model_params.model.lower() for model in ('octformer', 'hotformer'))
         
         self._check_params()
 

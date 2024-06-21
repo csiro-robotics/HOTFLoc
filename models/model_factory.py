@@ -26,7 +26,7 @@ def get_in_channels(input_features: str) -> int:
 def model_factory(model_params: ModelParams):
     in_channels = 1
 
-    if model_params.model == 'MinkLoc':
+    if model_params.model.lower() == 'minkloc':
         block_module = create_resnet_block(model_params.block)
         backbone = MinkFPN(in_channels=in_channels, out_channels=model_params.feature_size,
                            num_top_down=model_params.num_top_down, conv0_kernel_size=model_params.conv0_kernel_size,
@@ -34,13 +34,15 @@ def model_factory(model_params: ModelParams):
         pooling = PoolingWrapper(pool_method=model_params.pooling, in_dim=model_params.feature_size,
                                  output_dim=model_params.output_dim)
         model = MinkLoc(backbone=backbone, pooling=pooling, normalize_embeddings=model_params.normalize_embeddings)
-    elif 'OctFormer' in model_params.model:
+        # TODO: separate OctFormer and HOTNet/HOTFormer models?
+    elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)
         backbone = OctFormer(in_channels=in_channels, channels=model_params.channels, num_blocks=model_params.num_blocks,
-                             num_heads=model_params.num_heads, patch_size=model_params.patch_size,
-                             dilation=model_params.dilation, drop_path=model_params.drop_path,
-                             fpn_channel=model_params.feature_size, num_top_down=model_params.num_top_down,
-                             stem_down=model_params.num_input_downsamples,
+                             num_heads=model_params.num_heads, HAT_layers=model_params.HAT_layers,
+                             patch_size=model_params.patch_size, dilation=model_params.dilation,
+                             drop_path=model_params.drop_path, fpn_channel=model_params.feature_size,
+                             num_top_down=model_params.num_top_down,
+                             stem_down=model_params.num_input_downsamples, ct_size=model_params.ct_size,
                              downsample_input_embeddings=model_params.downsample_input_embeddings,
                              grad_checkpoint=model_params.grad_checkpoint, disable_RPE=model_params.disable_RPE,
                              conv_norm=model_params.conv_norm)
