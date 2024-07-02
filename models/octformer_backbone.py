@@ -232,10 +232,11 @@ class OctreeAttention(torch.nn.Module):
 
     def apply_rpe(self, attn, rel_pos):
         if self.use_rpe:
-            # TODO: pad RPE for CTs
+            rpe = self.rpe(rel_pos)
             if self.ct_per_window > 0:
-                F.pad(rpe, (self.ct_per_window,0)).contiguous()
-            attn = attn + self.rpe(rel_pos)
+                # Pad RPE for CTs (assume no relative pos for CTs)
+                rpe = F.pad(rpe, (self.ct_per_window, 0, self.ct_per_window, 0))
+            attn = attn + rpe
         return attn
 
     def extra_repr(self) -> str:
@@ -333,10 +334,12 @@ class OctFormerBlock(torch.nn.Module):
                 ct_size: int = 1, disable_RPE: bool = False,
                 conv_norm: str = 'batchnorm', **kwargs):
         super().__init__()
+        self.patch_size = patch_size
         self.use_ct = use_ct
         dilation = 1 if self.use_ct else dilation        
         self.dilated_windows = dilation > 1
         ct_per_window = ct_size if self.use_ct else 0  # track number of carrier tokens per window
+        self.ct_per_window = ct_per_window
         """ NOTE: Dilation is disabled when using carrier tokens, as it is
         likely redundant to use both (and carrier tokens for dilated windows
         does not make sense).
@@ -375,18 +378,15 @@ class OctFormerBlock(torch.nn.Module):
         )
         if self.use_ct:
             # Do global attention via carrier tokens
-            # TODO: carrier token PE + attention + mlp, then concat with window tokens
+            # TODO: carrier token PE
             # ct = self.hat_cpe(ct, octree, depth) + ct
             ct_attn = self.ct_attention(self.ct_norm1(ct), octree, depth)
-            # TODO: ensure drop_path is working correctly (drop_path needs actual batch size as first dim)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
             ct_ffn = self.ct_mlp(self.ct_norm2(ct))
-            ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
-            
-            # concatenate carrier tokens to the windowed tokens
+            ct = ct + self.ct_drop_path(ct_ffn, octree, depth)            
+            # Concatenate carrier tokens with window tokens
             data = torch.cat((ct.unsqueeze(1), data), dim=1)
 
-        # TODO: cat local windows
         attn = self.attention(self.norm1(data), octree, depth)
         data = data + self.drop_path(attn, octree, depth)
         ffn = self.mlp(self.norm2(data))
@@ -394,14 +394,15 @@ class OctFormerBlock(torch.nn.Module):
 
         # TODO: Split CTs from window tokens
         if self.use_ct:
-            ct, data = data.split([], dim=1)
+            ct, data = data.split([self.ct_per_window, self.patch_size], dim=1)
+            ct = ct.squeeze(1)
         
         # Unpad batch and restore original data shape
         data = octree.windows_to_data(
             data, depth, dilated_windows=self.dilated_windows
         )
 
-        # TODO: on last block, propagate carrier token info to the feature map
+        # TODO: On last block, propagate carrier token info to the feature map
         return data, ct
 
 

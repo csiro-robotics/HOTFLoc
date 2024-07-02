@@ -60,6 +60,7 @@ class OctreeT(Octree):
 
         num = self.max_depth + 1
         self.batch_idx = [None] * num
+        self.hat_batch_idx = [None] * num
         self.ct_batch_idx = [None] * num
         self.batch_boundary = [None] * num
         self.batch_num_windows = [None] * num
@@ -82,9 +83,34 @@ class OctreeT(Octree):
             self.build_rel_pos(d)
 
     def build_batch_idx(self, depth: int):
+        # Build batch idx for regular octree operation
         batch = self.batch_id(depth, self.nempty)
-        self.batch_idx[depth] = self.patch_partition(batch, depth, self.batch_size)
-        batch_ct = self.batch_idx[depth].view(-1, self.patch_size // self.ct_size)
+        batch = self.patch_partition(batch, depth, self.batch_size)
+        self.batch_idx[depth] = batch
+        if self.ct_size == 0:
+            return
+
+        # Build idx for HAT windows, with CT added to local windows
+        # NOTE: Currently, overlapping CTs are not masked out, and instead are
+        #       masked so that they only attend to features from the leftmost
+        #       batch element (i.e. floor of the batches they belong to)
+        batch_window = batch.view(-1, self.patch_size)
+        batch_ct_idx = batch_window.min(1, keepdim=True).values
+        # Save mask for CT initialisation (prevents pooling erroneous features)
+        self.ct_init_mask[depth] = batch_window != batch_ct_idx
+        # Add CT to mask
+        hat_batch_window = F.pad(batch_window, pad=(self.ct_size, 0))
+        hat_batch_window[:, :self.ct_size] += batch_ct_idx  # insert CT batch idx
+        ##### OLD CODE #####
+        # overlap_idx = self.batch_boundary[depth][self.batch_window_overlap_mask[depth] == 1] - 1
+        # mask[overlap_idx, :self.ct_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP CTs
+        # mask[overlap_idx, :self.ct_size] = mask[overlap_idx].mode(dim=1, keepdim=True).values  # KEEP OVERLAP CTs FOR BATCH ELEMENT WITH MORE DATA
+        ##### OLD CODE #####
+        self.hat_batch_idx[depth] = hat_batch_window
+
+        # Build idx for CT global attn
+        # TODO: ensure this works with ct_size > 1
+        batch_ct = batch.view(-1, self.patch_size // self.ct_size)
         self.ct_batch_idx[depth] = batch_ct.min(1).values
 
     def build_batch_boundary(self, depth: int):
@@ -114,28 +140,20 @@ class OctreeT(Octree):
         mask = batch.view(-1, self.patch_size)
         self.patch_mask[depth] = self._calc_attn_mask(mask)
 
+        mask = batch.view(-1, self.patch_size, self.dilation)
+        mask = mask.transpose(1, 2).reshape(-1, self.patch_size)
+        self.dilate_mask[depth] = self._calc_attn_mask(mask)
+    
+        if self.ct_size == 0:
+            return
         # Patch + CT mask (HAT)
         # TODO: check this works with ct_size > 1
         # NOTE: Currently, overlapping CTs are not masked out, and instead are
         #       masked so that they only attend to features from the leftmost
         #       batch element (i.e. floor of the batches they belong to)
-        if self.ct_size > 0:
-            # Use left-most batch idx for carrier tokens
-            batch_ct_idx = mask.min(1, keepdim=True).values
-            # Save mask for CT initialisation (prevents pooling erroneous features)
-            self.ct_init_mask[depth] = mask != batch_ct_idx
-            # Add CT to mask
-            mask = F.pad(mask, pad=(self.ct_size, 0, 0, 0))
-            mask[:, :self.ct_size] += batch_ct_idx  # insert CT batch idx
-            # overlap_idx = self.batch_boundary[depth][self.batch_window_overlap_mask[depth] == 1] - 1
-            # mask[overlap_idx, :self.ct_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP CTs
-            # mask[overlap_idx, :self.ct_size] = mask[overlap_idx].mode(dim=1, keepdim=True).values  # KEEP OVERLAP CTs FOR BATCH ELEMENT WITH MORE DATA
-            self.hat_window_mask[depth] = self._calc_attn_mask(mask)
-
-        mask = batch.view(-1, self.patch_size, self.dilation)
-        mask = mask.transpose(1, 2).reshape(-1, self.patch_size)
-        self.dilate_mask[depth] = self._calc_attn_mask(mask)
-    
+        mask = self.hat_batch_idx[depth]
+        self.hat_window_mask[depth] = self._calc_attn_mask(mask)
+        
     def build_ct_attn_mask(self, depth: int):
         """
         Compute attention mask for carrier tokens, so that attention ignores
@@ -191,6 +209,9 @@ class OctreeT(Octree):
         Reshape octree data into windows. This function applies padding and
         dilation, so just pass the octree features, depth, and whether dilated
         windows should be used.
+        
+        Inputs:
+            data (Tensor): Octree data, which must have shape (N, C)
         """
         C = data.size(-1)
         data = self.patch_partition(data, depth, fill_value)  # (N*K, C)
@@ -203,6 +224,9 @@ class OctreeT(Octree):
         Reshape octree windows back into original shape. This function accounts
         for padding and dilation, so just pass the octree features, depth, and
         whether dilated windows are used.
+        
+        Inputs:
+            data (Tensor): Octree window data, which must have shape (N, K, C)
         """
         C = data.size(-1)
         data = data.reshape(-1, C)  # (N*K, C)

@@ -45,6 +45,7 @@ class OctreeDropPath(torch.nn.Module):
 
         batch_size = octree.batch_size
         ndim = data.ndim
+        K = data.size(1)  # for ndim = 3, 2nd dim is the window dim
         assert ndim in (2, 3), "Invalid num dimensions in input"
         keep_prob = 1 - self.drop_prob
         rnd_tensor = torch.rand(
@@ -58,14 +59,22 @@ class OctreeDropPath(torch.nn.Module):
             batch_id = octree.batch_id(depth, self.nempty)
             # Check if dealing with Octree batch or windowed/ct batch
             if self.use_ct:
-                # batch_id = batch_id.min(1).values  # get batch id of each ct (do after reshaping batch_id)
+                # Get batch id of each ct
                 batch_id = octree.ct_batch_idx[depth]
             elif ndim == 3:
-                batch_id = octree.data_to_windows(
-                    batch_id.unsqueeze(-1), depth, self.dilated_windows,
-                    fill_value=(batch_size - 1)  # padding is almost guaranteed to belong only to the final batch elem (as long as num_windows >= dilation)
-                ).squeeze(-1)
-                # TODO: account for CT appended to window dim
+                if K == octree.patch_size:  # standard window attn
+                    batch_id = octree.data_to_windows(
+                        batch_id.unsqueeze(-1), depth, self.dilated_windows,
+                        fill_value=(batch_size - 1)
+                    ).squeeze(-1)
+                    # NOTE: Padding is almost guaranteed to belong only to the
+                    #       final batch elem (as long as num_windows >=
+                    #       dilation), and it doesn't matter anyways since it is
+                    #       just padding that will be getting dropped.
+                else:  # HAT attn (window + CT)
+                    batch_id = octree.hat_batch_idx[depth]
+                    # Assume padding idx as part of last batch
+                    batch_id = batch_id.minimum(torch.tensor(batch_size - 1))                    
 
         drop_mask = rnd_tensor[batch_id]
         output = data * drop_mask
