@@ -79,10 +79,10 @@ class ModelParams:
                 self.num_blocks = tuple([2, 2, 6, 2])  # default to OctFormer-small
             if 'num_heads' in params:  # num attention heads per stage
                 self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
-            if 'HAT_layers' in params:  # using hierarchical attention per stage
-                self.HAT_layers = tuple([e == 'True' for e in params['HAT_layers'].split(',')])
+            if 'ct_layers' in params:  # using carrier token attention per stage
+                self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
             else:
-                self.HAT_layers = tuple([False, False, False, False])
+                self.ct_layers = tuple([False, False, False, False])
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
