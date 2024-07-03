@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.utils.benchmark as benchmark
 from torch.profiler import profile, record_function, ProfilerActivity
+import ocnn
 from ocnn.octree import Points, Octree
 import MinkowskiEngine as ME
 
@@ -21,6 +22,8 @@ def get_dummy_input(params: TrainingParams, input_size: int):
         points = Points(x)
         octree = Octree(params.octree_depth, full_depth=2)
         octree.build_octree(points)
+        # NOTE: EVEN FOR A SINGLE SAMPLE, MERGE OCTREES MUST BE CALLED
+        octree = ocnn.octree.merge_octrees([octree])
         octree.construct_all_neigh()
         input = {'octree': octree}
     else:  # sparse tensor
@@ -35,19 +38,22 @@ def get_dummy_input(params: TrainingParams, input_size: int):
 if __name__ == "__main__":
     device = torch.device('cuda')
     input_size = 4096
-    repetitions = 1000
+    repetitions = 300
     configs = {}
     model_configs = {}
     configs['minkloc'] = '../config/config_baseline.txt'
     model_configs['minkloc'] = '../models/minkloc3dv2.txt'
     configs['octfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched100_350.txt'
     model_configs['octfloc'] = '../models/octformer_4stage_18blocks_2ndstage_2ds_2topdown_cfg.txt'
-    # configs['octfloc'] = '../config/config_baseline_octf_depth6_lr1e-4.txt'
-    # model_configs['octfloc'] = '../models/octformer_1stage_noFPN_cfg.txt'
+    configs['octfloc1stage'] = '../config/config_baseline_octf_depth6_lr1e-4.txt'
+    model_configs['octfloc1stage'] = '../models/octformer_1stage_noFPN_cfg.txt'
+    configs['hotfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched100_350.txt'
+    model_configs['hotfloc'] = '../models/hotformer_4stage_2-18-2-2_cfg.txt'
     for model_type in configs.keys():
         print(f"EVALUATING {model_configs[model_type]} RUNTIME...")
         params = TrainingParams(configs[model_type], model_configs[model_type])
         model = model_factory(params.model_params).to(device)
+        model.eval()
 
         # MEASURE DATA PRE-PROCESS TIME
         pre_process_timer = benchmark.Timer(
