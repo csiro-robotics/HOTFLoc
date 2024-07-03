@@ -18,11 +18,12 @@ class OctreeDropPath(torch.nn.Module):
     residual blocks, following the logic of :func:`timm.models.layers.DropPath`.
 
     Args:
-        drop_prob (int): The probability of drop paths.
+        drop_prob (int): The probability of dropping paths.
         nempty (bool): Indicate whether the input data only contains features of
             the non-empty octree nodes or not.
         scale_by_keep (bool): Whether to scale the kept features proportionally.
         dilated_windows (bool): Whether dilation is being used.
+        use_ct (bool): Whether carrier tokens are being used.
     '''
 
     def __init__(self, drop_prob: float = 0.0, nempty: bool = False,
@@ -72,9 +73,9 @@ class OctreeDropPath(torch.nn.Module):
                     #       dilation), and it doesn't matter anyways since it is
                     #       just padding that will be getting dropped.
                 else:  # HAT attn (window + CT)
-                    batch_id = octree.hat_batch_idx[depth]
-                    # Assume padding idx as part of last batch
-                    batch_id = batch_id.minimum(torch.tensor(batch_size - 1))                    
+                    batch_id = octree.hat_batch_window_idx[depth]
+            # Assume padding idx as part of last batch
+            batch_id = batch_id.minimum(torch.tensor(batch_size - 1))                    
 
         drop_mask = rnd_tensor[batch_id]
         output = data * drop_mask

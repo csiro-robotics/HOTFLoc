@@ -19,7 +19,7 @@ from ocnn.octree import Octree
 def pad_sequence(batch_list, fill_value: int = 0) -> torch.Tensor:
     """
     Collate list of different size tensors into a batch via padding. I found
-    this implementation faster than torch.nn.utils.rnn.pad_sequence(). 
+    this implementation faster than torch.nn.utils.rnn.pad_sequence().
     """
     data_padded_list = []
     max_size = max([row.size(0) for row in batch_list])
@@ -30,7 +30,7 @@ def pad_sequence(batch_list, fill_value: int = 0) -> torch.Tensor:
             )
         )
     data_padded = torch.stack(data_padded_list)
-    return data_padded        
+    return data_padded
 
 
 class OctreeT(Octree):
@@ -60,7 +60,7 @@ class OctreeT(Octree):
 
         num = self.max_depth + 1
         self.batch_idx = [None] * num
-        self.hat_batch_idx = [None] * num
+        self.hat_batch_window_idx = [None] * num
         self.ct_batch_idx = [None] * num
         self.batch_boundary = [None] * num
         self.batch_num_windows = [None] * num
@@ -79,7 +79,6 @@ class OctreeT(Octree):
             self.build_batch_idx(d)
             self.build_batch_boundary(d)
             self.build_attn_mask(d)
-            self.build_ct_attn_mask(d)
             self.build_rel_pos(d)
 
     def build_batch_idx(self, depth: int):
@@ -106,7 +105,7 @@ class OctreeT(Octree):
         # mask[overlap_idx, :self.ct_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP CTs
         # mask[overlap_idx, :self.ct_size] = mask[overlap_idx].mode(dim=1, keepdim=True).values  # KEEP OVERLAP CTs FOR BATCH ELEMENT WITH MORE DATA
         ##### OLD CODE #####
-        self.hat_batch_idx[depth] = hat_batch_window
+        self.hat_batch_window_idx[depth] = hat_batch_window
 
         # Build idx for CT global attn
         # TODO: ensure this works with ct_size > 1
@@ -116,7 +115,7 @@ class OctreeT(Octree):
     def build_batch_boundary(self, depth: int):
         """
         Get the boundary indices for each batch elem. Useful for separating CTs
-        into batches with torch.tensor_split().
+        into batches with torch.split().
         """
         if self.ct_size == 0:
             return
@@ -128,14 +127,28 @@ class OctreeT(Octree):
         batch_boundary_floor = batch_nnum_cumsum // self.patch_size
         # Get number of leftover points in last window of each batch
         batch_window_remainder = batch_nnum_cumsum % self.patch_size
+        # TODO: Remove the next two class variables, as they are only used in
+        #       debugging currently.
         # Create mask for batch windows that contain overlapping batch data
-        self.batch_window_overlap_mask[depth] = batch_window_remainder.masked_fill(batch_window_remainder != 0, 1)
+        self.batch_window_overlap_mask[depth] = batch_window_remainder.masked_fill(
+            batch_window_remainder != 0, 1
+        )
         # Correct indices for splitting with tensor_split
-        self.batch_boundary[depth] = batch_boundary_floor + self.batch_window_overlap_mask[depth]
-        # Also get number of windows per batch elem, inclusive of overlap with next elem (used for torch.split)
-        self.batch_num_windows[depth] = torch.diff(self.batch_boundary[depth], prepend=torch.zeros(1)).int()
-        
+        self.batch_boundary[depth] = batch_boundary_floor \
+                                     + self.batch_window_overlap_mask[depth]
+        # Also get number of windows per batch elem, inclusive of overlap with
+        #   next elem (used for torch.split)
+        self.batch_num_windows[depth] = torch.diff(
+            self.batch_boundary[depth], prepend=torch.zeros(1)
+        ).int()
+
     def build_attn_mask(self, depth: int):
+        """
+        Compute attention masks for window attention and carrier token attention,
+        so that attention ignores padding and all CTs that contain neighbouring
+        batch information.
+        """
+        # Window and dilation masks
         batch = self.batch_idx[depth]
         mask = batch.view(-1, self.patch_size)
         self.patch_mask[depth] = self._calc_attn_mask(mask)
@@ -143,38 +156,32 @@ class OctreeT(Octree):
         mask = batch.view(-1, self.patch_size, self.dilation)
         mask = mask.transpose(1, 2).reshape(-1, self.patch_size)
         self.dilate_mask[depth] = self._calc_attn_mask(mask)
-    
-        if self.ct_size == 0:
-            return
-        # Patch + CT mask (HAT)
-        # TODO: check this works with ct_size > 1
-        # NOTE: Currently, overlapping CTs are not masked out, and instead are
-        #       masked so that they only attend to features from the leftmost
-        #       batch element (i.e. floor of the batches they belong to)
-        mask = self.hat_batch_idx[depth]
-        self.hat_window_mask[depth] = self._calc_attn_mask(mask)
-        
-    def build_ct_attn_mask(self, depth: int):
-        """
-        Compute attention mask for carrier tokens, so that attention ignores
-        padding and all CTs that contain neighbouring batch information.
-        """
-        # NOTE: Currently, overlapping CTs are not masked out, and instead are
-        #       masked so that they only attend to features from the leftmost
-        #       batch element (i.e. floor of the batches they belong to)
-        if self.ct_size == 0:
-            return
-        # TODO: make this work for ct_size > 1
-        batch_num_windows_list = self.batch_num_windows[depth].tolist()
-        batch_windows = self.batch_idx[depth].view(-1, self.patch_size)  # batch idx of each window
-        batch_windows_split = batch_windows.split(batch_num_windows_list)
-        # Pad with values higher than batch size will ever be, to ensure fill overrides batch idx per window
-        batch_windows_padded = pad_sequence(batch_windows_split, fill_value=(self.batch_size + 1e4))
-        # Use left-most batch idx for carrier tokens
-        mask = batch_windows_padded.min(dim=2).values
-        self.ct_mask[depth] = self._calc_attn_mask(mask)
 
-        # NOTE: Below is the start of code to correct mask for overlap windows, so that batch element with higher overlap is unmasked
+        # Window + CT mask (HAT)
+        if self.ct_size == 0:
+            return
+        # NOTE: Currently, overlapping CTs are not masked out, and instead are
+        #       masked so that they only attend to features from the leftmost
+        #       batch element they belong to
+        # TODO: check this works with ct_size > 1
+        mask = self.hat_batch_window_idx[depth]
+        self.hat_window_mask[depth] = self._calc_attn_mask(mask)
+
+        # CT Mask
+        batch_num_windows_list = self.batch_num_windows[depth].tolist()
+        mask = batch.view(-1, self.patch_size)
+        mask_split = mask.split(batch_num_windows_list)
+        # Pad with values higher than batch size will ever be, to ensure fill
+        #   overrides batch idx per window
+        mask_padded = pad_sequence(
+            mask_split, fill_value=(self.batch_size + 1e4)
+        )
+        # Use left-most batch idx for carrier tokens
+        mask_padded = mask_padded.min(dim=2).values
+        self.ct_mask[depth] = self._calc_attn_mask(mask_padded)
+
+        # # NOTE: Below is the start of code to correct mask for overlap windows,
+        # #       so that batch element with higher overlap is unmasked
         # mode_max_mask = (batch_windows.max(dim=1).values == batch_windows.mode(dim=1).values)
         # torch.nonzero(mode_max_mask == False)
 
@@ -203,33 +210,37 @@ class OctreeT(Octree):
 
     def patch_reverse(self, data: torch.Tensor, depth: int):
         return data[:self.nnum_t[depth]]
-    
-    def data_to_windows(self, data: torch.Tensor, depth: int, dilated_windows: bool, fill_value=0):
+
+    def data_to_windows(self, data: torch.Tensor, depth: int,
+                        dilated_windows: bool, fill_value=0):
         """
         Reshape octree data into windows. This function applies padding and
         dilation, so just pass the octree features, depth, and whether dilated
         windows should be used.
-        
+
         Inputs:
             data (Tensor): Octree data, which must have shape (N, C)
         """
         C = data.size(-1)
         data = self.patch_partition(data, depth, fill_value)  # (N*K, C)
         if dilated_windows:  # account for dilation
-            data = data.view(-1, self.patch_size, self.dilation, C).transpose(1, 2).reshape(-1, C)
+            data = data.view(-1, self.patch_size,
+                             self.dilation, C).transpose(1, 2).reshape(-1, C)
         return data.view(-1, self.patch_size, C)  # (N, K, C)
-    
-    def windows_to_data(self, data: torch.Tensor, depth: int, dilated_windows: bool):
+
+    def windows_to_data(self, data: torch.Tensor, depth: int,
+                        dilated_windows: bool):
         """
         Reshape octree windows back into original shape. This function accounts
         for padding and dilation, so just pass the octree features, depth, and
         whether dilated windows are used.
-        
+
         Inputs:
             data (Tensor): Octree window data, which must have shape (N, K, C)
         """
         C = data.size(-1)
         data = data.reshape(-1, C)  # (N*K, C)
         if dilated_windows:  # account for dilation
-            data = data.view(-1, self.dilation, self.patch_size, C).transpose(1, 2).reshape(-1, C)
+            data = data.view(-1, self.dilation,
+                             self.patch_size, C).transpose(1, 2).reshape(-1, C)
         return self.patch_reverse(data, depth)

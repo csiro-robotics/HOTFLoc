@@ -45,7 +45,7 @@ def model_factory(model_params: ModelParams):
                              stem_down=model_params.num_input_downsamples, ct_size=model_params.ct_size,
                              downsample_input_embeddings=model_params.downsample_input_embeddings,
                              grad_checkpoint=model_params.grad_checkpoint, disable_RPE=model_params.disable_RPE,
-                             conv_norm=model_params.conv_norm)
+                             conv_norm=model_params.conv_norm, layer_scale=model_params.layer_scale)
         pooling = PoolingWrapper(pool_method=model_params.pooling, in_dim=model_params.feature_size,
                                  output_dim=model_params.output_dim)
         model = OctFormerLoc(backbone=backbone, pooling=pooling, normalize_embeddings=model_params.normalize_embeddings,

@@ -18,7 +18,7 @@ from typing import Optional, List, Dict
 from torch.utils.checkpoint import checkpoint
 from models.octree import OctreeT, pad_sequence
 from models.layers.mask_powernorm import MaskPowerNorm
-from models.layers.octree_drop import OctreeDropPath 
+from models.layers.octree_drop import OctreeDropPath
 
 
 def get_norm_layer(channels: int, norm_type: str = 'batchnorm'):
@@ -189,21 +189,15 @@ class OctreeAttention(torch.nn.Module):
         D = self.dilation
         G = self.ct_per_window
 
-        # TODO: do patch partition and reshaping outside of attn block
-        # # patch partition
-        # data = octree.patch_partition(data, depth)
-        # TODO: CTs need to be considered in patch mask
         if D > 1:  # dilation
             rel_pos = octree.dilate_pos[depth]
             mask = octree.dilate_mask[depth]
-            # data = data.view(-1, K, D, C).transpose(1, 2).reshape(-1, C)
         else:
             rel_pos = octree.rel_pos[depth]
             if G > 0:  # get correct mask for HAT attention
                 mask = octree.hat_window_mask[depth]
             else:
                 mask = octree.patch_mask[depth]
-        # data = data.view(-1, K, C)
 
         # qkv
         qkv = self.qkv(data).reshape(-1, K+G, 3, H, C // H).permute(2, 0, 3, 1, 4)
@@ -216,14 +210,7 @@ class OctreeAttention(torch.nn.Module):
         attn = attn + mask.unsqueeze(1)
         attn = self.softmax(attn)
         attn = self.attn_drop(attn)
-        # data = (attn @ v).transpose(1, 2).reshape(-1, C)  # (N*(K+G), C)
         data = (attn @ v).transpose(1, 2).reshape(-1, K+G, C)  # (N, K+G, C)
-
-        # TODO: check if this can be done outside of attn, or if proj requires it before
-        # # patch reverse
-        # if D > 1:  # dilation
-        #     data = data.view(-1, D, K, C).transpose(1, 2).reshape(-1, C)
-        # data = octree.patch_reverse(data, depth)
 
         # ffn
         data = self.proj(data)
@@ -245,8 +232,6 @@ class OctreeAttention(torch.nn.Module):
 
 
 class CTAttention(torch.nn.Module):
-    # TODO: implement this, check if I need to precompute max num carrier tokens?
-
     def __init__(self, dim: int, patch_size: int, num_heads: int,
                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
                 attn_drop: float = 0.0, proj_drop: float = 0.0,
@@ -272,43 +257,44 @@ class CTAttention(torch.nn.Module):
         """
         # self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
 
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
+    def forward(self, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
+        ct = carrier_tokens
         B = octree.batch_size
         H = self.num_heads
         C = self.dim
 
         # split CTs into batches for each batch elem, padded to size of largest batch
         batch_num_windows = octree.batch_num_windows[depth]
-        data = data.split(batch_num_windows.tolist())        
+        ct = ct.split(batch_num_windows.tolist())
         ### OLD METHOD ###
         # batch_boundary = octree.batch_boundary[depth]
         # data = data.tensor_split(batch_boundary)[:octree.batch_size]
         ##################
-        data = pad_sequence(data)
-        
+        ct = pad_sequence(ct)
+
         # get CT attn mask
         ct_mask = octree.ct_mask[depth]
-        
+
         # qkv
-        qkv = self.qkv(data).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(ct).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
         q = q * self.scale
-        
+
         # attn
         attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
         # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
         attn = attn + ct_mask.unsqueeze(1)
         attn = self.softmax(attn)
         attn = self.attn_drop(attn)
-        data = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+        ct = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
 
         # Undo padding
-        data = torch.cat(unpad_sequence(data, batch_num_windows, batch_first=True))
+        ct = torch.cat(unpad_sequence(ct, batch_num_windows, batch_first=True))
 
         # ffn
-        data = self.proj(data)
-        data = self.proj_drop(data)
-        return data
+        ct = self.proj(ct)
+        ct = self.proj_drop(ct)
+        return ct
 
     def apply_rpe(self, attn, rel_pos):
         if self.use_rpe:
@@ -332,21 +318,21 @@ class OctFormerBlock(torch.nn.Module):
                 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
                 activation: torch.nn.Module = torch.nn.GELU, use_ct: bool = False,
                 ct_size: int = 1, disable_RPE: bool = False,
-                conv_norm: str = 'batchnorm', **kwargs):
+                conv_norm: str = 'batchnorm',
+                layer_scale: Optional[float] = None, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
-        dilation = 1 if self.use_ct else dilation        
-        self.dilated_windows = dilation > 1
-        ct_per_window = ct_size if self.use_ct else 0  # track number of carrier tokens per window
-        self.ct_per_window = ct_per_window
         """ NOTE: Dilation is disabled when using carrier tokens, as it is
         likely redundant to use both (and carrier tokens for dilated windows
         does not make sense).
         """
-        # TODO: Add per-channel learnable scalars to attn and ffn (gamma from FasterViT)
+        dilation = 1 if self.use_ct else dilation
+        self.dilated_windows = dilation > 1
+        ct_per_window = ct_size if self.use_ct else 0  # track number of carrier tokens per window
+        self.ct_per_window = ct_per_window
+        use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
         self.norm1 = torch.nn.LayerNorm(dim)
-        # TODO: alter octree attention for HAT
         self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
                                          qk_scale, attn_drop, proj_drop, dilation,
                                          ct_per_window=ct_per_window,
@@ -356,6 +342,11 @@ class OctFormerBlock(torch.nn.Module):
         self.drop_path = OctreeDropPath(drop_path, nempty,
                                         dilated_windows=self.dilated_windows)
         self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
+        # Learnable per-channel scale multiplier, originally proposed by
+        #   https://arxiv.org/pdf/2103.17239
+        self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
+        self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
+
         if self.use_ct:  # carrier token attention layers
             # TODO: may need another PE here as any conv-based ones may not work (since CTs are outside of octree structure)
             # self.ct_cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
@@ -367,6 +358,8 @@ class OctFormerBlock(torch.nn.Module):
             self.ct_norm2 = torch.nn.LayerNorm(dim)
             self.ct_mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
             self.ct_drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
+            self.ct_gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
+            self.ct_gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
     def forward(self, data: torch.Tensor, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
         ct = carrier_tokens
@@ -380,23 +373,23 @@ class OctFormerBlock(torch.nn.Module):
             # Do global attention via carrier tokens
             # TODO: carrier token PE
             # ct = self.hat_cpe(ct, octree, depth) + ct
-            ct_attn = self.ct_attention(self.ct_norm1(ct), octree, depth)
+            ct_attn = self.ct_gamma1*self.ct_attention(self.ct_norm1(ct), octree, depth)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
-            ct_ffn = self.ct_mlp(self.ct_norm2(ct))
-            ct = ct + self.ct_drop_path(ct_ffn, octree, depth)            
+            ct_ffn = self.ct_gamma2*self.ct_mlp(self.ct_norm2(ct))
+            ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
             # Concatenate carrier tokens with window tokens
             data = torch.cat((ct.unsqueeze(1), data), dim=1)
 
-        attn = self.attention(self.norm1(data), octree, depth)
+        attn = self.gamma1*self.attention(self.norm1(data), octree, depth)
         data = data + self.drop_path(attn, octree, depth)
-        ffn = self.mlp(self.norm2(data))
+        ffn = self.gamma2*self.mlp(self.norm2(data))
         data = data + self.drop_path(ffn, octree, depth)
 
-        # TODO: Split CTs from window tokens
+        # Split CTs from window tokens
         if self.use_ct:
             ct, data = data.split([self.ct_per_window, self.patch_size], dim=1)
             ct = ct.squeeze(1)
-        
+
         # Unpad batch and restore original data shape
         data = octree.windows_to_data(
             data, depth, dilated_windows=self.dilated_windows
@@ -430,8 +423,8 @@ class TokenInitialiser(torch.nn.Module):
         only way to prevent this (that I can tell) is to redo the OCNN batch
         implementation to include padding around each batch element. Instead,
         I opt to ignore 'leaky' window features during global attention. This
-        should be fine most of the time as a max of 2 windows will be ignored
-        per batch, typically out of 100s, but isn't the optimal solution.
+        should be fine most of the time as a max of 1 window will be ignored
+        per batch element, typically out of 100s, but isn't the optimal solution.
         """
         # Pool the features in each octree window, without considering surrounding features
         assert patch_size % ct_size == 0, "Currently, patch_size must be divisible by ct_size"
@@ -444,22 +437,18 @@ class TokenInitialiser(torch.nn.Module):
         K = self.patch_size
         C = self.dim
         G = self.ct_size
-        
+
         data = self.cpe(data, octree, depth)
         data = octree.patch_partition(data, depth)
-        # Reshape to avg pool over spatial dimension
-        # data = data.permute(1, 0).unsqueeze(0)
-        # ct = self.pool(data)
-        # ct = ct.squeeze(0).permute(1, 0)  # (batch_CTs, C)
-
         # Reshape to windows, and mask out ignored values as NaN
         # TODO: Make this work with ct_size > 1
         data = data.view(-1, K//G, C)
         mask = octree.ct_init_mask[depth].unsqueeze(-1)
         data = data.masked_fill(mask, torch.nan)
-        # AvgPool1D can't handle NaNs, so use nanmean() instead
+        # Avg pool over spatial dimension
+        # NOTE: AvgPool1D can't handle NaNs, so use nanmean() instead
         ct = torch.nanmean(data, dim=1)
-        assert(not torch.any(ct.isnan())), "NaN propagated during CT init, check code"        
+        assert(not torch.any(ct.isnan())), "NaN propagated during CT init, check code"
         return ct
 
 class OctFormerStage(torch.nn.Module):
@@ -471,7 +460,8 @@ class OctFormerStage(torch.nn.Module):
                 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
                 disable_RPE: bool = False, use_ct: bool = False, ct_size: int = 1,
                 grad_checkpoint: bool = True, num_blocks: int = 2,
-                conv_norm: str = 'batchnorm', octformer_block=OctFormerBlock,
+                conv_norm: str = 'batchnorm', layer_scale: Optional[float] = None,
+                octformer_block=OctFormerBlock,
                 **kwargs):
         super().__init__()
         self.num_blocks = num_blocks
@@ -487,8 +477,8 @@ class OctFormerStage(torch.nn.Module):
                 attn_drop=attn_drop, proj_drop=proj_drop,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 nempty=nempty, activation=activation, disable_RPE=disable_RPE,
-                use_ct=use_ct, ct_size=ct_size,
-                conv_norm=conv_norm) for i in range(num_blocks)])
+                use_ct=use_ct, ct_size=ct_size, conv_norm=conv_norm,
+                layer_scale=layer_scale) for i in range(num_blocks)])
         if self.use_ct:
             self.global_tokeniser = TokenInitialiser(dim,
                                                      patch_size=patch_size,
@@ -555,7 +545,7 @@ class Downsample(torch.nn.Module):
                 conv_norm: str = 'batchnorm'):
         super().__init__()
         self.conv = ocnn.nn.OctreeConv(in_channels, out_channels, kernel_size,
-                                    stride=2, nempty=nempty, use_bias=True)		
+                                    stride=2, nempty=nempty, use_bias=True)
         self.norm = get_norm_layer(out_channels, conv_norm)
 
     def forward(self, data: torch.Tensor, octree: Octree, depth: int):
@@ -573,9 +563,10 @@ class OctFormerBase(torch.nn.Module):
                 ct_layers: List[bool] = [False, False, False, False],
                 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
                 nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
-                grad_checkpoint: bool = True, 
+                grad_checkpoint: bool = True,
                 downsample_input_embeddings: bool = True,
-                disable_RPE: bool = False, conv_norm: str = 'batchnorm', **kwargs):
+                disable_RPE: bool = False, conv_norm: str = 'batchnorm',
+                layer_scale: Optional[float] = None, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dilation = dilation
@@ -594,7 +585,8 @@ class OctFormerBase(torch.nn.Module):
                 drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
                 dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
                 grad_checkpoint=grad_checkpoint, num_blocks=num_blocks[i],
-                conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size)
+                conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
+                layer_scale=layer_scale)
                 for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
                 channels[i], channels[i + 1], kernel_size=[2],
@@ -643,10 +635,10 @@ class FPNHeader(torch.nn.Module):
 
         # Top-down pass
         data = self.conv1x1[0](features[depth])
-        for i in range(self.num_top_down):      
+        for i in range(self.num_top_down):
             data = self.up_conv[i](data, octree, depth + i)
             data = data + self.conv1x1[i + 1](features[depth + i + 1])
-        
+
         return data, output_depth
 
 
@@ -667,7 +659,8 @@ class OctFormer(torch.nn.Module):
                 nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
                 num_top_down: int = 2, fpn_channel: int = 168,
                 grad_checkpoint: bool = True, downsample_input_embeddings: bool = True,
-                disable_RPE: bool = False, conv_norm: str = 'batchnorm', **kwargs):
+                disable_RPE: bool = False, conv_norm: str = 'batchnorm',
+                layer_scale: Optional[float] = None, **kwargs):
         """
         Args:
             in_channels: Number of input channels, typically 3 if only using x,y,z information.
@@ -675,24 +668,26 @@ class OctFormer(torch.nn.Module):
             num_blocks: List containing number of OctFormer blocks per stage.
             num_heads: List containing number of attention heads per stage, defaults to channel_size//16.
             ct_layers: List of booleans indicating which stages should use carrier tokens (ct).
-            patch_size: Size of local attention patches/windows, constructed using z-order curve traversal. 
+            patch_size: Size of local attention patches/windows, constructed using z-order curve traversal.
             dilation: Dilation amount for Octree attention
             drop_path: Stochastic depth probability (this is the max value stochastic depth scales to).
-            nempty: Boolean indicating if only non-empty octants should be used (set True for sparse operation). 
+            nempty: Boolean indicating if only non-empty octants should be used (set True for sparse operation).
             stem_down: Number of conv layers to use for input token embeddings, which corresponds to 2**stem_down downsampling factor.
             ct_size: Size of carrier tokens, note that patch_size must be divisible by this.
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
-            fpn_channel: Number of channels in FPN top-down branch. For now, set this equal to number of channels used in Pooling (i.e. output_dim param).
+            fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
             downsample_input_embeddings: Do downsampling in input conv embedding.
             disable_RPE: Disable RPE during self-attention.
-            conv_norm: Type of normalisation used after convolution layers. Valid params are in ['batchnorm', 'layernorm', 'powernorm'].
+            conv_norm: Type of normalisation used after convolution layers, valid params are in ['batchnorm', 'layernorm', 'powernorm'].
+            layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
         """
         super().__init__()
         self.backbone = OctFormerBase(
-            in_channels, channels, num_blocks, num_heads, ct_layers, 
+            in_channels, channels, num_blocks, num_heads, ct_layers,
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
-            grad_checkpoint, downsample_input_embeddings, disable_RPE, conv_norm
+            grad_checkpoint, downsample_input_embeddings, disable_RPE, conv_norm,
+            layer_scale
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
         self.apply(self.init_weights)

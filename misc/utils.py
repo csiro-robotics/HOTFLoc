@@ -93,6 +93,7 @@ class ModelParams:
             self.disable_RPE = params.getboolean('disable_RPE', False)
             self.conv_norm = params.get('conv_norm', 'batchnorm')  # choose normalisation layer after convolution layers
             assert self.conv_norm in ['batchnorm', 'layernorm', 'powernorm']
+            self.layer_scale = params.getfloat('layer_scale', None)  # coefficient to initialise learnable channel-wise scalar multipliers for attention outputs, or None to disable this.
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
 
     def print(self):
