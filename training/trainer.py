@@ -10,6 +10,7 @@ import pathlib
 import wandb
 import wandb_osh
 from wandb_osh.hooks import TriggerWandbSyncHook
+os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
 wandb_osh.set_log_level("ERROR")
 
 from misc.utils import TrainingParams, get_datetime
