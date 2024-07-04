@@ -16,4 +16,4 @@ source /scratch3/gri317/venvs/hot-net/bin/activate
 cd training/
 python train.py \
 	--config '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt' \
-	--model_config '../models/hotformer_4stage_2-18-2-2_layerscale1e-5_cfg.txt' \
+	--model_config '../models/hotformer_4stage_2-18-2-2_no-ctprop_layerscale1e-5_cfg.txt' \
