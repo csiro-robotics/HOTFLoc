@@ -113,44 +113,6 @@ class ModelParams:
         print('')
 
 
-def get_datetime():
-    return time.strftime("%Y%m%d_%H%M")
-
-
-def set_seed(seed: int = 42):
-    """
-    Enable (mostly) deterministic behaviour in PyTorch.
-    """
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    np.random.seed(seed)
-    random.seed(seed)
-    
-def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
-    """ Rescale points stored in octree to original scale.
-
-    Args:
-        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
-        depth (int): Octree depth used to rescale values
-    """
-    # normalize points to [-1, 1] since octree points are in range [0, 2^d]
-    scale = 2 ** (1 - depth)
-    points_scaled = points * scale - 1.0
-    return points_scaled
-
-def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
-    ''' Converts averaged points in the octree to a point cloud.
-
-    Args:
-        octree (Octree): The octree to convert to a point cloud.
-        depth (int): Octree depth to query points from.
-    '''
-    points = octree.points[depth]
-    points_scaled = rescale_octree_points(points, depth)
-    return points_scaled
-
 class TrainingParams:
     """
     Parameters for model training
@@ -272,3 +234,45 @@ class TrainingParams:
         self.model_params.print()
         print('')
 
+
+"""
+Useful Functions
+"""
+def get_datetime():
+    return time.strftime("%Y%m%d_%H%M")
+
+def set_seed(seed: int = 42):
+    """
+    Enable (mostly) deterministic behaviour in PyTorch.
+    """
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
+    random.seed(seed)
+    
+def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
+    """ 
+    Rescale points stored in octree to original scale.
+
+    Args:
+        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
+        depth (int): Octree depth used to rescale values
+    """
+    # normalize points to [-1, 1] since octree points are in range [0, 2^d]
+    scale = 2 ** (1 - depth)
+    points_scaled = points * scale - 1.0
+    return points_scaled
+
+def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
+    """
+    Converts averaged points in the octree to a point cloud.
+
+    Args:
+        octree (Octree): The octree to convert to a point cloud.
+        depth (int): Octree depth to query points from.
+    """
+    points = octree.points[depth]
+    points_scaled = rescale_octree_points(points, depth)
+    return points_scaled
