@@ -6,6 +6,7 @@ num_heads=8,16,8,4
 ct_layers=False,True,True,True
 ct_size=1
 ct_propagation=True
+ct_propagation_scale=0.1
 num_top_down=2
 patch_size=32
 input_features=P
