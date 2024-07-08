@@ -251,10 +251,9 @@ class CTAttention(torch.nn.Module):
         self.proj_drop = torch.nn.Dropout(proj_drop)
         self.softmax = torch.nn.Softmax(dim=-1)
 
-        """ NOTE: RPE table is currently constructed using relative pos of
-        octree nodes, but this is not so easy to do for CTs. Need to determine
-        how to do this, maybe using Swinv2 continuous RPE.
-        """
+        # NOTE: RPE table is currently constructed using relative pos of
+        #       octree nodes, but this is not so easy to do for CTs. Need to
+        #       determine how to do this, maybe using Swinv2 continuous RPE.
         # self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
 
     def forward(self, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
@@ -312,6 +311,7 @@ class OctFormerBlock(torch.nn.Module):
     with Hierarchical Attention (HAT) design inspired by
     https://github.com/NVlabs/FasterViT.
     """
+    
     def __init__(self, dim: int, num_heads: int, patch_size: int = 32,
                 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
                 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
@@ -323,10 +323,9 @@ class OctFormerBlock(torch.nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
-        """ NOTE: Dilation is disabled when using carrier tokens, as it is
-        likely redundant to use both (and carrier tokens for dilated windows
-        does not make sense).
-        """
+        # NOTE: Dilation is disabled when using carrier tokens, as it is
+        #       likely redundant to use both (and carrier tokens for dilated
+        #       windows does not make sense).
         self.dim = dim
         dilation = 1 if self.use_ct else dilation
         self.dilated_windows = dilation > 1
@@ -346,7 +345,7 @@ class OctFormerBlock(torch.nn.Module):
                                         dilated_windows=self.dilated_windows)
         self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
         # Learnable per-channel scale multiplier, originally proposed by
-        #   https://arxiv.org/pdf/2103.17239
+        # https://arxiv.org/pdf/2103.17239
         self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
         self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
@@ -384,16 +383,16 @@ class OctFormerBlock(torch.nn.Module):
             # Do global attention via carrier tokens
             # TODO: carrier token PE
             # ct = self.hat_cpe(ct, octree, depth) + ct
-            ct_attn = self.ct_gamma1*self.ct_attention(self.ct_norm1(ct), octree, depth)
+            ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
-            ct_ffn = self.ct_gamma2*self.ct_mlp(self.ct_norm2(ct))
+            ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
             ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
             # Concatenate carrier tokens with window tokens
             data = torch.cat((ct.unsqueeze(1), data), dim=1)
 
-        attn = self.gamma1*self.attention(self.norm1(data), octree, depth)
+        attn = self.gamma1 * self.attention(self.norm1(data), octree, depth)
         data = data + self.drop_path(attn, octree, depth)
-        ffn = self.gamma2*self.mlp(self.norm2(data))
+        ffn = self.gamma2 * self.mlp(self.norm2(data))
         data = data + self.drop_path(ffn, octree, depth)
 
         # Split CTs from window tokens
@@ -420,8 +419,9 @@ class OctFormerBlock(torch.nn.Module):
 class TokenInitialiser(torch.nn.Module):
     """
     Carrier token Initialiser based on: "Hatamizadeh et al.,
-    FasterViT: Fast Vision Transformers with Hierarchical Attention
+    FasterViT: Fast Vision Transformers with Hierarchical Attention.
     """
+    
     def __init__(self, dim, patch_size, nempty, conv_norm, ct_size=1):
         """
         Args:
@@ -434,16 +434,17 @@ class TokenInitialiser(torch.nn.Module):
         """
         super().__init__()
         self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
-        """ NOTE: Currently, because of how octree windows are constructed,
-        consecutive batch elements can have an octree window with elements
-        from both batches. This means avgpooled features for 'leaky' windows
-        will contain features from 2 batch elements, and not be valid. The
-        only way to prevent this (that I can tell) is to redo the OCNN batch
-        implementation to include padding around each batch element. Instead,
-        I opt to ignore 'leaky' window features during global attention. This
-        should be fine most of the time as a max of 1 window will be ignored
-        per batch element, typically out of 100s, but isn't the optimal solution.
-        """
+        # NOTE: Currently, because of how octree windows are constructed,
+        #       consecutive batch elements can have an octree window with
+        #       elements from both batches. This means avgpooled features for
+        #       'leaky' windows will contain features from 2 batch elements, and
+        #       not be valid. The only way to prevent this (that I can tell) is
+        #       to redo the OCNN batch implementation to include padding around
+        #       each batch element. Instead, I opt to ignore 'leaky' window
+        #       features during global attention. This should be fine most of
+        #       the time as a max of 1 window will be ignored per batch element,
+        #       typically out of 100s, but isn't the optimal solution.
+
         # Pool the features in each octree window, without considering surrounding features
         assert patch_size % ct_size == 0, "Currently, patch_size must be divisible by ct_size"
         # self.pool = torch.nn.AvgPool1d(kernel_size=patch_size//ct_size)

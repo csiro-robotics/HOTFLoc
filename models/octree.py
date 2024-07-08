@@ -137,7 +137,7 @@ class OctreeT(Octree):
         self.batch_boundary[depth] = batch_boundary_floor \
                                      + self.batch_window_overlap_mask[depth]
         # Also get number of windows per batch elem, inclusive of overlap with
-        #   next elem (used for torch.split)
+        # next elem (used for torch.split)
         self.batch_num_windows[depth] = torch.diff(
             self.batch_boundary[depth], prepend=torch.zeros(1)
         ).int()
@@ -172,7 +172,7 @@ class OctreeT(Octree):
         mask = batch.view(-1, self.patch_size)
         mask_split = mask.split(batch_num_windows_list)
         # Pad with values higher than batch size will ever be, to ensure fill
-        #   overrides batch idx per window
+        # overrides batch idx per window
         mask_padded = pad_sequence(
             mask_split, fill_value=(self.batch_size + 1e4)
         )
