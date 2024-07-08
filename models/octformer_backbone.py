@@ -4,7 +4,8 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Peng-Shuai Wang
 #
-# Adapted from https://github.com/octree-nn/octformer
+# Adapted from https://github.com/octree-nn/octformer by
+# Ethan Griffiths (Data61, Pullenvale)
 # --------------------------------------------------------
 
 import torch
@@ -40,8 +41,8 @@ def get_norm_layer(channels: int, norm_type: str = 'batchnorm'):
 class MLP(torch.nn.Module):
 
     def __init__(self, in_features: int, hidden_features: Optional[int] = None,
-                out_features: Optional[int] = None, activation=torch.nn.GELU,
-                drop: float = 0.0, **kwargs):
+                 out_features: Optional[int] = None, activation=torch.nn.GELU,
+                 drop: float = 0.0, **kwargs):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features or in_features
@@ -85,8 +86,8 @@ class OctreeConvNormRelu(torch.nn.Module):
     """
 
     def __init__(self, in_channels: int, out_channels: int,
-                kernel_size: List[int] = [3], stride: int = 1,
-                nempty: bool = False, conv_norm: str = 'batchnorm'):
+                 kernel_size: List[int] = [3], stride: int = 1,
+                 nempty: bool = False, conv_norm: str = 'batchnorm'):
         super().__init__()
         self.conv = ocnn.nn.OctreeConv(
             in_channels, out_channels, kernel_size, stride, nempty)
@@ -106,8 +107,8 @@ class OctreeDeconvNormRelu(torch.nn.Module):
     """
 
     def __init__(self, in_channels: int, out_channels: int,
-                kernel_size: List[int] = [3], stride: int = 1,
-                nempty: bool = False, conv_norm: str = 'batchnorm'):
+                 kernel_size: List[int] = [3], stride: int = 1,
+                 nempty: bool = False, conv_norm: str = 'batchnorm'):
         super().__init__()
         self.deconv = ocnn.nn.OctreeDeconv(
             in_channels, out_channels, kernel_size, stride, nempty)
@@ -157,9 +158,9 @@ class RPE(torch.nn.Module):
 class OctreeAttention(torch.nn.Module):
 
     def __init__(self, dim: int, patch_size: int, num_heads: int,
-                qkv_bias: bool = True, qk_scale: Optional[float] = None,
-                attn_drop: float = 0.0, proj_drop: float = 0.0,
-                dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True):
+                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
+                 attn_drop: float = 0.0, proj_drop: float = 0.0,
+                 dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
@@ -233,10 +234,10 @@ class OctreeAttention(torch.nn.Module):
 
 class CTAttention(torch.nn.Module):
     def __init__(self, dim: int, patch_size: int, num_heads: int,
-                qkv_bias: bool = True, qk_scale: Optional[float] = None,
-                attn_drop: float = 0.0, proj_drop: float = 0.0,
-                ct_per_window: int = 0,
-                use_rpe: bool = True):
+                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
+                 attn_drop: float = 0.0, proj_drop: float = 0.0,
+                 ct_per_window: int = 0,
+                 use_rpe: bool = True):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
@@ -313,14 +314,14 @@ class OctFormerBlock(torch.nn.Module):
     """
     
     def __init__(self, dim: int, num_heads: int, patch_size: int = 32,
-                dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
-                qk_scale: Optional[float] = None, attn_drop: float = 0.0,
-                proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
-                activation: torch.nn.Module = torch.nn.GELU, use_ct: bool = False,
-                ct_size: int = 1, ct_propagation: bool = False,
-                ct_propagation_scale: Optional[float] = None,
-                disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                last: bool = False, layer_scale: Optional[float] = None, **kwargs):
+                 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
+                 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
+                 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
+                 activation: torch.nn.Module = torch.nn.GELU, use_ct: bool = False,
+                 ct_size: int = 1, ct_propagation: bool = False,
+                 ct_propagation_scale: Optional[float] = None,
+                 disable_RPE: bool = False, conv_norm: str = 'batchnorm',
+                 last: bool = False, layer_scale: Optional[float] = None, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
@@ -480,17 +481,17 @@ class TokenInitialiser(torch.nn.Module):
 class OctFormerStage(torch.nn.Module):
 
     def __init__(self, dim: int, num_heads: int, patch_size: int = 32,
-                dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
-                qk_scale: Optional[float] = None, attn_drop: float = 0.0,
-                proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
-                activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
-                disable_RPE: bool = False, use_ct: bool = False, ct_size: int = 1,
-                ct_propagation: bool = False,
-                ct_propagation_scale: Optional[float] = None,
-                grad_checkpoint: bool = True, num_blocks: int = 2,
-                conv_norm: str = 'batchnorm',
-                layer_scale: Optional[float] = None,
-                octformer_block=OctFormerBlock, **kwargs):
+                 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
+                 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
+                 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
+                 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
+                 disable_RPE: bool = False, use_ct: bool = False, ct_size: int = 1,
+                 ct_propagation: bool = False,
+                 ct_propagation_scale: Optional[float] = None,
+                 grad_checkpoint: bool = True, num_blocks: int = 2,
+                 conv_norm: str = 'batchnorm',
+                 layer_scale: Optional[float] = None,
+                 octformer_block=OctFormerBlock, **kwargs):
         super().__init__()
         self.num_blocks = num_blocks
         self.grad_checkpoint = grad_checkpoint
@@ -533,8 +534,8 @@ class OctFormerStage(torch.nn.Module):
 class PatchEmbed(torch.nn.Module):
 
     def __init__(self, in_channels: int = 3, dim: int = 96, num_down: int = 2,
-                nempty: bool = True, downsample_input_embeddings: bool = True,
-                conv_norm: str = 'batchnorm', **kwargs):
+                 nempty: bool = True, downsample_input_embeddings: bool = True,
+                 conv_norm: str = 'batchnorm', **kwargs):
         super().__init__()
         self.num_stages = num_down
         self.delta_depth = -num_down
@@ -571,8 +572,8 @@ class PatchEmbed(torch.nn.Module):
 class Downsample(torch.nn.Module):
 
     def __init__(self, in_channels: int, out_channels: int,
-                kernel_size: List[int] = [2], nempty: bool = True,
-                conv_norm: str = 'batchnorm'):
+                 kernel_size: List[int] = [2], nempty: bool = True,
+                 conv_norm: str = 'batchnorm'):
         super().__init__()
         self.conv = ocnn.nn.OctreeConv(in_channels, out_channels, kernel_size,
                                     stride=2, nempty=nempty, use_bias=True)
@@ -587,18 +588,18 @@ class Downsample(torch.nn.Module):
 class OctFormerBase(torch.nn.Module):
 
     def __init__(self, in_channels: int,
-                channels: List[int] = [96, 192, 384, 384],
-                num_blocks: List[int] = [2, 2, 18, 2],
-                num_heads: List[int] = [6, 12, 24, 24],
-                ct_layers: List[bool] = [False, False, False, False],
-                patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
-                nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
-                ct_propagation: bool = False,
-                ct_propagation_scale: Optional[float] = None,
-                grad_checkpoint: bool = True,
-                downsample_input_embeddings: bool = True,
-                disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                layer_scale: Optional[float] = None, **kwargs):
+                 channels: List[int] = [96, 192, 384, 384],
+                 num_blocks: List[int] = [2, 2, 18, 2],
+                 num_heads: List[int] = [6, 12, 24, 24],
+                 ct_layers: List[bool] = [False, False, False, False],
+                 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
+                 nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
+                 ct_propagation: bool = False,
+                 ct_propagation_scale: Optional[float] = None,
+                 grad_checkpoint: bool = True,
+                 downsample_input_embeddings: bool = True,
+                 disable_RPE: bool = False, conv_norm: str = 'batchnorm',
+                 layer_scale: Optional[float] = None, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dilation = dilation
@@ -646,7 +647,7 @@ class OctFormerBase(torch.nn.Module):
 class FPNHeader(torch.nn.Module):
 
     def __init__(self, channels: List[int], fpn_channel: int, nempty: bool,
-                num_top_down: int = 1, conv_norm: str = 'batchnorm'):
+                 num_top_down: int = 1, conv_norm: str = 'batchnorm'):
         super().__init__()
         self.num_top_down = num_top_down
         self.conv1x1 = torch.nn.ModuleList()  # lateral connections
@@ -685,19 +686,19 @@ class OctFormer(torch.nn.Module):
     """
 
     def __init__(self, in_channels: int,
-                channels: List[int] = [96, 192, 384, 384],
-                num_blocks: List[int] = [2, 2, 6, 2],  # default to OctFormer-small, with 6 instead of 18 blocks in 3rd stage (~20M vs ~40M params)
-                num_heads: List[int] = [6, 12, 24, 24],
-                ct_layers: List[bool] = [False, False, False, False],
-                patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,  # NOTE: disable drop path to ensure multistage backprop is not affected? (might only be dropout that affects it)
-                nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
-                ct_propagation: bool = False,
-                ct_propagation_scale: Optional[float] = None,
-                num_top_down: int = 2, fpn_channel: int = 168,
-                grad_checkpoint: bool = True,
-                downsample_input_embeddings: bool = True,
-                disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                layer_scale: Optional[float] = None, **kwargs):
+                 channels: List[int] = [96, 192, 384, 384],
+                 num_blocks: List[int] = [2, 2, 6, 2],  # default to OctFormer-small, with 6 instead of 18 blocks in 3rd stage (~20M vs ~40M params)
+                 num_heads: List[int] = [6, 12, 24, 24],
+                 ct_layers: List[bool] = [False, False, False, False],
+                 patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
+                 nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
+                 ct_propagation: bool = False,
+                 ct_propagation_scale: Optional[float] = None,
+                 num_top_down: int = 2, fpn_channel: int = 168,
+                 grad_checkpoint: bool = True,
+                 downsample_input_embeddings: bool = True,
+                 disable_RPE: bool = False, conv_norm: str = 'batchnorm',
+                 layer_scale: Optional[float] = None, **kwargs):
         """
         Args:
             in_channels: Number of input channels, typically 3 if only using x,y,z information.
