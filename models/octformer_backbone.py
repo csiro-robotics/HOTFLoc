@@ -155,6 +155,39 @@ class RPE(torch.nn.Module):
                         self.num_heads, self.pos_bnd, self.dilation)  # noqa
 
 
+class ADaPE(torch.nn.Module):
+    """Absolute Distribution-aware Position Encoding (ADaPE)
+
+    Small MLP network encodes carrier token centroid position (in x,y,z) and
+    covariance of underlying points.
+
+    Loosely inspired by SuperGlue Keypoint Encoder:
+    https://arxiv.org/pdf/1911.11763.
+    """
+    
+    def __init__(self, dim: int, activation: torch.nn.Module = torch.nn.GELU):
+        super().__init__()
+        self.dim = dim
+        mlp_in = 9  # 3 (x,y,z) + 6 (upper triangular of cov matrix: σx, σy, σz, σxy, σyz, σxz)
+        self.mlp = MLP(mlp_in, dim, dim, activation=activation)
+
+    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
+        # TODO: Implement
+        #       - Get CT centroids
+        #       - Compute covariance, and get upper triangular
+        #       - Pass (x,y,z,cov*) through MLP, and return PE
+        pts = octree.points[depth]
+        # need to reshape PTS into windows and compute centroids + covariance
+        
+        covariance = data.cov()
+        self.mlp()
+        return out
+
+    def extra_repr(self) -> str:
+        return 'num_heads={}, pos_bnd={}, dilation={}'.format(
+                        self.num_heads, self.pos_bnd, self.dilation)
+
+
 class OctreeAttention(torch.nn.Module):
 
     def __init__(self, dim: int, patch_size: int, num_heads: int,
@@ -254,8 +287,8 @@ class CTAttention(torch.nn.Module):
 
         # NOTE: RPE table is currently constructed using relative pos of
         #       octree nodes, but this is not so easy to do for CTs. Need to
-        #       determine how to do this, maybe using Swinv2 continuous RPE.
-        # self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
+        #       find another solution.
+        # self.rpe = ADaPE(patch_size, num_heads) if use_rpe else None
 
     def forward(self, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
         B = octree.batch_size
@@ -354,8 +387,8 @@ class OctFormerBlock(torch.nn.Module):
 
         if not self.use_ct:  # carrier token attention layers
             return
-        # TODO: may need another PE here as any conv-based ones may not work (since CTs are outside of octree structure)
-        # self.ct_cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
+        # TODO: implement PE
+        self.ct_ape = ADaPE(dim, activation)
         self.ct_norm1 = torch.nn.LayerNorm(dim)
         self.ct_attention = CTAttention(dim, patch_size, num_heads, qkv_bias,
                                         qk_scale, attn_drop, proj_drop,
@@ -389,7 +422,7 @@ class OctFormerBlock(torch.nn.Module):
         if self.use_ct:
             # Do global attention via carrier tokens
             # TODO: carrier token PE
-            # ct = self.hat_cpe(ct, octree, depth) + ct
+            ct = self.ct_ape(ct, octree, depth) + ct
             ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
             ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
