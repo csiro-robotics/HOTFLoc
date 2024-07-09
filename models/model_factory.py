@@ -65,6 +65,7 @@ def model_factory(model_params: ModelParams):
             ct_size=model_params.ct_size,
             ct_propagation=model_params.ct_propagation,
             ct_propagation_scale=model_params.ct_propagation_scale,
+            use_ADaPE=model_params.use_ADaPE,
             downsample_input_embeddings=model_params.downsample_input_embeddings,
             grad_checkpoint=model_params.grad_checkpoint,
             disable_RPE=model_params.disable_RPE,

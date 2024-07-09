@@ -15,6 +15,8 @@ import torch.nn.functional as F
 import ocnn
 from ocnn.octree import Octree
 
+from misc.utils import rescale_octree_points
+
 
 def pad_sequence(batch_list, fill_value: int = 0) -> torch.Tensor:
     """
@@ -72,6 +74,7 @@ class OctreeT(Octree):
         self.ct_init_mask  = [None] * num
         self.rel_pos = [None] * num
         self.dilate_pos = [None] * num
+        self.window_stats = [None] * num
         self.build_t()
 
     def build_t(self):
@@ -80,6 +83,7 @@ class OctreeT(Octree):
             self.build_batch_boundary(d)
             self.build_attn_mask(d)
             self.build_rel_pos(d)
+            self.compute_window_stats(d)
 
     def build_batch_idx(self, depth: int):
         # Build batch idx for regular octree operation
@@ -202,6 +206,45 @@ class OctreeT(Octree):
         xyz = xyz.view(-1, self.patch_size, self.dilation, 3)
         xyz = xyz.transpose(1, 2).reshape(-1, self.patch_size, 3)
         self.dilate_pos[depth] = xyz.unsqueeze(2) - xyz.unsqueeze(1)
+
+    def compute_window_stats(self, depth: int):
+        """
+        Pre-compute mean and covariance of each point window. Used to enhance
+        positional encoding (ADaPE) learned by MLP for carrier token attention.
+        """
+        if self.ct_size == 0:
+            return
+        N = self.nnum_a[depth] // self.patch_size
+        C = 9  # 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
+        # Get points for current depth
+        x, y, z, _ = self.xyzb(depth, self.nempty)
+        points = torch.stack((x,y,z), dim=1).to(torch.float32)
+        # Rescale to [-1, 1] and put into windows
+        points = rescale_octree_points(points, depth)
+        points = self.data_to_windows(points, depth, dilated_windows=False)
+        mask = self.ct_init_mask[depth]
+        window_stats = torch.zeros(N, C, device=self.device)
+        cov_idx = torch.triu_indices(3, 3, device=self.device)
+        # Compute (μx, μy, μz, σx, σxy, σxz, σy, σyz, σz) for all windows
+        for i, window_points in enumerate(points):
+            # Mask out points from overlap windows
+            batch_masked = window_points[~mask[i]]
+            window_stats[i,:3] = batch_masked.mean(0)
+            # NOTE: Currently, windows with only 1 unmasked point are assumed
+            #       to have covariance matrix of zeros. Better solution is
+            #       to ensure point windows are assigned to the batch submap
+            #       that they contain the most of, but this requires extra
+            #       masking logic and currently isn't worth fixing.
+            if batch_masked.size(0) < 2:
+                cov_mat = torch.zeros(3, 3, device=self.device,
+                                      dtype=torch.float32)
+            else:
+                cov_mat = batch_masked.T.cov()
+            window_stats[i,3:] = cov_mat[cov_idx[0], cov_idx[1]]
+            
+        assert(not torch.any(window_stats.isnan())), \
+            "NaN propagated during window stats computation, check code"
+        self.window_stats[depth] = window_stats        
 
     def patch_partition(self, data: torch.Tensor, depth: int, fill_value=0):
         num = self.nnum_a[depth] - self.nnum_t[depth]

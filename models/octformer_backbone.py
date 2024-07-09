@@ -167,25 +167,16 @@ class ADaPE(torch.nn.Module):
     
     def __init__(self, dim: int, activation: torch.nn.Module = torch.nn.GELU):
         super().__init__()
-        self.dim = dim
-        mlp_in = 9  # 3 (x,y,z) + 6 (upper triangular of cov matrix: σx, σy, σz, σxy, σyz, σxz)
-        self.mlp = MLP(mlp_in, dim, dim, activation=activation)
+        # Num feats = 3 (x,y,z) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
+        in_feat = 9
+        self.mlp = MLP(in_feat, dim, dim, activation=activation)
+        # TODO: add layer/batchnorm after?
 
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
-        # TODO: Implement
-        #       - Get CT centroids
-        #       - Compute covariance, and get upper triangular
-        #       - Pass (x,y,z,cov*) through MLP, and return PE
-        pts = octree.points[depth]
-        # need to reshape PTS into windows and compute centroids + covariance
-        
-        covariance = data.cov()
-        self.mlp()
+    def forward(self, octree: OctreeT, depth: int):
+        # Pass distribution stats of all windows through MLP to get PE
+        window_stats = octree.window_stats[depth]
+        out = self.mlp(window_stats)
         return out
-
-    def extra_repr(self) -> str:
-        return 'num_heads={}, pos_bnd={}, dilation={}'.format(
-                        self.num_heads, self.pos_bnd, self.dilation)
 
 
 class OctreeAttention(torch.nn.Module):
@@ -288,7 +279,7 @@ class CTAttention(torch.nn.Module):
         # NOTE: RPE table is currently constructed using relative pos of
         #       octree nodes, but this is not so easy to do for CTs. Need to
         #       find another solution.
-        # self.rpe = ADaPE(patch_size, num_heads) if use_rpe else None
+        # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
 
     def forward(self, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
         B = octree.batch_size
@@ -353,15 +344,17 @@ class OctFormerBlock(torch.nn.Module):
                  activation: torch.nn.Module = torch.nn.GELU, use_ct: bool = False,
                  ct_size: int = 1, ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
-                 disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                 last: bool = False, layer_scale: Optional[float] = None, **kwargs):
+                 use_ADaPE: bool = False, disable_RPE: bool = False,
+                 conv_norm: str = 'batchnorm', last: bool = False,
+                 layer_scale: Optional[float] = None, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
+        self.use_ADaPE = use_ADaPE,
+        self.dim = dim
         # NOTE: Dilation is disabled when using carrier tokens, as it is
         #       likely redundant to use both (and carrier tokens for dilated
         #       windows does not make sense).
-        self.dim = dim
         dilation = 1 if self.use_ct else dilation
         self.dilated_windows = dilation > 1
         ct_per_window = ct_size if self.use_ct else 0  # track number of carrier tokens per window
@@ -387,8 +380,8 @@ class OctFormerBlock(torch.nn.Module):
 
         if not self.use_ct:  # carrier token attention layers
             return
-        # TODO: implement PE
-        self.ct_ape = ADaPE(dim, activation)
+        if self.use_ADaPE:
+            self.ct_adape = ADaPE(dim, activation)
         self.ct_norm1 = torch.nn.LayerNorm(dim)
         self.ct_attention = CTAttention(dim, patch_size, num_heads, qkv_bias,
                                         qk_scale, attn_drop, proj_drop,
@@ -414,15 +407,15 @@ class OctFormerBlock(torch.nn.Module):
         ct = carrier_tokens
         
         # Apply conditional positional encoding
-        data = self.cpe(data, octree, depth) + data
+        data = data + self.cpe(data, octree, depth)
         # Pad batch and reshape into windows
         data = octree.data_to_windows(  # (N, K, C)
             data, depth, dilated_windows=self.dilated_windows
         )
         if self.use_ct:
             # Do global attention via carrier tokens
-            # TODO: carrier token PE
-            ct = self.ct_ape(ct, octree, depth) + ct
+            if self.use_ADaPE:
+                ct = ct + self.ct_adape(octree, depth)
             ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
             ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
@@ -522,8 +515,8 @@ class OctFormerStage(torch.nn.Module):
                  disable_RPE: bool = False, use_ct: bool = False, ct_size: int = 1,
                  ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
-                 grad_checkpoint: bool = True, num_blocks: int = 2,
-                 conv_norm: str = 'batchnorm',
+                 use_ADaPE: bool = False, grad_checkpoint: bool = True,
+                 num_blocks: int = 2, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None,
                  octformer_block=OctFormerBlock, **kwargs):
         super().__init__()
@@ -541,7 +534,7 @@ class OctFormerStage(torch.nn.Module):
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 nempty=nempty, activation=activation, disable_RPE=disable_RPE,
                 use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
-                ct_propagation_scale=ct_propagation_scale,
+                ct_propagation_scale=ct_propagation_scale, use_ADaPE=use_ADaPE,
                 conv_norm=conv_norm, last=(i == num_blocks - 1),
                 layer_scale=layer_scale) for i in range(num_blocks)])
         if self.use_ct:
@@ -630,7 +623,7 @@ class OctFormerBase(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
                  ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
-                 grad_checkpoint: bool = True,
+                 use_ADaPE: bool = False, grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None, **kwargs):
@@ -655,6 +648,7 @@ class OctFormerBase(torch.nn.Module):
                 conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
                 ct_propagation=ct_propagation,
                 ct_propagation_scale=ct_propagation_scale,
+                use_ADaPE=use_ADaPE,
                 layer_scale=layer_scale)
                 for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
@@ -728,6 +722,7 @@ class OctFormer(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
                  ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
+                 use_ADaPE: bool = False,
                  num_top_down: int = 2, fpn_channel: int = 168,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
@@ -748,6 +743,7 @@ class OctFormer(torch.nn.Module):
             ct_size: Size of carrier tokens, note that patch_size must be divisible by this.
             ct_propagation: Boolean indicating if carrier token features should be propagated to local features at the end of the stage.
             ct_propagation_scale: Learnable scalar multiplier for ct propagation step, to prevent 'blurring' of local features.
+            use_ADaPE: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention.
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
             fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
@@ -760,8 +756,8 @@ class OctFormer(torch.nn.Module):
         self.backbone = OctFormerBase(
             in_channels, channels, num_blocks, num_heads, ct_layers,
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
-            ct_propagation, ct_propagation_scale, grad_checkpoint, downsample_input_embeddings,
-            disable_RPE, conv_norm, layer_scale,
+            ct_propagation, ct_propagation_scale, use_ADaPE, grad_checkpoint,
+            downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
         self.apply(self.init_weights)
