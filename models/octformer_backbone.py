@@ -508,7 +508,8 @@ class TokenInitialiser(torch.nn.Module):
         # Avg pool over spatial dimension
         # NOTE: AvgPool1D can't handle NaNs, so use nanmean() instead
         ct = torch.nanmean(data, dim=1)
-        assert(not torch.any(ct.isnan())), "NaN propagated during CT init, check code"
+        assert(not torch.any(ct.isnan())), \
+            "NaN propagated during CT init, check code"
         return ct
 
 class OctFormerStage(torch.nn.Module):
