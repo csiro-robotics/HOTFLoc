@@ -43,17 +43,22 @@ class OctreeT(Octree):
     """
     def __init__(self, octree: Octree, patch_size: int = 24, dilation: int = 4,
                  nempty: bool = True, max_depth: Optional[int] = None,
-                 start_depth: Optional[int] = None, ct_size: int = 0, **kwargs):
+                 start_depth: Optional[int] = None,
+                 ct_layers: List[bool] = [False, False, False, False],
+                 ct_size: int = 0, use_ADaPE: bool = False, **kwargs):
         super().__init__(octree.depth, octree.full_depth)
         self.__dict__.update(octree.__dict__)
 
         self.patch_size = patch_size
         self.dilation = dilation  # TODO dilation as a list
+        self.ct_layers = ct_layers
         self.ct_size = ct_size
         self.nempty = nempty
         self.max_depth = max_depth or self.depth
         self.start_depth = start_depth or self.full_depth
         self.invalid_mask_value = -1e3
+        self.use_ADaPE = use_ADaPE
+        self.cov_idx = torch.triu_indices(3, 3, device=self.device)
         assert self.start_depth > 1, "Octree not deep enough for model depth"
 
         self.block_num = patch_size * dilation
@@ -78,19 +83,20 @@ class OctreeT(Octree):
         self.build_t()
 
     def build_t(self):
-        for d in range(self.start_depth, self.max_depth + 1):
-            self.build_batch_idx(d)
-            self.build_batch_boundary(d)
-            self.build_attn_mask(d)
-            self.build_rel_pos(d)
-            self.compute_window_stats(d)
+        for i, depth in enumerate(range(self.start_depth, self.max_depth + 1)):
+            use_ct = self.ct_layers[-(i+1)]
+            self.build_batch_idx(depth, use_ct)
+            self.build_batch_boundary(depth, use_ct)
+            self.build_attn_mask(depth, use_ct)
+            self.build_rel_pos(depth)
+            self.compute_window_stats(depth, use_ct)
 
-    def build_batch_idx(self, depth: int):
+    def build_batch_idx(self, depth: int, use_ct: bool):
         # Build batch idx for regular octree operation
         batch = self.batch_id(depth, self.nempty)
         batch = self.patch_partition(batch, depth, self.batch_size)
         self.batch_idx[depth] = batch
-        if self.ct_size == 0:
+        if not use_ct:
             return
 
         # Build idx for HAT windows, with CT added to local windows
@@ -116,12 +122,12 @@ class OctreeT(Octree):
         batch_ct = batch.view(-1, self.patch_size // self.ct_size)
         self.ct_batch_idx[depth] = batch_ct.min(1).values
 
-    def build_batch_boundary(self, depth: int):
+    def build_batch_boundary(self, depth: int, use_ct: bool):
         """
         Get the boundary indices for each batch elem. Useful for separating CTs
         into batches with torch.split().
         """
-        if self.ct_size == 0:
+        if not use_ct:
             return
         batch_nnum_cumsum = self.batch_nnum_nempty[depth].cumsum(0)
         # Add patch partition padding to last elem
@@ -146,7 +152,7 @@ class OctreeT(Octree):
             self.batch_boundary[depth], prepend=torch.zeros(1)
         ).int()
 
-    def build_attn_mask(self, depth: int):
+    def build_attn_mask(self, depth: int, use_ct: bool):
         """
         Compute attention masks for window attention and carrier token attention,
         so that attention ignores padding and all CTs that contain neighbouring
@@ -162,7 +168,7 @@ class OctreeT(Octree):
         self.dilate_mask[depth] = self._calc_attn_mask(mask)
 
         # Window + CT mask (HAT)
-        if self.ct_size == 0:
+        if not use_ct:
             return
         # NOTE: Currently, overlapping CTs are not masked out, and instead are
         #       masked so that they only attend to features from the leftmost
@@ -207,12 +213,12 @@ class OctreeT(Octree):
         xyz = xyz.transpose(1, 2).reshape(-1, self.patch_size, 3)
         self.dilate_pos[depth] = xyz.unsqueeze(2) - xyz.unsqueeze(1)
 
-    def compute_window_stats(self, depth: int):
+    def compute_window_stats(self, depth: int, use_ct: bool):
         """
         Pre-compute mean and covariance of each point window. Used to enhance
         positional encoding (ADaPE) learned by MLP for carrier token attention.
         """
-        if self.ct_size == 0:
+        if not use_ct or not self.use_ADaPE:
             return
         N = self.nnum_a[depth] // self.patch_size
         C = 9  # 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
@@ -224,7 +230,6 @@ class OctreeT(Octree):
         points = self.data_to_windows(points, depth, dilated_windows=False)
         mask = self.ct_init_mask[depth]
         window_stats = torch.zeros(N, C, device=self.device)
-        cov_idx = torch.triu_indices(3, 3, device=self.device)
         # Compute (μx, μy, μz, σx, σxy, σxz, σy, σyz, σz) for all windows
         for i, window_points in enumerate(points):
             # Mask out points from overlap windows
@@ -240,7 +245,7 @@ class OctreeT(Octree):
                                       dtype=torch.float32)
             else:
                 cov_mat = batch_masked.T.cov()
-            window_stats[i,3:] = cov_mat[cov_idx[0], cov_idx[1]]
+            window_stats[i,3:] = cov_mat[self.cov_idx[0], self.cov_idx[1]]
             
         assert(not torch.any(window_stats.isnan())), \
             "NaN propagated during window stats computation, check code"

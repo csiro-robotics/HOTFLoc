@@ -634,12 +634,16 @@ class OctFormerBase(torch.nn.Module):
         self.num_stages = len(num_blocks)
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
+        self.ct_layers = ct_layers
         ct_size = ct_size if any(ct_layers) else 0
         self.ct_size = ct_size
+        self.use_ADaPE = use_ADaPE
         # Stochastic depth per block
         drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
-        self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down, nempty, downsample_input_embeddings, conv_norm)
+        self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down,
+                                      nempty, downsample_input_embeddings,
+                                      conv_norm)
         self.layers = torch.nn.ModuleList([OctFormerStage(
                 dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
                 drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
@@ -649,11 +653,10 @@ class OctFormerBase(torch.nn.Module):
                 ct_propagation=ct_propagation,
                 ct_propagation_scale=ct_propagation_scale,
                 use_ADaPE=use_ADaPE,
-                layer_scale=layer_scale)
-                for i in range(self.num_stages)])
+                layer_scale=layer_scale) for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
-                channels[i], channels[i + 1], kernel_size=[2],
-                nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages - 1)])
+                channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
+                conv_norm=conv_norm) for i in range(self.num_stages - 1)])
 
     def forward(self, data: torch.Tensor, octree: Octree, depth: int):
         data = self.patch_embed(data, octree, depth)
@@ -661,7 +664,8 @@ class OctFormerBase(torch.nn.Module):
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_size=self.ct_size)
+                         ct_layers=self.ct_layers, ct_size=self.ct_size,
+                         use_ADaPE=self.use_ADaPE)
         features = {}
         for i in range(self.num_stages):
             depth_i = depth - i
