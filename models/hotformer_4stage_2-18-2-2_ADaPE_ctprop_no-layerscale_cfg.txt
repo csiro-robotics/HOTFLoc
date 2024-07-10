@@ -1,11 +1,12 @@
 [MODEL]
-model=HotFormer4Stage-2-18-2-2-noCTprop-noLayerScale-ADaPE
+model=HotFormer4Stage-2-18-2-2-ADaPE-CTprop-noLayerScale
 channels=128,256,128,64
 num_blocks=2,18,2,2
 num_heads=8,16,8,4
 ct_layers=False,True,True,True
 ct_size=1
-ct_propagation=False
+ct_propagation=True
+ct_propagation_scale=0.1
 use_ADaPE=True
 num_top_down=2
 patch_size=32

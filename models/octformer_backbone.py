@@ -51,7 +51,7 @@ class MLP(torch.nn.Module):
         self.fc1 = torch.nn.Linear(self.in_features, self.hidden_features)
         self.act = activation()
         self.fc2 = torch.nn.Linear(self.hidden_features, self.out_features)
-        self.drop = torch.nn.Dropout(drop, inplace=True)
+        self.drop = torch.nn.Dropout(drop)
 
     def forward(self, data: torch.Tensor):
         data = self.fc1(data)
@@ -169,8 +169,8 @@ class ADaPE(torch.nn.Module):
         super().__init__()
         # Num feats = 3 (x,y,z) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
         in_feat = 9
-        self.mlp = MLP(in_feat, dim, dim, activation=activation)
-        # TODO: add layer/batchnorm after?
+        self.mlp = MLP(in_feat, dim, dim, activation=activation, drop=0.0)
+        # TODO: add layer/batchnorm after? try dropout?
 
     def forward(self, octree: OctreeT, depth: int):
         # Pass distribution stats of all windows through MLP to get PE
@@ -350,7 +350,7 @@ class OctFormerBlock(torch.nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
-        self.use_ADaPE = use_ADaPE,
+        # self.use_ADaPE = use_ADaPE,
         self.dim = dim
         # NOTE: Dilation is disabled when using carrier tokens, as it is
         #       likely redundant to use both (and carrier tokens for dilated
@@ -380,8 +380,9 @@ class OctFormerBlock(torch.nn.Module):
 
         if not self.use_ct:  # carrier token attention layers
             return
-        if self.use_ADaPE:
-            self.ct_adape = ADaPE(dim, activation)
+        # NOTE: No longer using ADaPE per octformer block
+        # if self.use_ADaPE:
+        #     self.ct_adape = ADaPE(dim, activation)
         self.ct_norm1 = torch.nn.LayerNorm(dim)
         self.ct_attention = CTAttention(dim, patch_size, num_heads, qkv_bias,
                                         qk_scale, attn_drop, proj_drop,
@@ -412,10 +413,11 @@ class OctFormerBlock(torch.nn.Module):
         data = octree.data_to_windows(  # (N, K, C)
             data, depth, dilated_windows=self.dilated_windows
         )
+        # Do global attention via carrier tokens
         if self.use_ct:
-            # Do global attention via carrier tokens
-            if self.use_ADaPE:
-                ct = ct + self.ct_adape(octree, depth)
+            # NOTE: No longer using ADaPE per octformer block
+            # if self.use_ADaPE:
+            #     ct = ct + self.ct_adape(octree, depth)
             ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
             ct = ct + self.ct_drop_path(ct_attn, octree, depth)
             ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
@@ -523,31 +525,37 @@ class OctFormerStage(torch.nn.Module):
         self.num_blocks = num_blocks
         self.grad_checkpoint = grad_checkpoint
         self.use_ct = use_ct
-        self.interval = interval  # normalisation interval
-        self.num_norms = (num_blocks - 1) // self.interval
+        self.use_ADaPE = use_ADaPE
+        # self.interval = interval  # normalisation interval
+        # self.num_norms = (num_blocks - 1) // self.interval
 
         self.blocks = torch.nn.ModuleList([octformer_block(
-                dim=dim, num_heads=num_heads, patch_size=patch_size,
-                dilation=1 if (i % 2 == 0) else dilation,
-                mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                attn_drop=attn_drop, proj_drop=proj_drop,
-                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                nempty=nempty, activation=activation, disable_RPE=disable_RPE,
-                use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
-                ct_propagation_scale=ct_propagation_scale, use_ADaPE=use_ADaPE,
-                conv_norm=conv_norm, last=(i == num_blocks - 1),
-                layer_scale=layer_scale) for i in range(num_blocks)])
-        if self.use_ct:
-            self.global_tokeniser = TokenInitialiser(dim,
-                                                     patch_size=patch_size,
-                                                     nempty=nempty,
-                                                     conv_norm=conv_norm,
-                                                     ct_size=ct_size)
+            dim=dim, num_heads=num_heads, patch_size=patch_size,
+            dilation=1 if (i % 2 == 0) else dilation,
+            mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop=attn_drop, proj_drop=proj_drop,
+            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+            nempty=nempty, activation=activation, disable_RPE=disable_RPE,
+            use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
+            ct_propagation_scale=ct_propagation_scale, use_ADaPE=use_ADaPE,
+            conv_norm=conv_norm, last=(i == num_blocks - 1),
+            layer_scale=layer_scale) for i in range(num_blocks)])
         # self.norms = torch.nn.ModuleList([
         #     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
+        if not self.use_ct:
+            return
+        self.global_tokeniser = TokenInitialiser(dim, patch_size=patch_size,
+                                                 nempty=nempty,
+                                                 conv_norm=conv_norm,
+                                                 ct_size=ct_size)
+        if self.use_ADaPE:
+            self.ct_adape = ADaPE(dim, activation)
 
     def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
         ct = self.global_tokeniser(data, octree, depth) if self.use_ct else None
+        # Inject positional encoding for CTs
+        if self.use_ADaPE and ct is not None:
+            ct = ct + self.ct_adape(octree, depth)
         for i in range(self.num_blocks):
             if self.grad_checkpoint and self.training:
                 data, ct = checkpoint(self.blocks[i], data, ct, octree, depth, use_reentrant=False)  # disable reentrant to fix error with no_grad?
