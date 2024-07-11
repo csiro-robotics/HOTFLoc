@@ -666,14 +666,10 @@ class OctFormerBase(torch.nn.Module):
                 channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
                 conv_norm=conv_norm) for i in range(self.num_stages - 1)])
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
+    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
         data = self.patch_embed(data, octree, depth)
         if self.downsample_input_embeddings:
             depth = depth - self.stem_down   # current octree depth
-        octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
-                         max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_layers=self.ct_layers, ct_size=self.ct_size,
-                         use_ADaPE=self.use_ADaPE)
         features = {}
         for i in range(self.num_stages):
             depth_i = depth - i
@@ -780,7 +776,7 @@ class OctFormer(torch.nn.Module):
             if isinstance(m, torch.nn.Linear) and m.bias is not None:
                 torch.nn.init.constant_(m.bias, 0)
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
+    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
         features = self.backbone(data, octree, depth)
         output, output_depth = self.head(features, octree)
         return output, output_depth

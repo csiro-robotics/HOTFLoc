@@ -65,7 +65,7 @@ def training_step(global_iter, model, phase, device, optimizer, loss_fn, num_emb
     assert phase in ['train', 'val']
 
     batch, positives_mask, negatives_mask = next(global_iter)
-    batch = {e: batch[e].to(device) for e in batch}
+    batch = {e: batch[e].to(device, non_blocking=True) for e in batch}
 
     if phase == 'train':
         model.train()

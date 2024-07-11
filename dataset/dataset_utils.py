@@ -1,7 +1,7 @@
 # Warsaw University of Technology
 
 import numpy as np
-from typing import List
+from typing import List, Sequence
 import torch
 from torch.utils.data import DataLoader
 import MinkowskiEngine as ME
@@ -22,6 +22,7 @@ from misc.utils import TrainingParams
 from dataset.base_datasets import PointCloudLoader
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
+from models.octree import OctreeT
 
 
 def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
@@ -66,6 +67,51 @@ def make_datasets(params: TrainingParams, validation: bool = True):
     return datasets
 
 
+def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingParams):
+    """
+    Util function to create batches in correct format from an input list of 
+    point clouds.
+
+    Args:
+        clouds (Sequence[Tensor]): Sequence of point clouds of shape (N, 3).
+        quantizer (Optional): If using MinkLoc, quantizer for sparse quantization.
+        params (TrainingParams): Training parameters for the model.
+    """
+    if params.load_octree:
+        model_params = params.model_params
+        octrees = []
+        # Convert to ocnn Points object, then create Octree
+        for cloud in clouds:
+            cloud_points_obj = Points(cloud)
+            octree = Octree(params.octree_depth, params.full_depth)
+            octree.build_octree(cloud_points_obj)
+            octrees.append(octree)                        
+        octrees_merged = ocnn.octree.merge_octrees(octrees)
+        # NOTE: remember to construct the neighbor indices
+        octrees_merged.construct_all_neigh()
+        # Convert to OctreeT object, for Octree aTtention
+        num_stages = len(model_params.num_blocks)
+        max_depth = params.octree_depth-model_params.num_input_downsamples
+        octrees_merged = OctreeT(
+            octrees_merged, model_params.patch_size,
+            model_params.dilation, nempty=True,
+            max_depth=max_depth,
+            start_depth=max_depth-num_stages+1,
+            ct_layers=model_params.ct_layers,
+            ct_size=model_params.ct_size,
+            use_ADaPE=model_params.use_ADaPE
+        )
+        octrees_merged.build_t()
+        batch = {'octree': octrees_merged}
+    else:
+        coords = [quantizer(e)[0] for e in clouds]
+        coords = ME.utils.batched_coordinates(coords)
+        # Assign a dummy feature equal to 1 to each point
+        feats = torch.ones((coords.shape[0], 1), dtype=torch.float32)
+        batch = {'coords': coords, 'features': feats}
+    return batch
+
+
 def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams):
     # quantizer: converts to polar (when polar coords are used) and quantizes
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
@@ -90,56 +136,16 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
         positives_mask = torch.tensor(positives_mask)
         negatives_mask = torch.tensor(negatives_mask)
 
-        if params.load_octree:
-            if params.batch_split_size is None or params.batch_split_size == 0:
-                # Convert to ocnn Points object, then create Octree
-                octrees = []
-                for cloud in clouds:
-                    cloud_points_obj = Points(cloud)
-                    octree = Octree(params.octree_depth, params.full_depth)
-                    octree.build_octree(cloud_points_obj)
-                    octrees.append(octree)                
-                octrees_merged = ocnn.octree.merge_octrees(octrees)
-                # NOTE: remember to construct the neighbor indices
-                octrees_merged.construct_all_neigh()
-                batch = {'octree': octrees_merged}
-            else:
-                # Split the batch into chunks
-                batch = []
-                for i in range(0, len(clouds), params.batch_split_size):
-                    temp = clouds[i:i + params.batch_split_size]
-                    # Convert to ocnn Points object, then create Octree
-                    octrees_temp = []
-                    for cloud in temp:
-                        cloud_points_obj = Points(cloud)
-                        octree = Octree(params.octree_depth, params.full_depth)
-                        octree.build_octree(cloud_points_obj)
-                        octrees_temp.append(octree)                        
-                    octrees_temp_merged = ocnn.octree.merge_octrees(octrees_temp)
-                    # NOTE: remember to construct the neighbor indices
-                    octrees_temp_merged.construct_all_neigh()
-                    minibatch = {'octree': octrees_temp_merged}
-                    batch.append(minibatch)
+        # Generate batches in correct format for MinkLoc/OctFormer
+        if params.batch_split_size is None or params.batch_split_size == 0:
+            batch = create_batch(clouds, quantizer, params)
         else:
-            # Convert to polar (when polar coords are used) and quantize
-            # Use the first value returned by quantizer
-            coords = [quantizer(e)[0] for e in clouds]
-
-            if params.batch_split_size is None or params.batch_split_size == 0:
-                coords = ME.utils.batched_coordinates(coords)
-                # Assign a dummy feature equal to 1 to each point
-                feats = torch.ones((coords.shape[0], 1), dtype=torch.float32)
-                batch = {'coords': coords, 'features': feats}
-
-            else:
-                # Split the batch into chunks
-                batch = []
-                for i in range(0, len(coords), params.batch_split_size):
-                    temp = coords[i:i + params.batch_split_size]
-                    c = ME.utils.batched_coordinates(temp)
-                    f = torch.ones((c.shape[0], 1), dtype=torch.float32)
-                    minibatch = {'coords': c, 'features': f}
-                    batch.append(minibatch)
+            # Split the batch into chunks
+            batch = []
+            for i in range(0, len(clouds), params.batch_split_size):
+                temp = clouds[i:i + params.batch_split_size]
+                minibatch = create_batch(temp, quantizer, params)
+                batch.append(minibatch)
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
