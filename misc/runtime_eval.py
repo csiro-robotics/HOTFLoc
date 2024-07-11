@@ -43,12 +43,14 @@ if __name__ == "__main__":
     model_configs = {}
     configs['minkloc'] = '../config/config_baseline.txt'
     model_configs['minkloc'] = '../models/minkloc3dv2.txt'
-    configs['octfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched100_350.txt'
-    model_configs['octfloc'] = '../models/octformer_4stage_18blocks_2ndstage_2ds_2topdown_cfg.txt'
-    configs['octfloc1stage'] = '../config/config_baseline_octf_depth6_lr1e-4.txt'
-    model_configs['octfloc1stage'] = '../models/octformer_1stage_noFPN_cfg.txt'
-    configs['hotfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched100_350.txt'
-    model_configs['hotfloc'] = '../models/hotformer_4stage_2-18-2-2_cfg.txt'
+    configs['octfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    model_configs['octfloc'] = '../models/octformer_4stage_best_cfg.txt'
+    configs['octfloc1stage'] = '../config/config_baseline_octf_depth8_lr1e-4_sched80_350.txt'
+    model_configs['octfloc1stage'] = '../models/octformer_1stage_18blocks_2ds_cfg.txt'
+    configs['hotfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    model_configs['hotfloc'] = '../models/hotformer_4stage_2-18-2-2_no-ctprop_no-layerscale_cfg.txt'
+    configs['hotfloc_ADaPE'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    model_configs['hotfloc_ADaPE'] = '../models/hotformer_4stage_2-18-2-2_ADaPE_no-ctprop_no-layerscale_cfg.txt'
     for model_type in configs.keys():
         print(f"EVALUATING {model_configs[model_type]} RUNTIME...")
         params = TrainingParams(configs[model_type], model_configs[model_type])
