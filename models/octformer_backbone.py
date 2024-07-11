@@ -674,6 +674,7 @@ class OctFormerBase(torch.nn.Module):
                          max_depth=depth, start_depth=depth-self.num_stages+1,
                          ct_layers=self.ct_layers, ct_size=self.ct_size,
                          use_ADaPE=self.use_ADaPE)
+        octree.build_t()
         features = {}
         for i in range(self.num_stages):
             depth_i = depth - i

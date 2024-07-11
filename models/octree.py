@@ -8,7 +8,7 @@
 # by Ethan Griffiths.
 # --------------------------------------------------------
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 
 import torch
 import torch.nn.functional as F
@@ -80,9 +80,14 @@ class OctreeT(Octree):
         self.rel_pos = [None] * num
         self.dilate_pos = [None] * num
         self.window_stats = [None] * num
-        self.build_t()
 
     def build_t(self):
+        r"""Build the information necessary for computing Octree attention.
+
+        This includes attention masks, relative positions, batch idx, and point
+        window distribution stats. This function must be called before passing
+        the octree through OctFormer.
+        """
         for i, depth in enumerate(range(self.start_depth, self.max_depth + 1)):
             use_ct = self.ct_layers[-(i+1)]
             self.build_batch_idx(depth, use_ct)
@@ -102,7 +107,7 @@ class OctreeT(Octree):
         # Build idx for HAT windows, with CT added to local windows
         # NOTE: Currently, overlapping CTs are not masked out, and instead are
         #       masked so that they only attend to features from the leftmost
-        #       batch element (i.e. floor of the batches they belong to)
+        #       batch element (i.e. floor of the batch idxs they belong to)
         batch_window = batch.view(-1, self.patch_size)
         batch_ct_idx = batch_window.min(1, keepdim=True).values
         # Save mask for CT initialisation (prevents pooling erroneous features)
@@ -266,7 +271,7 @@ class OctreeT(Octree):
         dilation, so just pass the octree features, depth, and whether dilated
         windows should be used.
 
-        Inputs:
+        Args:
             data (Tensor): Octree data, which must have shape (N, C)
         """
         C = data.size(-1)
@@ -283,7 +288,7 @@ class OctreeT(Octree):
         for padding and dilation, so just pass the octree features, depth, and
         whether dilated windows are used.
 
-        Inputs:
+        Args:
             data (Tensor): Octree window data, which must have shape (N, K, C)
         """
         C = data.size(-1)
@@ -292,3 +297,50 @@ class OctreeT(Octree):
             data = data.view(-1, self.dilation,
                              self.patch_size, C).transpose(1, 2).reshape(-1, C)
         return self.patch_reverse(data, depth)
+    
+    def to(self, device: Union[torch.device, str], non_blocking: bool = False):
+        r""" Moves the octree to a specified device. Adapted from `ocnn.octree`.
+
+        Args:
+            device (torch.device or str): The destination device.
+            non_blocking (bool): If True and the source is in pinned memory,
+            the copy will be asynchronous with respect to the host. Otherwise,
+            the argument has no effect. Default: False.
+        """
+        if isinstance(device, str):
+            device = torch.device(device)
+            
+        #  If on the save device, directly retrun self
+        if self.device == device:
+            return self
+
+        # Initialise base octree class
+        octree = super().to(device, non_blocking)
+
+        def list_to_device(prop):
+            return [p.to(device, non_blocking=non_blocking)
+                    if isinstance(p, torch.Tensor) else None for p in prop]
+
+        def list_clone(prop):
+            return [p.clone()
+                    if isinstance(p, torch.Tensor) else None for p in prop]
+
+        # Construct new OctreeT and copy objects over
+        octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
+                         self.max_depth, self.start_depth, self.ct_layers,
+                         self.ct_size, self.use_ADaPE)
+        octree.batch_idx = list_to_device(self.batch_idx)
+        octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
+        octree.ct_batch_idx = list_to_device(self.ct_batch_idx)
+        octree.batch_boundary = list_clone(self.batch_boundary)  # CPU
+        octree.batch_num_windows = list_clone(self.batch_num_windows)  # CPU
+        octree.batch_window_overlap_mask = list_clone(self.batch_window_overlap_mask)  # CPU
+        octree.patch_mask = list_to_device(self.patch_mask)
+        octree.dilate_mask = list_to_device(self.dilate_mask)
+        octree.hat_window_mask = list_to_device(self.hat_window_mask)
+        octree.ct_mask = list_to_device(self.ct_mask)
+        octree.ct_init_mask  = list_to_device(self.ct_init_mask)
+        octree.rel_pos = list_to_device(self.rel_pos)
+        octree.dilate_pos = list_to_device(self.dilate_pos)
+        octree.window_stats = list_to_device(self.window_stats)        
+        return octree
