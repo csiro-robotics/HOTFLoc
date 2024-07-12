@@ -22,6 +22,15 @@ def get_query_database_splits(params):
             # 'above-under_Robson_evaluation_query.pickle', 
             'above-under_Samford_evaluation_query.pickle'
         ]
+    elif 'WildPlaces' in params.dataset_name:
+        eval_database_files = [
+            'Karawatha_evaluation_database.pickle',
+            'Venman_evaluation_database.pickle',
+        ]
+        eval_query_files = [
+            'Karawatha_evaluation_query.pickle',
+            'Venman_evaluation_query.pickle',            
+        ]
     elif params.dataset_name == 'Campus3D':
         eval_database_files = ['umd_evaluation_database.pickle']
         eval_query_files = ['umd_evaluation_query_PNVLAD_format.pickle']
