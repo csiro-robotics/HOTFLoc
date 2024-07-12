@@ -18,13 +18,17 @@ class PNVTrainingDataset(TrainingDataset):
 
 class TrainTransform:
     # Augmentations specific for PointNetVLAD datasets (RobotCar and Inhouse)
-    def __init__(self, aug_mode, normalize_points=False):
+    def __init__(self, aug_mode, normalize_points=False, scale_factor=None):
         self.aug_mode = aug_mode
         self.normalize_points = normalize_points
+        self.scale_factor = None
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
         self.transform = None
         t = []
         if self.normalize_points:
-            t.append(Normalize(scale=0.95))  # [-0.95, 0.95] to prevent random translation going outside of [-1, 1]
+            t.append(Normalize(scale_factor=self.scale_factor))
         if self.aug_mode == 1:
             # Augmentations without random rotation around z-axis (values assume [-1, 1] range)
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
@@ -50,11 +54,15 @@ class TrainTransform:
 
 class ValTransform:
     # Augmentations specific for AboveUnder dataset
-    def __init__(self, normalize_points=False):
+    def __init__(self, normalize_points=False, scale_factor=None):
         self.normalize_points = normalize_points
+        self.scale_factor = None
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
         t = None
         if self.normalize_points:
-            t = Normalize(scale=0.95)  # [-0.95, 0.95] to prevent random translation going outside of [-1, 1]
+            t = Normalize(scale_factor=self.scale_factor)
         self.transform = t
 
     def __call__(self, e):

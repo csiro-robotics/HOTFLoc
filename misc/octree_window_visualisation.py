@@ -38,8 +38,8 @@ def main():
         
         points_tensor = torch.tensor(points_original, dtype=torch.float32)
         # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-        if args.normalize:
-            normalize_transform = Normalize()
+        if args.normalize or args.scale_factor is not None:
+            normalize_transform = Normalize(scale_factor=args.scale_factor)
             points_tensor = normalize_transform(points_tensor)
         points_tensor = torch.clamp(points_tensor, -1, 1)
         # Convert to ocnn Points object, then create Octree
@@ -105,6 +105,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--clouds_path', type = str, required=True, help="path to processed submaps")
     parser.add_argument('--normalize', action='store_true', help="normalize submaps if they are not already in [-1, 1] range")
+    parser.add_argument('--scale_factor', type = float, default=None, help="fixed scale factor to normalize by")
     parser.add_argument('--max_depth', type = int, required=True, help="max depth of octree to visualise")
     parser.add_argument('--min_depth', type = int, default=2, help="min depth of octree to visualise")
     parser.add_argument('--patch_size', type = int, default=32, help="size of octree windows (# points per window)")

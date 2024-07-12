@@ -73,7 +73,8 @@ class TrainingDataset(Dataset):
             data = self.transform(data)
         if self.load_octree:
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            data = torch.clamp(data, -1, 1)
+            mask = torch.all(abs(data) <= 1.0, dim=1)
+            data = data[mask]
         return data, ndx
 
     def get_positives(self, ndx):

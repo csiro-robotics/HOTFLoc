@@ -113,7 +113,7 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams):
 
     if params.dataset_name in ['Oxford','Campus3D']:
         pc_loader = PNVPointCloudLoader()
-    elif 'AboveUnder' in params.dataset_name:
+    elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()
 
     model.eval()
@@ -125,11 +125,12 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams):
         pc_file_path = os.path.join(params.dataset_folder, data_set[elem_ndx]["query"])
         data = pc_loader(pc_file_path)
         data = torch.tensor(data)
-        if params.normalize_points:
-            data = Normalize(scale=0.95)(data)
+        if params.normalize_points or params.scale_factor is not None:
+            data = Normalize(scale_factor=params.scale_factor)(data)
         if params.load_octree:  # Convert to Octree format
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            data = torch.clamp(data, -1, 1)
+            mask = torch.all(abs(data) <= 1.0, dim=1)
+            data = data[mask]
             # Convert to ocnn Points object, then create Octree
             points = Points(data)
             data = Octree(params.octree_depth, full_depth=2)

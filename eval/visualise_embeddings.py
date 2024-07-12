@@ -152,7 +152,7 @@ def collate_batch(data, device, params: TrainingParams):
 def get_latent_vectors(model, data_list: list[str], device, params: TrainingParams) -> np.ndarray:
     if params.dataset_name in ['Oxford','Campus3D']:
         pc_loader = PNVPointCloudLoader()
-    elif 'AboveUnder' in params.dataset_name:
+    elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()
 
     bs = params.val_batch_size
@@ -163,11 +163,12 @@ def get_latent_vectors(model, data_list: list[str], device, params: TrainingPara
         pc_abs_path = os.path.join(params.dataset_folder, pc_rel_path)
         data = pc_loader(pc_abs_path)
         data = torch.tensor(data)
-        if params.normalize_points:
-            data = Normalize(scale=0.95)(data)
+        if params.normalize_points or params.scale_factor is not None:
+            data = Normalize(scale_factor=params.scale_factor)(data)
         if params.load_octree:  # Convert to Octree format
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            data = torch.clamp(data, -1, 1)
+            mask = torch.all(abs(data) <= 1.0, dim=1)
+            data = data[mask]
             # Convert to ocnn Points object, then create Octree
             points = Points(data)
             data = Octree(params.octree_depth, full_depth=2)
