@@ -89,6 +89,7 @@ class ModelParams:
             self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
             self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
             self.use_ADaPE = params.getboolean('use_ADaPE', False)  # Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention.
+            self.no_cov = params.getboolean('no_cov', False)  # Ignore covariance values for ADaPE. Instead, only centroid position and variance are used.
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)

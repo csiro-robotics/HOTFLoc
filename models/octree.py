@@ -45,7 +45,8 @@ class OctreeT(Octree):
                  nempty: bool = True, max_depth: Optional[int] = None,
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
-                 ct_size: int = 0, use_ADaPE: bool = False, **kwargs):
+                 ct_size: int = 0, use_ADaPE: bool = False, no_cov: bool = False,
+                 **kwargs):
         super().__init__(octree.depth, octree.full_depth)
         self.__dict__.update(octree.__dict__)
 
@@ -58,7 +59,9 @@ class OctreeT(Octree):
         self.start_depth = start_depth or self.full_depth
         self.invalid_mask_value = -1e3
         self.use_ADaPE = use_ADaPE
-        self.cov_idx = torch.triu_indices(3, 3, device=self.device)
+        self.no_cov = no_cov
+        if not no_cov:
+            self.cov_idx = torch.triu_indices(3, 3, device=self.device)
         assert self.start_depth > 1, "Octree not deep enough for model depth"
 
         self.block_num = patch_size * dilation
@@ -226,7 +229,7 @@ class OctreeT(Octree):
         if not use_ct or not self.use_ADaPE:
             return
         N = self.nnum_a[depth] // self.patch_size
-        C = 9  # 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
+        C = 9 if not self.no_cov else 6  # 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
         # Get points for current depth
         x, y, z, _ = self.xyzb(depth, self.nempty)
         points = torch.stack((x,y,z), dim=1).to(torch.float32)
@@ -245,12 +248,19 @@ class OctreeT(Octree):
             #       to ensure point windows are assigned to the batch submap
             #       that they contain the most of, but this requires extra
             #       masking logic and currently isn't worth fixing.
-            if batch_masked.size(0) < 2:
-                cov_mat = torch.zeros(3, 3, device=self.device,
-                                      dtype=torch.float32)
+            if self.no_cov:
+                if batch_masked.size(0) < 2:
+                    window_stats[i,3:] = torch.zeros(1, 3, device=self.device,
+                                          dtype=torch.float32)
+                else:
+                    window_stats[i,3:] = batch_masked.var(0)
             else:
-                cov_mat = batch_masked.T.cov()
-            window_stats[i,3:] = cov_mat[self.cov_idx[0], self.cov_idx[1]]
+                if batch_masked.size(0) < 2:
+                    cov = torch.zeros(3, 3, device=self.device,
+                                          dtype=torch.float32)
+                else:
+                    cov = batch_masked.T.cov()
+                window_stats[i,3:] = cov[self.cov_idx[0], self.cov_idx[1]]
             
         assert(not torch.any(window_stats.isnan())), \
             "NaN propagated during window stats computation, check code"
