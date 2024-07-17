@@ -507,7 +507,7 @@ class TokenInitialiser(torch.nn.Module):
         G = self.ct_size
         
         if self.use_cpe:
-            data = data + self.cpe(data, octree, depth)
+            data = self.cpe(data, octree, depth)
         data = octree.patch_partition(data, depth)
         # Reshape to windows, and mask out ignored values as NaN
         # TODO: Make this work with ct_size > 1
