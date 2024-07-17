@@ -30,6 +30,9 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
     assert len(eval_database_files) == len(eval_query_files)
 
     stats = {}
+    ave_recall = []
+    ave_one_percent_recall = []
+    ave_mrr = []
     for database_file, query_file in zip(eval_database_files, eval_query_files):
         # Extract location name from query and database files
         if 'AboveUnder' in params.dataset_name:
@@ -51,7 +54,14 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
 
         temp = evaluate_dataset(model, device, params, database_sets, query_sets, log=log, show_progress=show_progress)
         stats[location_name] = temp
-
+        ave_one_percent_recall.append(temp['ave_one_percent_recall'])
+        ave_recall.append(temp['ave_recall'])
+        ave_mrr.append(temp['ave_mrr'])
+        
+    # Compute average stats
+    stats['average'] = {'ave_one_percent_recall': np.mean(ave_one_percent_recall),
+                        'ave_recall': np.mean(ave_recall, axis=0),
+                        'ave_mrr': np.mean(ave_mrr)}
     return stats
 
 
@@ -61,6 +71,7 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     recall = np.zeros(25)
     count = 0
     one_percent_recall = []
+    mrr = []
 
     database_embeddings = []
     query_embeddings = []
@@ -77,15 +88,20 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue
-            pair_recall, pair_opr = get_recall(i, j, database_embeddings, query_embeddings, query_sets,
-                                               database_sets, log=log)
+            pair_recall, pair_opr, pair_mrr = get_recall(i, j, database_embeddings,
+                                                         query_embeddings, query_sets,
+                                                         database_sets, log=log)
             recall += np.array(pair_recall)
             count += 1
             one_percent_recall.append(pair_opr)
+            mrr.append(pair_mrr)
 
     ave_recall = recall / count
     ave_one_percent_recall = np.mean(one_percent_recall)
-    stats = {'ave_one_percent_recall': ave_one_percent_recall, 'ave_recall': ave_recall}
+    ave_mrr = np.mean(mrr)
+    stats = {'ave_one_percent_recall': ave_one_percent_recall,
+             'ave_recall': ave_recall,
+             'ave_mrr': ave_mrr}
     return stats
 
 
@@ -154,6 +170,7 @@ def compute_embedding(model, batch):
         # Compute global descriptor
         y = model(batch)
         embedding = y['global'].detach().cpu().numpy()
+        torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     return embedding
 
@@ -169,6 +186,7 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
 
     num_neighbors = 25
     recall = [0] * num_neighbors
+    recall_idx = []
 
     one_percent_retrieved = 0
     threshold = max(int(round(len(database_output)/100.0)), 1)
@@ -232,6 +250,7 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
         for j in range(len(indices[0])):
             if indices[0][j] in true_neighbors:
                 recall[j] += 1
+                recall_idx.append(j+1)
                 break
 
         if len(list(set(indices[0][0:threshold]).intersection(set(true_neighbors)))) > 0:
@@ -239,14 +258,16 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
 
     one_percent_recall = (one_percent_retrieved/float(num_evaluated))*100
     recall = (np.cumsum(recall)/float(num_evaluated))*100
-    return recall, one_percent_recall
+    mrr = np.mean(1/np.array(recall_idx))*100
+    return recall, one_percent_recall, mrr
 
 
 def print_eval_stats(stats):
     for database_name in stats:
         print('Dataset: {}'.format(database_name))
-        t = 'Avg. top 1% recall: {:.2f}   Avg. recall @N:'
-        print(t.format(stats[database_name]['ave_one_percent_recall']))
+        t = 'Avg. top 1% recall: {:.2f}   Avg. MRR: {:.2f}   Avg. recall @N:'
+        print(t.format(stats[database_name]['ave_one_percent_recall'],
+                       stats[database_name]['ave_mrr']))
         print(stats[database_name]['ave_recall'])
 
 
@@ -262,12 +283,15 @@ def pnv_write_eval_stats(file_name, prefix, stats):
             ave_1p_recall_l.append(ave_1p_recall)
             ave_recall = stats[ds]['ave_recall'][0]
             ave_recall_l.append(ave_recall)
-            s += "AR@1%: {:0.2f}, AR@1: {:0.2f}, AR@N:\n".format(ave_1p_recall, ave_recall)
+            ave_mrr = stats[ds]['ave_mrr']
+            s += "AR@1%: {:0.2f}, AR@1: {:0.2f}, MRR: {:0.2f}, AR@N:\n".format(ave_1p_recall, ave_recall, ave_mrr)
             s += str(stats[ds]['ave_recall'])
 
-        mean_1p_recall = np.mean(ave_1p_recall_l)
-        mean_recall = np.mean(ave_recall_l)
-        s += "\n\nMean AR@1%: {:0.2f}, Mean AR@1: {:0.2f}\n\n".format(mean_1p_recall, mean_recall)
+        # NOTE: below is redundant as average is now stored in stats dict
+        # mean_1p_recall = np.mean(ave_1p_recall_l)
+        # mean_recall = np.mean(ave_recall_l)
+        # s += "\n\nMean AR@1%: {:0.2f}, Mean AR@1: {:0.2f}\n\n".format(mean_1p_recall, mean_recall)
+        s += "\n------------------------------------------------------------------------\n\n"
         f.write(s)
 
 
