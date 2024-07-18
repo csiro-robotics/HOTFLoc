@@ -136,3 +136,5 @@ slurm-*
 wandb/
 weights/
 *_results.txt*
+submitit_logs/
+*.pickle

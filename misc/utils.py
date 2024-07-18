@@ -79,6 +79,8 @@ class ModelParams:
                 self.num_blocks = tuple([2, 2, 6, 2])  # default to OctFormer-small
             if 'num_heads' in params:  # num attention heads per stage
                 self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
+            else:
+                self.num_heads = None
             if 'ct_layers' in params:  # using carrier token attention per stage
                 self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
             else:
@@ -222,6 +224,9 @@ class TrainingParams:
 
         # Check if using octrees, load octrees instead of sparse tensor for OctFormer
         self.load_octree = any(model in self.model_params.model.lower() for model in ('octformer', 'hotformer'))
+
+        # If running a hyperparameter search
+        self.hyperparam_search = params.getboolean('hyperparam_search', False)
         
         self._check_params()
 
@@ -242,6 +247,18 @@ class TrainingParams:
 """
 Useful Functions
 """
+def update_params_from_dict(params, param_dict: dict):    
+    """
+    Update training and model params from dictionary.
+    """
+    for key, value in param_dict.items():
+        if key != 'model_params':
+            setattr(params, key, value)
+            continue
+        for model_key, model_value in value.items():
+            setattr(params.model_params, model_key, model_value)
+    return params
+    
 def get_datetime():
     return time.strftime("%Y%m%d_%H%M")
 

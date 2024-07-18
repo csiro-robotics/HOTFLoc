@@ -640,7 +640,7 @@ class OctFormerBase(torch.nn.Module):
     def __init__(self, in_channels: int,
                  channels: List[int] = [96, 192, 384, 384],
                  num_blocks: List[int] = [2, 2, 18, 2],
-                 num_heads: List[int] = [6, 12, 24, 24],
+                 num_heads: Optional[List[int]] = [6, 12, 24, 24],
                  ct_layers: List[bool] = [False, False, False, False],
                  patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
@@ -669,6 +669,8 @@ class OctFormerBase(torch.nn.Module):
         self.patch_embed = PatchEmbed(in_channels, channels[0], stem_down,
                                       nempty, downsample_input_embeddings,
                                       conv_norm)
+        if num_heads is None:
+            num_heads = [channel // 16 for channel in channels]
         self.layers = torch.nn.ModuleList([OctFormerStage(
                 dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
                 drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
@@ -746,7 +748,7 @@ class OctFormer(torch.nn.Module):
     def __init__(self, in_channels: int,
                  channels: List[int] = [96, 192, 384, 384],
                  num_blocks: List[int] = [2, 2, 6, 2],  # default to OctFormer-small, with 6 instead of 18 blocks in 3rd stage (~20M vs ~40M params)
-                 num_heads: List[int] = [6, 12, 24, 24],
+                 num_heads: Optional[List[int]] = [6, 12, 24, 24],
                  ct_layers: List[bool] = [False, False, False, False],
                  patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,

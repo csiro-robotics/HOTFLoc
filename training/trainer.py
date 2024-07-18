@@ -8,12 +8,12 @@ import torch
 import tqdm
 import pathlib
 import wandb
-import wandb_osh
-from wandb_osh.hooks import TriggerWandbSyncHook
+# import wandb_osh
+# from wandb_osh.hooks import TriggerWandbSyncHook
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
-wandb_osh.set_log_level("ERROR")
+# wandb_osh.set_log_level("ERROR")
 
-from misc.utils import TrainingParams, get_datetime
+from misc.utils import TrainingParams, get_datetime, set_seed, update_params_from_dict
 from models.losses.loss import make_losses
 from models.model_factory import model_factory
 from dataset.dataset_utils import make_dataloaders
@@ -160,15 +160,25 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
         return stats, embeddings
 
 
-def do_train(params: TrainingParams):
+def do_train(params: TrainingParams = None, *args, **kwargs):
+    # Set params for hyperparam search
+    if params.hyperparam_search:
+        params = update_params_from_dict(params, kwargs)
+    params.print()
+    # Seed RNG
+    set_seed()
+    print('Determinism: Enabled')
     # Create model class
     s = get_datetime()
     model = model_factory(params.model_params)
     model_name = params.model_params.model + '_' + s
-    print('Model name: {}'.format(model_name))
+    # Add SLURM job ID to prevent overwriting paths for jobs running at same time
+    if 'SLURM_JOB_ID' in os.environ:
+        model_name += f"_job{os.environ['SLURM_JOB_ID']}"
     weights_path = create_weights_folder(params.dataset_name)
-
     model_pathname = os.path.join(weights_path, model_name)
+    print('Model name: {}'.format(model_name))
+    
     if hasattr(model, 'print_info'):
         model.print_info()
     else:
@@ -234,9 +244,9 @@ def do_train(params: TrainingParams):
     model_params_dict = {"model_params." + e: params.model_params.__dict__[e] for e in params.model_params.__dict__}
     params_dict.update(model_params_dict)
     if not params.debug:
-        trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
+        # trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
         wandb.init(project='HOT-Net', config=params_dict)
-        # wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
+        wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
 
     ###########################################################################
     #
@@ -244,6 +254,7 @@ def do_train(params: TrainingParams):
 
     # Training statistics
     stats = {'train': [], 'eval': []}
+    best_avg_AR_1 = 0.0
 
     if 'val' in dataloaders:
         # Validation phase
@@ -326,7 +337,7 @@ def do_train(params: TrainingParams):
         
         if not params.debug:
             if params.save_freq > 0 and epoch % params.save_freq == 0:
-                epoch_pathname = f"{model_pathname}_{epoch}.pth"
+                epoch_pathname = f"{model_pathname}_e{epoch}.pth"
                 print(f"Saving weights: {epoch_pathname}")
                 torch.save(model.state_dict(), epoch_pathname)
 
@@ -334,10 +345,19 @@ def do_train(params: TrainingParams):
             eval_stats = evaluate(model, device, params, log=False)
             print_eval_stats(eval_stats)
             metrics['test'] = log_eval_stats(eval_stats)
+            # store best AR@1 on all test sets
+            avg_AR_1 = metrics['test']['average']['recall@1']
+            if avg_AR_1 > best_avg_AR_1:
+                print(f"New best avg AR@1 at Epoch {epoch}: {best_avg_AR_1:.2f} -> {avg_AR_1:.2f}")
+                best_avg_AR_1 = avg_AR_1
+                if not params.debug:
+                    best_model_pathname = f"{model_pathname}_best.pth"
+                    print(f"Saving weights: {best_model_pathname}")
+                    torch.save(model.state_dict(), best_model_pathname)
 
         if not params.debug:
             wandb.log(metrics)
-            trigger_sync()
+            # trigger_sync()
 
         if params.batch_expansion_th is not None:
             # Dynamic batch size expansion based on number of non-zero triplets
@@ -370,7 +390,10 @@ def do_train(params: TrainingParams):
         prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
         pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)        
-        trigger_sync()
+        # trigger_sync()
+
+    # Return optimization value (to minimize)
+    return (1 - best_avg_AR_1/100.0)
 
 def create_weights_folder(dataset_name : str):
     # Create a folder to save weights of trained models
