@@ -88,7 +88,7 @@ if __name__ == "__main__":
     job_days = 7
     executor.update_parameters(name="hotf_hyperparam_sweep", timeout_min=job_days*24*60,
                                nodes=1, gpus_per_node=1, cpus_per_task=3,
-                               tasks_per_node=1, slurm_mem="180gb",
+                               tasks_per_node=1, slurm_mem="260gb",  # 260GB to prevent 2 jobs entering the same node (and having shm overflow)
                                slurm_mail_user="ethan.griffiths@data61.csiro.au",
                                slurm_mail_type="FAIL")
     # executor.map_array(do_train, params_list)  # pure submitit method
