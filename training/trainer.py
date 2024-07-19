@@ -429,6 +429,6 @@ def create_weights_folder(dataset_name : str):
     temp, _ = os.path.split(this_file_path)
     weights_path = os.path.join(temp, 'weights', dataset_name)
     if not os.path.exists(weights_path):
-        os.mkdir(weights_path)
+        os.makedirs(weights_path)
     assert os.path.exists(weights_path), 'Cannot create weights folder: {}'.format(weights_path)
     return weights_path
