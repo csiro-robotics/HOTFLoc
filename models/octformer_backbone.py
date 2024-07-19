@@ -338,8 +338,8 @@ class CTAttention(torch.nn.Module):
         return attn
 
     def extra_repr(self) -> str:
-        return 'dim={}, ct_size={}, num_heads={}, dilation={}'.format(
-                        self.dim, self.ct_per_window, self.num_heads, self.dilation)  # noqa
+        return 'dim={}, ct_size={}, num_heads={}'.format(
+                    self.dim, self.ct_per_window, self.num_heads)
 
 
 class OctFormerBlock(torch.nn.Module):
