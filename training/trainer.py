@@ -47,6 +47,26 @@ def print_stats(phase, stats):
     print_global_stats(phase, stats['global'])
 
 
+def log_stage_gradient_magnitudes(model: torch.nn.Module, octformer_variant: bool):
+    """
+    Compute the gradient magnitudes for each stage of the model, to determine if
+    gradients are vanishing/exploding.
+    """
+    # NOTE: This doesn't capture every layer in each stage, but should give a
+    # reasonable insight into what's happening each stage.
+    if octformer_variant:
+        stages = model.backbone.backbone.layers            
+    else:  # MinkLoc
+        stages = model.backbone.blocks
+
+    stage_grad_mags = {}
+    for stage_i, stage in enumerate(stages):
+        grad_mags_list = []
+        for param in stage.parameters():
+            grad_mags_list.append(param.grad.abs().mean().item())
+        stage_grad_mags[stage_i] = np.mean(grad_mags_list)
+    return stage_grad_mags
+
 def log_eval_stats(stats):
     eval_stats = {}
     for database_name in stats:
@@ -270,6 +290,7 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
             running_stats = []  # running stats for the current epoch and phase
             count_batches = 0
             epoch_embeddings = None
+            epoch_stage_gradient_magnitudes = None
 
             if phase == 'train':
                 global_iter = iter(dataloaders['train'])
@@ -294,6 +315,10 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
                 if (epoch % params.embeddings_log_freq == 0
                     and count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
                     epoch_embeddings = temp_embeddings
+
+            # Log average gradients per stage
+            if phase == 'train':
+                epoch_stage_gradient_magnitudes = log_stage_gradient_magnitudes(model, params.load_octree)
 
             # Compute mean stats for the phase
             epoch_stats = {}
@@ -326,6 +351,9 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
             if 'ap' in epoch_stats['global']:
                 metrics[phase]['AP'] = epoch_stats['global']['ap']
 
+            if epoch_stage_gradient_magnitudes is not None:
+                metrics[phase]['avg_stage_grad_mags'] = epoch_stage_gradient_magnitudes
+                
             # TODO: currently broken, need to debug why wandb isn't logging correctly
             # if epoch_embeddings is not None:
             #     embeddings_dataframe = pd.DataFrame(epoch_embeddings, columns=[f'D{i}' for i in range(256)])
