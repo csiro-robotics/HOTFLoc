@@ -45,7 +45,7 @@ class OctreeT(Octree):
                  nempty: bool = True, max_depth: Optional[int] = None,
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
-                 ct_size: int = 0, use_ADaPE: bool = False, no_cov: bool = False,
+                 ct_size: int = 0, ADaPE_mode: Optional[str] = None,
                  **kwargs):
         super().__init__(octree.depth, octree.full_depth)
         self.__dict__.update(octree.__dict__)
@@ -58,9 +58,9 @@ class OctreeT(Octree):
         self.max_depth = max_depth or self.depth
         self.start_depth = start_depth or self.full_depth
         self.invalid_mask_value = -1e3
-        self.use_ADaPE = use_ADaPE
-        self.no_cov = no_cov
-        if not no_cov:
+        self.ADaPE_mode = ADaPE_mode
+        self.use_ADaPE = self.ADaPE_mode is not None
+        if self.ADaPE_mode == "cov":
             self.cov_idx = torch.triu_indices(3, 3, device=self.device)
         assert self.start_depth > 1, "Octree not deep enough for model depth"
 
@@ -229,7 +229,10 @@ class OctreeT(Octree):
         if not use_ct or not self.use_ADaPE:
             return
         N = self.nnum_a[depth] // self.patch_size
-        C = 9 if not self.no_cov else 6  # 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
+        assert self.ADaPE_mode in ['pos','var','cov'], "Invalid mode provided"
+        mode_num_feat_dict = {'pos': 3, 'var': 6, 'cov': 9}
+        # Num feats = 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
+        C = mode_num_feat_dict[self.ADaPE_mode]
         # Get points for current depth
         x, y, z, _ = self.xyzb(depth, self.nempty)
         points = torch.stack((x,y,z), dim=1).to(torch.float32)
@@ -248,13 +251,13 @@ class OctreeT(Octree):
             #       to ensure point windows are assigned to the batch submap
             #       that they contain the most of, but this requires extra
             #       masking logic and currently isn't worth fixing.
-            if self.no_cov:
+            if self.ADaPE_mode == 'var':
                 if batch_masked.size(0) < 2:
                     window_stats[i,3:] = torch.zeros(1, 3, device=self.device,
                                           dtype=torch.float32)
                 else:
                     window_stats[i,3:] = batch_masked.var(0)
-            else:
+            elif self.ADaPE_mode == 'cov':
                 if batch_masked.size(0) < 2:
                     cov = torch.zeros(3, 3, device=self.device,
                                           dtype=torch.float32)
@@ -338,7 +341,7 @@ class OctreeT(Octree):
         # Construct new OctreeT and copy objects over
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          self.max_depth, self.start_depth, self.ct_layers,
-                         self.ct_size, self.use_ADaPE)
+                         self.ct_size, self.ADaPE_mode)
         octree.batch_idx = list_to_device(self.batch_idx)
         octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
         octree.ct_batch_idx = list_to_device(self.ct_batch_idx)
