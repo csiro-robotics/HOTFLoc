@@ -32,21 +32,21 @@ def get_hyperparam_sweep(default_params: TrainingParams):
     parametrization = ng.p.Instrumentation(
         params=default_params,
         lr=ng.p.Log(init=1e-4, lower=1e-4, upper=1e-2),
-        octree_depth=ng.p.TransitionChoice([7, 8, 9]),
+        octree_depth=ng.p.TransitionChoice([7,8,9]),
         weight_decay=ng.p.Log(init=1e-4, lower=1e-4, upper=1e-1),
         tau1=ng.p.Log(init=1e-2, lower=1e-3, upper=1e-1),
         model_params=ng.p.Dict(
             channels=ng.p.TransitionChoice(
                 [[128,256,128,64], [64,128,256,128], [32,64,128,256]]),
-            num_blocks=ng.p.TransitionChoice([2,6,18], repetitions=4),
+            num_blocks=ng.p.Choice([[2,18,2,2], [2,2,18,2], [6,6,6,6]]),
             ct_layers=ng.p.Tuple(  # 2nd layer always has CTs enabled
                 ng.p.Choice([False, True]), True,
                 ng.p.Choice([False, True]), ng.p.Choice([False, True])),
             ct_propagation_scale=ng.p.Log(init=1e-1, lower=1e-2, upper=5e-1),
-            use_ADaPE=ng.p.Choice([False, True]),
-            num_top_down=ng.p.TransitionChoice([0, 1, 2]),
+            ADaPE_mode=ng.p.TransitionChoice([None,'pos','var','cov']),
+            num_top_down=ng.p.TransitionChoice([0,1,2]),
             patch_size=ng.p.TransitionChoice([16,32,64]),
-            conv_norm=ng.p.Choice(['batchnorm', 'layernorm'])
+            conv_norm=ng.p.Choice(['batchnorm','layernorm'])
         )
     )
     return parametrization
