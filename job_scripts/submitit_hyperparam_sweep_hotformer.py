@@ -38,7 +38,7 @@ def get_hyperparam_sweep(default_params: TrainingParams):
         model_params=ng.p.Dict(
             channels=ng.p.TransitionChoice(
                 [[128,256,128,64], [64,128,256,128], [32,64,128,256]]),
-            num_blocks=ng.p.Choice([[2,18,2,2], [2,2,18,2], [6,6,6,6]]),
+            num_blocks=ng.p.Choice([[2,18,2,2], [2,2,18,2], [2,6,12,6], [6,6,6,6]]),
             ct_layers=ng.p.Tuple(  # 2nd layer always has CTs enabled
                 ng.p.Choice([False, True]), True,
                 ng.p.Choice([False, True]), ng.p.Choice([False, True])),
