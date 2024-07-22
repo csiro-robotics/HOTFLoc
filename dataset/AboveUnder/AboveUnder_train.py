@@ -18,7 +18,8 @@ class AboveUnderTrainingDataset(TrainingDataset):
 
 class TrainTransform:
     # Augmentations specific for AboveUnder dataset
-    def __init__(self, aug_mode, normalize_points=False, scale_factor=None):
+    def __init__(self, aug_mode, normalize_points=False, scale_factor=None,
+                 random_rot_theta: float = 5.0):
         self.aug_mode = aug_mode
         self.normalize_points = normalize_points
         self.scale_factor = None
@@ -36,7 +37,7 @@ class TrainTransform:
         elif self.aug_mode == 2:
             # Augmentations with random rotation around z-axis 
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
-                      RandomRotation(max_theta=5, axis=np.array([0, 0, 1])),
+                      RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 0:    # No augmentations
             pass
