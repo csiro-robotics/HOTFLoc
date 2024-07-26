@@ -1,5 +1,5 @@
 [DEFAULT]
-dataset_folder = /scratch3/gri317/datasets/pointnetvlad_datasets
+dataset_folder = /scratch3/gri317/datasets/wild_places/data
 
 [TRAIN]
 num_workers = 1
