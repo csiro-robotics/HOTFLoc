@@ -84,7 +84,7 @@ class ModelParams:
             if 'ct_layers' in params:  # using carrier token attention per stage
                 self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
             else:
-                self.ct_layers = tuple([False, False, False, False])
+                self.ct_layers = tuple([False]*len(self.channels))
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
@@ -256,6 +256,11 @@ def update_params_from_dict(params, param_dict: dict):
             setattr(params, key, value)
             continue
         for model_key, model_value in value.items():
+            if model_key == 'channels_blocks_top_down':
+                setattr(params.model_params, 'channels', model_value[0])
+                setattr(params.model_params, 'num_blocks', model_value[1])
+                setattr(params.model_params, 'num_top_down', model_value[2])
+                continue
             setattr(params.model_params, model_key, model_value)
     return params
     

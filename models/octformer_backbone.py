@@ -661,6 +661,8 @@ class OctFormerBase(torch.nn.Module):
         self.num_stages = len(num_blocks)
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
+        while len(ct_layers) < len(channels):
+            ct_layers.append(False)
         self.ct_layers = ct_layers
         ct_size = ct_size if any(ct_layers) else 0
         self.ct_size = ct_size
