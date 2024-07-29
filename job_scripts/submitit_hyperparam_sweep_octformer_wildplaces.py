@@ -14,21 +14,23 @@ from misc.utils import TrainingParams, set_seed
 
 def get_hyperparam_sweep(default_params: TrainingParams):
     """Define hyperparameter values to sweep through."""
+    # Create different parameters for Octree depth, so that 
+    depth_param_6_to_8 = ng.p.TransitionChoice([6,7,8])
+    depth_param_7_to_8 = ng.p.TransitionChoice([7,8])
     parametrization = ng.p.Instrumentation(
         params=default_params,
         lr=ng.p.Log(init=5e-4, lower=1e-4, upper=1e-2),
-        octree_depth=ng.p.TransitionChoice([6,7,8]),
         model_params=ng.p.Dict(
-            channels_blocks_top_down=ng.p.Choice([  # [[channels], [num_blocks], num_top_down]
-                [[256], [18], 0],
-                [[128,256], [10,10], 0],
-                [[128,256], [2,18], 0],
-                [[128,256,128], [8,8,8], 1],
-                [[128,256,128], [2,18,2], 1],
-                [[64,128,256], [2,2,18], 0],
-                [[128,256,128,64], [2,18,2,2], 2],
-                [[64,128,256,128], [2,2,18,2], 1],
-                [[128,256,256,128,64], [2,10,10,2,2], 2],
+            channels_blocks_top_down_depth=ng.p.Choice([  # [[channels], [num_blocks], num_top_down, octree_depth]
+                ng.p.Tuple([256], [18], 0, depth_param_6_to_8),
+                ng.p.Tuple([128,256], [10,10], 0, depth_param_6_to_8),
+                ng.p.Tuple([128,256], [2,18], 0, depth_param_6_to_8),
+                ng.p.Tuple([128,256,128], [8,8,8], 1, depth_param_6_to_8),
+                ng.p.Tuple([128,256,128], [2,18,2], 1, depth_param_6_to_8),
+                ng.p.Tuple([64,128,256], [2,2,18], 0, depth_param_6_to_8),
+                ng.p.Tuple([128,256,128,64], [2,18,2,2], 2, depth_param_7_to_8),
+                ng.p.Tuple([64,128,256,128], [2,2,18,2], 1, depth_param_7_to_8),
+                ng.p.Tuple([128,256,256,128,64], [2,10,10,2,2], 2, 8),
             ]),
             patch_size=ng.p.TransitionChoice([16,32,64]),
         )
@@ -69,7 +71,7 @@ if __name__ == "__main__":
     # executor = submitit.AutoExecutor(folder=log_folder, cluster='debug')
     executor = submitit.AutoExecutor(folder=log_folder)
     job_days = 7
-    executor.update_parameters(name="octf_hyperparam_sweep", timeout_min=job_days*24*60,
+    executor.update_parameters(name="octf_hyperparam_sweep", timeout_min=int(job_days*24*60),
                                nodes=1, gpus_per_node=1, cpus_per_task=2,
                                tasks_per_node=1, slurm_mem="280gb",  # 280GB to prevent 2 jobs entering the same node (and having shm overflow)
                                slurm_mail_user="ethan.griffiths@data61.csiro.au",

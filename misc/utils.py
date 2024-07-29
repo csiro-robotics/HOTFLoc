@@ -256,10 +256,11 @@ def update_params_from_dict(params, param_dict: dict):
             setattr(params, key, value)
             continue
         for model_key, model_value in value.items():
-            if model_key == 'channels_blocks_top_down':
+            if model_key == 'channels_blocks_top_down_depth':
                 setattr(params.model_params, 'channels', model_value[0])
                 setattr(params.model_params, 'num_blocks', model_value[1])
                 setattr(params.model_params, 'num_top_down', model_value[2])
+                setattr(params, 'octree_depth', model_value[3])
                 continue
             setattr(params.model_params, model_key, model_value)
     return params
