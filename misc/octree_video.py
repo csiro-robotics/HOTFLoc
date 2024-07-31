@@ -47,13 +47,14 @@ def main():
 
         points_tensor = torch.tensor(points_original, dtype=torch.float)
         # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-        points_tensor = torch.clamp(points_tensor, -1, 1)
+        mask = torch.all(abs(points_tensor) <= 1.0, dim=1)
+        points_tensor = points_tensor[mask]
         # Convert to ocnn Points object, then create Octree
         points_ocnn = Points(points_tensor)
         octree = Octree(args.octree_depth, full_depth=2)
         octree.build_octree(points_ocnn)
         # Convert back to points
-        points_octree = octree_to_points(octree).numpy()        
+        points_octree = octree_to_points(octree, args.octree_depth).numpy()
 
         # Convert to o3d point cloud
         original_cloud = o3d.geometry.PointCloud()

@@ -6,6 +6,7 @@ import time
 import random
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 from ocnn.octree import Octree, Points
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
@@ -210,6 +211,7 @@ class TrainingParams:
         self.random_rot_theta = params.getfloat('random_rot_theta', 5.0)    # Random rotation (in degrees) applied during training
         self.normalize_points = params.getboolean('normalize_points', False)    # Normalize points to [-1, 1]
         self.scale_factor = params.getfloat('scale_factor', None)  # Scale factor to normalize points by a fixed scale (as done in OctFormer)
+        self.unit_sphere_norm = params.getboolean('unit_sphere_norm', False)  # Use unit sphere for normalization
         self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
         self.full_depth = params.getint('full_depth', 2)    # Depth of octree that is fully populated
         self.train_file = params.get('train_file')
@@ -304,3 +306,20 @@ def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
     points = octree.points[depth]
     points_scaled = rescale_octree_points(points, depth)
     return points_scaled
+
+def plot_points(points: np.ndarray, show=True):
+    """
+    Plots a point cloud using matplotlib. Colormap is based on z height.
+
+    Args:
+        points (ndarray): Point cloud of shape (N, 3), with (x,y,z) coords.
+    """    
+    fig = plt.figure(figsize=(9,8))
+    ax = fig.add_subplot(1, 1, 1, projection='3d')
+    ax.scatter(*points.T, c=points.T[2])
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax.set_aspect('equal', adjustable='box')
+    if show:
+        plt.show()

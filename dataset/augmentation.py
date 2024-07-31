@@ -188,13 +188,16 @@ class Normalize:
 
     Alternatively, provide `scale_factor` to normalize the cloud with a fixed
     scaling factor. E.g. `cloud_normalized = (cloud - centroid) / scale_factor`.
+    Also supports normlization within a unit sphere.
     """    
     def __init__(self, norm_range: Optional[float] = None,
-                 scale_factor: Optional[float] = None):
+                 scale_factor: Optional[float] = None,
+                 unit_sphere_norm: bool = False):
         assert not all([arg is not None for arg in [norm_range, scale_factor]]),\
             "Must specify one of norm_range or scale_factor, not both"
         self.norm_range = 1.0
         self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
         if norm_range is not None:
             assert norm_range > 0, "Range must be positive"
             self.norm_range = norm_range
@@ -204,21 +207,22 @@ class Normalize:
             self.scale_factor = scale_factor
 
     def __call__(self, coords: torch.Tensor):
-        bbmin = coords.min(dim=0).values
-        bbmax = coords.max(dim=0).values
-        center = (bbmin + bbmax) * 0.5
-        if self.scale_factor is not None:
-            coords = (coords - center) / self.scale_factor
+        if not self.unit_sphere_norm:
+            bbmin = coords.min(dim=0).values
+            bbmax = coords.max(dim=0).values
+            center = (bbmin + bbmax) * 0.5
+            if self.scale_factor is not None:
+                coords_normalized = (coords - center) / self.scale_factor
+            else:
+                box_size = (bbmax - bbmin).max() + 1.0e-6
+                coords_normalized = (coords - center) * (2.0 * self.norm_range / box_size)
         else:
-            box_size = (bbmax - bbmin).max() + 1.0e-6
-            coords = (coords - center) * (2.0 * self.norm_range / box_size)
-        return coords
-        ## UNIT SPHERE NORMALISATION:
-        # centroid = torch.mean(coords, axis=0)
-        # coords_normalized = coords - centroid
-        # if self.scale_factor is not None:
-        #     max_distance = self.scale_factor
-        # else:
-        #     max_distance = torch.max(abs(coords_normalized)) / self.norm_range
-        # coords_normalized /= max_distance        
-        # return coords_normalized
+            # UNIT SPHERE NORMALISATION:
+            centroid = torch.mean(coords, axis=0)
+            coords_normalized = coords - centroid
+            if self.scale_factor is not None:
+                max_distance = self.scale_factor
+            else:
+                max_distance = torch.max(abs(coords_normalized)) / self.norm_range
+            coords_normalized /= max_distance        
+        return coords_normalized

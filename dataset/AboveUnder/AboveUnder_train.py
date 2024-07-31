@@ -19,17 +19,19 @@ class AboveUnderTrainingDataset(TrainingDataset):
 class TrainTransform:
     # Augmentations specific for AboveUnder dataset
     def __init__(self, aug_mode, normalize_points=False, scale_factor=None,
-                 random_rot_theta: float = 5.0):
+                 unit_sphere_norm=False, random_rot_theta: float = 5.0):
         self.aug_mode = aug_mode
         self.normalize_points = normalize_points
         self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
         if scale_factor is not None:
             self.normalize_points = True
             self.scale_factor = scale_factor
         self.transform = None
         t = []
         if self.normalize_points:
-            t.append(Normalize(scale_factor=self.scale_factor))
+            t.append(Normalize(scale_factor=self.scale_factor,
+                               unit_sphere_norm=self.unit_sphere_norm))
         if self.aug_mode == 1:
             # Augmentations without random rotation around z-axis (values assume [-1, 1] range)
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
@@ -55,15 +57,18 @@ class TrainTransform:
 
 class ValTransform:
     # Augmentations specific for AboveUnder dataset
-    def __init__(self, normalize_points=False, scale_factor=None):
+    def __init__(self, normalize_points=False, scale_factor=None,
+                 unit_sphere_norm=False):
         self.normalize_points = normalize_points
         self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
         if scale_factor is not None:
             self.normalize_points = True
             self.scale_factor = scale_factor
         t = None
         if self.normalize_points:
-            t = Normalize(scale_factor=self.scale_factor)
+            t = Normalize(scale_factor=self.scale_factor,
+                          unit_sphere_norm=self.unit_sphere_norm)
         self.transform = t
 
     def __call__(self, e):

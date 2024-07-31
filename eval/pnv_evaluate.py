@@ -142,7 +142,8 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams):
         data = pc_loader(pc_file_path)
         data = torch.tensor(data)
         if params.normalize_points or params.scale_factor is not None:
-            data = Normalize(scale_factor=params.scale_factor)(data)
+            data = Normalize(scale_factor=params.scale_factor,
+                             unit_sphere_norm=params.unit_sphere_norm)(data)
         if params.load_octree:  # Convert to Octree format
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
             mask = torch.all(abs(data) <= 1.0, dim=1)

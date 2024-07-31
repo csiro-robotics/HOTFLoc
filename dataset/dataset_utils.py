@@ -40,26 +40,30 @@ def make_datasets(params: TrainingParams, validation: bool = True):
     # PNV datasets have their own transform
     if 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         train_transform = AboveUnderTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
-                                                   scale_factor=params.scale_factor, random_rot_theta=params.random_rot_theta)
+                                                   scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
+                                                   random_rot_theta=params.random_rot_theta)
         datasets['train'] = AboveUnderTrainingDataset(params.dataset_folder, params.train_file,
                                                       transform=train_transform, set_transform=train_set_transform,
                                                       load_octree=params.load_octree, octree_depth=params.octree_depth,
                                                       full_depth=params.full_depth)
         if validation:
-            val_transform = AboveUnderValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor)
+            val_transform = AboveUnderValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+                                                   unit_sphere_norm=params.unit_sphere_norm)
             datasets['val'] = AboveUnderTrainingDataset(params.dataset_folder, params.val_file,
                                                         transform=val_transform,
                                                         load_octree=params.load_octree, octree_depth=params.octree_depth,
                                                         full_depth=params.full_depth)
     else:
         train_transform = PNVTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
-                                            scale_factor=params.scale_factor, random_rot_theta=params.random_rot_theta)
+                                            scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
+                                            random_rot_theta=params.random_rot_theta)
         datasets['train'] = PNVTrainingDataset(params.dataset_folder, params.train_file,
                                                transform=train_transform, set_transform=train_set_transform,
                                                load_octree=params.load_octree, octree_depth=params.octree_depth,
                                                full_depth=params.full_depth)
         if validation:
-            val_transform = PNVValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor)
+            val_transform = PNVValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+                                            unit_sphere_norm=params.unit_sphere_norm)
             datasets['val'] = PNVTrainingDataset(params.dataset_folder, params.val_file,
                                                  transform=val_transform,
                                                  load_octree=params.load_octree, octree_depth=params.octree_depth,
