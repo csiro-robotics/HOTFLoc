@@ -246,13 +246,14 @@ class OctreeAttention(torch.nn.Module):
         attn = self.apply_rpe(attn, rel_pos)  # (N, H, K+G, K+G)
         attn = attn + mask.unsqueeze(1)
         attn = self.softmax(attn)
+        attn_map = attn  # store attn map after softmax
         attn = self.attn_drop(attn)
         data = (attn @ v).transpose(1, 2).reshape(-1, K+G, C)  # (N, K+G, C)
 
         # ffn
         data = self.proj(data)
         data = self.proj_drop(data)
-        return data
+        return data, attn_map
 
     def apply_rpe(self, attn, rel_pos):
         if self.use_rpe:
@@ -321,6 +322,7 @@ class CTAttention(torch.nn.Module):
         # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
         attn = attn + ct_mask.unsqueeze(1)
         attn = self.softmax(attn)
+        ct_attn_map = attn  # store attn map after softmax
         attn = self.attn_drop(attn)
         ct = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
 
@@ -330,7 +332,7 @@ class CTAttention(torch.nn.Module):
         # ffn
         ct = self.proj(ct)
         ct = self.proj_drop(ct)
-        return ct
+        return ct, ct_attn_map
 
     def apply_rpe(self, attn, rel_pos):
         if self.use_rpe:
@@ -358,7 +360,8 @@ class OctFormerBlock(torch.nn.Module):
                  ct_propagation_scale: Optional[float] = None,
                  use_ADaPE: bool = False, disable_RPE: bool = False,
                  conv_norm: str = 'batchnorm', last: bool = False,
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None,
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
@@ -373,6 +376,7 @@ class OctFormerBlock(torch.nn.Module):
         self.ct_per_window = ct_per_window
         self.last = last
         self.ct_propagation = ct_propagation
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
         use_ct_propagation_scale = ct_propagation_scale is not None and type(ct_propagation_scale) in [int, float]
         self.norm1 = torch.nn.LayerNorm(dim)
@@ -418,7 +422,9 @@ class OctFormerBlock(torch.nn.Module):
         C = self.dim
         G = self.ct_per_window
         ct = carrier_tokens
-        
+
+        # Store features and attn maps
+        feats_and_attn_maps = {'feats': {}, 'attn': {}}
         # Apply conditional positional encoding
         data = data + self.cpe(data, octree, depth)
         # Pad batch and reshape into windows
@@ -430,15 +436,21 @@ class OctFormerBlock(torch.nn.Module):
             # NOTE: No longer using ADaPE per octformer block
             # if self.use_ADaPE:
             #     ct = ct + self.ct_adape(octree, depth)
-            ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
-            ct = ct + self.ct_drop_path(ct_attn, octree, depth)
+            ct_attn_out, ct_attn_map = self.ct_attention(self.ct_norm1(ct), octree, depth)
+            if self.last and self.return_feats_and_attn_maps:
+                feats_and_attn_maps['attn']['ct'] = ct_attn_map.detach().cpu()
+            ct_attn_out = self.ct_gamma1 * ct_attn_out
+            ct = ct + self.ct_drop_path(ct_attn_out, octree, depth)
             ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
             ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
             # Concatenate carrier tokens with window tokens
             data = torch.cat((ct.unsqueeze(1), data), dim=1)
 
-        attn = self.gamma1 * self.attention(self.norm1(data), octree, depth)
-        data = data + self.drop_path(attn, octree, depth)
+        attn_out, attn_map = self.attention(self.norm1(data), octree, depth)
+        if self.last and self.return_feats_and_attn_maps:
+            feats_and_attn_maps['attn']['local'] = attn_map.detach().cpu()
+        attn_out = self.gamma1 * attn_out
+        data = data + self.drop_path(attn_out, octree, depth)
         ffn = self.gamma2 * self.mlp(self.norm2(data))
         data = data + self.drop_path(ffn, octree, depth)
 
@@ -446,10 +458,14 @@ class OctFormerBlock(torch.nn.Module):
         if self.use_ct:
             ct, data = data.split([G, K], dim=1)
             ct = ct.squeeze(1)
+            if self.last and self.return_feats_and_attn_maps:
+                feats_and_attn_maps['feats']['ct'] = ct.detach().cpu()
         # Unpad batch and restore original data shape
         data = octree.windows_to_data(
             data, depth, dilated_windows=self.dilated_windows
-        )        
+        )
+        if self.last and self.return_feats_and_attn_maps:
+            feats_and_attn_maps['feats']['local'] = data.detach().cpu()
         # On last block, propagate carrier token features to local feature map
         if self.last and self.use_ct and self.ct_propagation:
             # TODO: Make this work with ct_size > 1
@@ -461,7 +477,12 @@ class OctFormerBlock(torch.nn.Module):
             ct_upsampled = ct_upsampled.masked_fill(mask, value=0).view(-1, C)
             ct_upsampled = octree.patch_reverse(ct_upsampled, depth)
             data = data + self.ct_gamma_propagate*ct_upsampled
-        return data, ct
+            if self.return_feats_and_attn_maps:
+                feats_and_attn_maps['feats']['local_ctprop'] = data.detach().cpu()
+        # Return feat and attn map from last block
+        if self.last and self.return_feats_and_attn_maps:
+            return data, ct, feats_and_attn_maps
+        return data, ct, None
 
 
 class TokenInitialiser(torch.nn.Module):
@@ -537,12 +558,14 @@ class OctFormerStage(torch.nn.Module):
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, num_blocks: int = 2,
                  conv_norm: str = 'batchnorm', layer_scale: Optional[float] = None,
+                 return_feats_and_attn_maps: bool = False,
                  octformer_block=OctFormerBlock, **kwargs):
         super().__init__()
         self.num_blocks = num_blocks
         self.grad_checkpoint = grad_checkpoint
         self.use_ct = use_ct
         self.use_ADaPE = ADaPE_mode is not None
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # self.interval = interval  # normalisation interval
         # self.num_norms = (num_blocks - 1) // self.interval
 
@@ -556,7 +579,8 @@ class OctFormerStage(torch.nn.Module):
             use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
             ct_propagation_scale=ct_propagation_scale, use_ADaPE=self.use_ADaPE,
             conv_norm=conv_norm, last=(i == num_blocks - 1),
-            layer_scale=layer_scale) for i in range(num_blocks)])
+            layer_scale=layer_scale,
+            return_feats_and_attn_maps=return_feats_and_attn_maps) for i in range(num_blocks)])
         # self.norms = torch.nn.ModuleList([
         #     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
         if not self.use_ct:
@@ -576,12 +600,13 @@ class OctFormerStage(torch.nn.Module):
             ct = ct + self.ct_adape(octree, depth)
         for i in range(self.num_blocks):
             if self.grad_checkpoint and self.training:
-                data, ct = checkpoint(self.blocks[i], data, ct, octree, depth, use_reentrant=False)  # disable reentrant to fix error with no_grad?
+                data, ct, feats_and_attn_maps = checkpoint(self.blocks[i], data, ct, octree, depth, use_reentrant=False)  # disable reentrant to fix error with no_grad?
             else:
-                data, ct = self.blocks[i](data, ct, octree, depth)
+                data, ct, feats_and_attn_maps = self.blocks[i](data, ct, octree, depth)
             # if i % self.interval == 0 and i != 0:
             #   data = self.norms[(i - 1) // self.interval](data)
-        return data
+        # Return feats and_attn maps from final block only
+        return data, feats_and_attn_maps
 
 
 class PatchEmbed(torch.nn.Module):
@@ -653,7 +678,8 @@ class OctFormerBase(torch.nn.Module):
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None,
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dilation = dilation
@@ -668,6 +694,7 @@ class OctFormerBase(torch.nn.Module):
         self.ct_size = ct_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = ADaPE_mode is not None
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # Stochastic depth per block
         drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
@@ -684,8 +711,8 @@ class OctFormerBase(torch.nn.Module):
                 conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
                 ct_propagation=ct_propagation,
                 ct_propagation_scale=ct_propagation_scale,
-                ADaPE_mode=ADaPE_mode,
-                layer_scale=layer_scale) for i in range(self.num_stages)])
+                ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
+                return_feats_and_attn_maps=return_feats_and_attn_maps) for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
                 channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
                 conv_norm=conv_norm) for i in range(self.num_stages - 1)])
@@ -700,13 +727,15 @@ class OctFormerBase(torch.nn.Module):
                          ADaPE_mode=self.ADaPE_mode)
         octree.build_t()
         features = {}
+        feats_and_attn_maps = {}
         for i in range(self.num_stages):
             depth_i = depth - i
-            data = self.layers[i](data, octree, depth_i)
+            data, feats_and_attn_maps_layer_i = self.layers[i](data, octree, depth_i)
             features[depth_i] = data
+            feats_and_attn_maps[depth_i] = feats_and_attn_maps_layer_i
             if i < self.num_stages - 1:
                 data = self.downsamples[i](data, octree, depth_i)
-        return features
+        return features, feats_and_attn_maps
 
 
 class FPNHeader(torch.nn.Module):
@@ -764,7 +793,8 @@ class OctFormer(torch.nn.Module):
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None,
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         """
         Args:
             in_channels: Number of input channels, typically 3 if only using x,y,z information.
@@ -788,6 +818,7 @@ class OctFormer(torch.nn.Module):
             disable_RPE: Disable RPE during self-attention.
             conv_norm: Type of normalisation used after convolution layers, valid params are in ['batchnorm', 'layernorm', 'powernorm'].
             layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
+            return_feats_and_attn_maps: Outputs feats and attn maps from final block of each octformer stage
         """
         super().__init__()
         self.backbone = OctFormerBase(
@@ -795,6 +826,7 @@ class OctFormer(torch.nn.Module):
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
             ct_propagation, ct_propagation_scale, ADaPE_mode, grad_checkpoint,
             downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
+            return_feats_and_attn_maps,
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
         self.apply(self.init_weights)
@@ -806,6 +838,6 @@ class OctFormer(torch.nn.Module):
                 torch.nn.init.constant_(m.bias, 0)
 
     def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        features = self.backbone(data, octree, depth)
+        features, feats_and_attn_maps = self.backbone(data, octree, depth)
         output, output_depth = self.head(features, octree)
-        return output, output_depth
+        return output, output_depth, feats_and_attn_maps

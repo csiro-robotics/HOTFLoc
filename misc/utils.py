@@ -101,6 +101,7 @@ class ModelParams:
             assert self.conv_norm in ['batchnorm', 'layernorm', 'powernorm']
             self.layer_scale = params.getfloat('layer_scale', None)  # coefficient to initialise learnable channel-wise scalar multipliers for attention outputs, or None to disable this.
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
+            self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', False)  # outputs feats and attn maps from final block of each octformer stage
 
     def print(self):
         print('Model parameters:')

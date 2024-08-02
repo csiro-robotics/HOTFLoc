@@ -71,6 +71,7 @@ def model_factory(model_params: ModelParams):
             disable_RPE=model_params.disable_RPE,
             conv_norm=model_params.conv_norm,
             layer_scale=model_params.layer_scale,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
         pooling = PoolingWrapper(
             pool_method=model_params.pooling,
@@ -81,7 +82,8 @@ def model_factory(model_params: ModelParams):
             backbone=backbone,
             pooling=pooling,
             normalize_embeddings=model_params.normalize_embeddings,
-            input_features=model_params.input_features
+            input_features=model_params.input_features,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     else:
         raise NotImplementedError('Model not implemented: {}'.format(model_params.model))
