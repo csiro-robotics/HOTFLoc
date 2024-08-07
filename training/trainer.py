@@ -9,6 +9,7 @@ import tqdm
 import pathlib
 import wandb
 from timm.utils import ModelEmaV3
+from timm.optim.lamb import Lamb
 # import wandb_osh
 # from wandb_osh.hooks import TriggerWandbSyncHook
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
@@ -267,6 +268,8 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
         optimizer_fn = torch.optim.Adam
     elif params.optimizer == 'AdamW':
         optimizer_fn = torch.optim.AdamW
+    elif params.optimizer == 'Lamb':
+        optimizer_fn = Lamb
     else:
         raise NotImplementedError(f"Unsupported optimizer: {params.optimizer}")
 
