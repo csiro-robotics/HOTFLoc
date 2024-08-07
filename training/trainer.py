@@ -78,6 +78,8 @@ def log_stage_gradient_magnitudes(model: torch.nn.Module, octformer_variant: boo
     for stage_i, stage in enumerate(stages):
         grad_mags_list = []
         for param in stage.parameters():
+            if param.grad is None:
+                continue
             grad_mags_list.append(param.grad.abs().mean().item())
         stage_grad_mags[stage_i] = np.mean(grad_mags_list)
     return stage_grad_mags
