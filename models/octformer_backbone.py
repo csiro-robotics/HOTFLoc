@@ -764,7 +764,8 @@ class OctFormer(torch.nn.Module):
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None,
+                 linear_init: List = ['trunc_normal', 0.02], **kwargs):
         """
         Args:
             in_channels: Number of input channels, typically 3 if only using x,y,z information.
@@ -788,6 +789,7 @@ class OctFormer(torch.nn.Module):
             disable_RPE: Disable RPE during self-attention.
             conv_norm: Type of normalisation used after convolution layers, valid params are in ['batchnorm', 'layernorm', 'powernorm'].
             layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
+            linear_init: Method of initialisation to use for linear layers
         """
         super().__init__()
         self.backbone = OctFormerBase(
@@ -797,13 +799,30 @@ class OctFormer(torch.nn.Module):
             downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
+        self.linear_init = linear_init
         self.apply(self.init_weights)
 
     def init_weights(self, m):
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.init.trunc_normal_(m.weight, std=0.02)
-            if isinstance(m, torch.nn.Linear) and m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
+        if not isinstance(m, torch.nn.Linear):
+            return
+        
+        if self.linear_init[0] == 'torch_default':
+            return
+        elif self.linear_init[0] == 'trunc_normal':
+            torch.nn.init.trunc_normal_(m.weight, std=self.linear_init[1])
+        elif self.linear_init[0] == 'xavier_uniform':
+            torch.nn.init.xavier_uniform_(m.weight, gain=torch.nn.init.calculate_gain('relu'))
+        elif self.linear_init[0] == 'xavier_normal':
+            torch.nn.init.xavier_normal_(m.weight, gain=torch.nn.init.calculate_gain('relu'))
+        elif self.linear_init[0] == 'kaiming_uniform':
+            torch.nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
+        elif self.linear_init[0] == 'kaiming_normal':
+            torch.nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+        else:
+            raise ValueError("Invalid init type")
+        
+        if isinstance(m, torch.nn.Linear) and m.bias is not None:
+            torch.nn.init.constant_(m.bias, 0)
 
     def forward(self, data: torch.Tensor, octree: Octree, depth: int):
         features = self.backbone(data, octree, depth)
