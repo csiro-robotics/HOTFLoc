@@ -122,6 +122,28 @@ class OctreeDeconvNormRelu(torch.nn.Module):
         return out
 
 
+class CPE(torch.nn.Module):
+    """
+    Conditional position encoding (CPE). Also supports the slightly bulkier
+    xCPE from PointTransformerV3.
+    """
+    def __init__(self, dim: int, nempty: bool = False,
+                 conv_norm: str = 'layernorm', xcpe: bool = False):  
+        super().__init__()      
+        if not xcpe:
+            self.conv = dwconv.OctreeDWConv(dim, nempty=nempty, use_bias=False)
+            self.linear = torch.nn.Identity()
+        else:
+            self.conv = ocnn.nn.OctreeConv(dim, dim, nempty=nempty, use_bias=True)
+            self.linear = torch.nn.Linear(dim, dim)
+        self.norm = get_norm_layer(dim, conv_norm)
+
+    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
+        out = self.conv(data, octree, depth)
+        out = self.linear(out)
+        out = self.norm(out)
+        return out
+
 class RPE(torch.nn.Module):
 
     def __init__(self, patch_size: int, num_heads: int, dilation: int = 1):
@@ -358,7 +380,8 @@ class OctFormerBlock(torch.nn.Module):
                  ct_propagation_scale: Optional[float] = None,
                  use_ADaPE: bool = False, disable_RPE: bool = False,
                  conv_norm: str = 'batchnorm', last: bool = False,
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None, xcpe: bool = False,
+                 **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.use_ct = use_ct
@@ -384,7 +407,8 @@ class OctFormerBlock(torch.nn.Module):
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty,
                                         dilated_windows=self.dilated_windows)
-        self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
+        self.cpe_old = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
+        self.cpe = CPE(dim, nempty=nempty, conv_norm=conv_norm, xcpe=xcpe)
         # Learnable per-channel scale multiplier, originally proposed by
         # https://arxiv.org/pdf/2103.17239
         self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
@@ -471,7 +495,7 @@ class TokenInitialiser(torch.nn.Module):
     """
     
     def __init__(self, dim: int, patch_size: int, nempty: bool, conv_norm: str,
-                 ct_size: int = 1, use_cpe: bool = False):
+                 ct_size: int = 1, use_cpe: bool = False, xcpe: bool = False):
         """
         Args:
             dim: feature size dimension.
@@ -480,12 +504,13 @@ class TokenInitialiser(torch.nn.Module):
             nempty: only compute on non-empty octree leaf nodes.
             conv_norm: type of normalisation to use after the conv layer.
             ct_size: number of carrier tokens per local window.
-            use_cpe: disable CPE during token initialisation
+            use_cpe: disable CPE during token initialisation.
+            xcpe: Use xCPE instead of CPE.
         """
         super().__init__()
         self.use_cpe = use_cpe
         if use_cpe:
-            self.cpe = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
+            self.cpe = CPE(dim, nempty=nempty, conv_norm=conv_norm, xcpe=xcpe)
         # NOTE: Currently, because of how octree windows are constructed,
         #       consecutive batch elements can have an octree window with
         #       elements from both batches. This means avgpooled features for
@@ -537,7 +562,7 @@ class OctFormerStage(torch.nn.Module):
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, num_blocks: int = 2,
                  conv_norm: str = 'batchnorm', layer_scale: Optional[float] = None,
-                 octformer_block=OctFormerBlock, **kwargs):
+                 xcpe: bool = False, octformer_block=OctFormerBlock, **kwargs):
         super().__init__()
         self.num_blocks = num_blocks
         self.grad_checkpoint = grad_checkpoint
@@ -556,7 +581,7 @@ class OctFormerStage(torch.nn.Module):
             use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
             ct_propagation_scale=ct_propagation_scale, use_ADaPE=self.use_ADaPE,
             conv_norm=conv_norm, last=(i == num_blocks - 1),
-            layer_scale=layer_scale) for i in range(num_blocks)])
+            layer_scale=layer_scale, xcpe=xcpe) for i in range(num_blocks)])
         # self.norms = torch.nn.ModuleList([
         #     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
         if not self.use_ct:
@@ -565,7 +590,8 @@ class OctFormerStage(torch.nn.Module):
                                                  nempty=nempty,
                                                  conv_norm=conv_norm,
                                                  ct_size=ct_size,
-                                                 use_cpe=(not self.use_ADaPE))
+                                                 use_cpe=(not self.use_ADaPE),
+                                                 xcpe=xcpe)
         if self.use_ADaPE:
             self.ct_adape = ADaPE(dim, activation, ADaPE_mode)
 
@@ -653,7 +679,8 @@ class OctFormerBase(torch.nn.Module):
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None, xcpe: bool = False,
+                 **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dilation = dilation
@@ -684,8 +711,8 @@ class OctFormerBase(torch.nn.Module):
                 conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
                 ct_propagation=ct_propagation,
                 ct_propagation_scale=ct_propagation_scale,
-                ADaPE_mode=ADaPE_mode,
-                layer_scale=layer_scale) for i in range(self.num_stages)])
+                ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
+                xcpe=xcpe) for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
                 channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
                 conv_norm=conv_norm) for i in range(self.num_stages - 1)])
@@ -765,7 +792,8 @@ class OctFormer(torch.nn.Module):
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None,
-                 linear_init: List = ['trunc_normal', 0.02], **kwargs):
+                 linear_init: List = ['trunc_normal', 0.02],
+                 xcpe: bool = False, **kwargs):
         """
         Args:
             in_channels: Number of input channels, typically 3 if only using x,y,z information.
@@ -790,6 +818,7 @@ class OctFormer(torch.nn.Module):
             conv_norm: Type of normalisation used after convolution layers, valid params are in ['batchnorm', 'layernorm', 'powernorm'].
             layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
             linear_init: Method of initialisation to use for linear layers
+            xcpe: Use xCPE instead of CPE (from PointTransformerV3)
         """
         super().__init__()
         self.backbone = OctFormerBase(
@@ -797,6 +826,7 @@ class OctFormer(torch.nn.Module):
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
             ct_propagation, ct_propagation_scale, ADaPE_mode, grad_checkpoint,
             downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
+            xcpe,
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
         self.linear_init = linear_init

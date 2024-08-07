@@ -72,6 +72,7 @@ def model_factory(model_params: ModelParams):
             conv_norm=model_params.conv_norm,
             layer_scale=model_params.layer_scale,
             linear_init=model_params.linear_init,
+            xcpe=model_params.xcpe,
         )
         pooling = PoolingWrapper(
             pool_method=model_params.pooling,

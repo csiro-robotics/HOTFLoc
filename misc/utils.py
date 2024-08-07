@@ -107,6 +107,7 @@ class ModelParams:
                     self.linear_init[1] = None if self.linear_init[1] == 'None' else float(self.linear_init[1])
             else:
                 self.linear_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
+            self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
 
     def print(self):
         print('Model parameters:')
