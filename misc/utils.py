@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from ocnn.octree import Octree, Points
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
+from dataset.coordinate_utils import CylindricalCoordinates
 
 
 class ModelParams:
@@ -27,19 +28,27 @@ class ModelParams:
         #######################################################################
 
         self.coordinates = params.get('coordinates', 'polar')
-        assert self.coordinates in ['polar', 'cartesian'], f'Unsupported coordinates: {self.coordinates}'
+        assert self.coordinates in ['polar', 'cartesian', 'cylindrical'], f'Unsupported coordinates: {self.coordinates}'
 
-        if 'polar' in self.coordinates:
-            # 3 quantization steps for polar coordinates: for sectors (in degrees), rings (in meters) and z coordinate (in meters)
-            self.quantization_step = tuple([float(e) for e in params['quantization_step'].split(',')])
-            assert len(self.quantization_step) == 3, f'Expected 3 quantization steps: for sectors (degrees), rings (meters) and z coordinate (meters)'
-            self.quantizer = PolarQuantizer(quant_step=self.quantization_step)
-        elif 'cartesian' in self.coordinates:
-            # Single quantization step for cartesian coordinates
-            self.quantization_step = params.getfloat('quantization_step')
-            self.quantizer = CartesianQuantizer(quant_step=self.quantization_step)
+        if any(model in self.model.lower() for model in ('octformer', 'hotformer')):
+            if 'cartesian' in self.coordinates:
+                self.quantizer = None
+            elif 'cylindrical' in self.coordinates:
+                self.quantizer = CylindricalCoordinates(use_octree=True)
+            else:
+                raise NotImplementedError(f"Unsupported coordinates: {self.coordinates}")
         else:
-            raise NotImplementedError(f"Unsupported coordinates: {self.coordinates}")
+            if 'polar' in self.coordinates:
+                # 3 quantization steps for polar coordinates: for sectors (in degrees), rings (in meters) and z coordinate (in meters)
+                self.quantization_step = tuple([float(e) for e in params['quantization_step'].split(',')])
+                assert len(self.quantization_step) == 3, f'Expected 3 quantization steps: for sectors (degrees), rings (meters) and z coordinate (meters)'
+                self.quantizer = PolarQuantizer(quant_step=self.quantization_step)
+            elif 'cartesian' in self.coordinates:
+                # Single quantization step for cartesian coordinates
+                self.quantization_step = params.getfloat('quantization_step')
+                self.quantizer = CartesianQuantizer(quant_step=self.quantization_step)
+            else:
+                raise NotImplementedError(f"Unsupported coordinates: {self.coordinates}")
 
         # Use cosine similarity instead of Euclidean distance
         # When Euclidean distance is used, embedding normalization is optional
@@ -232,10 +241,17 @@ class TrainingParams:
 
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path)
-
+        
         # Check if using octrees, load octrees instead of sparse tensor for OctFormer
         self.load_octree = any(model in self.model_params.model.lower() for model in ('octformer', 'hotformer'))
 
+        # Ensure normalisation type is correct for octree coordinate system
+        if self.load_octree and self.model_params.coordinates == 'cylindrical':
+            if self.normalize_points:
+                if self.unit_sphere_norm:
+                    print(f"[WARNING] Unit sphere normalization recommended for cylindrical octrees")
+            else:
+                print(f"[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
         # If running a hyperparameter search
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
         
