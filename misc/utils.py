@@ -248,7 +248,7 @@ class TrainingParams:
         # Ensure normalisation type is correct for octree coordinate system
         if self.load_octree and self.model_params.coordinates == 'cylindrical':
             if self.normalize_points:
-                if self.unit_sphere_norm:
+                if not self.unit_sphere_norm:
                     print(f"[WARNING] Unit sphere normalization recommended for cylindrical octrees")
             else:
                 print(f"[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
