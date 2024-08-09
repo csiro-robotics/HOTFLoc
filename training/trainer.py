@@ -8,6 +8,8 @@ import torch
 import tqdm
 import pathlib
 import wandb
+from timm.utils import ModelEmaV3
+from timm.optim.lamb import Lamb
 # import wandb_osh
 # from wandb_osh.hooks import TriggerWandbSyncHook
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
@@ -18,6 +20,19 @@ from models.losses.loss import make_losses
 from models.model_factory import model_factory
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
+
+
+def kdloss(y, teacher_scores):
+    """
+    Adapted from FasterViT repo:
+    https://github.com/NVlabs/FasterViT/blob/main/fastervit/train.py#L356
+    """
+    kl_loss = torch.nn.KLDivLoss(reduction='batchmean').cuda()
+    T = 3
+    p = torch.nn.functional.log_softmax(y/T, dim=1)
+    q = torch.nn.functional.softmax(teacher_scores/T, dim=1)
+    l_kl = 50.0*kl_loss(p, q)
+    return l_kl
 
 
 def warmup(epoch: int):
@@ -63,6 +78,8 @@ def log_stage_gradient_magnitudes(model: torch.nn.Module, octformer_variant: boo
     for stage_i, stage in enumerate(stages):
         grad_mags_list = []
         for param in stage.parameters():
+            if param.grad is None:
+                continue
             grad_mags_list.append(param.grad.abs().mean().item())
         stage_grad_mags[stage_i] = np.mean(grad_mags_list)
     return stage_grad_mags
@@ -82,7 +99,7 @@ def tensors_to_numbers(stats):
     return stats
 
 
-def training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged):
+def training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged, mesa=0.0, model_ema=None):
     assert phase in ['train', 'val']
 
     batch, positives_mask, negatives_mask = next(global_iter)
@@ -105,15 +122,25 @@ def training_step(global_iter, model, phase, device, optimizer, loss_fn, num_emb
         temp_stats = tensors_to_numbers(temp_stats)
         stats.update(temp_stats)
         if phase == 'train':
+            # Compute MESA loss
+            if mesa > 0.0:
+                with torch.no_grad():
+                    ema_output = model_ema.module(batch)['global'].detach()
+                kd = kdloss(embeddings, ema_output)
+                loss += mesa * kd
+                
             loss.backward()
             optimizer.step()
+            
+            if model_ema is not None:
+                model_ema.update(model)
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
 
 
-def multistaged_training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged):
+def multistaged_training_step(global_iter, model, phase, device, optimizer, loss_fn, num_embeddings_logged, mesa=0.0, model_ema=None):
     # Training step using multistaged backpropagation algorithm as per:
     # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
     # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
@@ -131,28 +158,39 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
     # Stage 1 - calculate descriptors of each batch element (with gradient turned off)
     # In training phase network is in the train mode to update BatchNorm stats
     embeddings_l = []
+    embeddings_ema_l = []
     with torch.set_grad_enabled(False):
         for minibatch in batch:
             minibatch = {e: minibatch[e].to(device, non_blocking=True) for e in minibatch}
             y = model(minibatch)
-            embeddings_l.append(y['global'])
+            embeddings_l.append(y['global'])            
+            # Compute MESA embeddings
+            if mesa > 0.0:
+                ema_output = model_ema.module(minibatch)['global'].detach()
+                embeddings_ema_l.append(ema_output)
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     # Stage 2 - compute gradient of the loss w.r.t embeddings
     embeddings = torch.cat(embeddings_l, dim=0)
+    if mesa > 0.0:
+        embeddings_ema = torch.cat(embeddings_ema_l, dim=0)
 
     with torch.set_grad_enabled(phase == 'train'):
         if phase == 'train':
             embeddings.requires_grad_(True)
         loss, stats = loss_fn(embeddings, positives_mask, negatives_mask)
         stats = tensors_to_numbers(stats)
+        # Compute MESA loss
+        if mesa > 0.0:
+            kd = kdloss(embeddings, embeddings_ema)
+            loss += mesa * kd
         if phase == 'train':
             loss.backward()
             embeddings_grad = embeddings.grad
 
     # Delete intermediary values
-    embeddings_l, embeddings, y, loss = None, None, None, None
+    embeddings_l, embeddings, embeddings_ema_l, embeddings_ema, y, loss = [None]*6
 
     # Stage 3 - recompute descriptors with gradient enabled and compute the gradient of the loss w.r.t.
     # network parameters using cached gradient of the loss w.r.t embeddings
@@ -172,6 +210,9 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
                 i += minibatch_size
 
             optimizer.step()
+            
+            if model_ema is not None:
+                model_ema.update(model)
 
     torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
     if embeddings is not None:
@@ -213,6 +254,12 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
     model.to(device)
     print('Model device: {}'.format(device))
 
+    # Setup exponential moving average of model weights, SWA could be used here too
+    model_ema = None
+    if params.mesa > 0.0:
+        # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
+        model_ema = ModelEmaV3(model, decay=0.9998)
+    
     # set up dataloaders
     dataloaders = make_dataloaders(params, validation=params.validation)
 
@@ -223,6 +270,8 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
         optimizer_fn = torch.optim.Adam
     elif params.optimizer == 'AdamW':
         optimizer_fn = torch.optim.AdamW
+    elif params.optimizer == 'Lamb':
+        optimizer_fn = Lamb
     else:
         raise NotImplementedError(f"Unsupported optimizer: {params.optimizer}")
 
@@ -285,7 +334,11 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
 
     for epoch in tqdm.tqdm(range(1, params.epochs + 1)):
         metrics = {'train': {}, 'val': {}, 'test': {}}      # Metrics for wandb reporting
-
+        if epoch / params.epochs > params.mesa_start_ratio:
+            mesa = params.mesa
+        else:
+            mesa = 0.0
+        
         for phase in phases:
             running_stats = []  # running stats for the current epoch and phase
             count_batches = 0
@@ -304,7 +357,7 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
                     break
 
                 try:
-                    temp_stats, temp_embeddings = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn, params.num_embeddings_logged)
+                    temp_stats, temp_embeddings = train_step_fn(global_iter, model, phase, device, optimizer, loss_fn, params.num_embeddings_logged, mesa, model_ema)
                     batch_stats['global'] = temp_stats
 
                 except StopIteration:

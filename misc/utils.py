@@ -101,6 +101,13 @@ class ModelParams:
             assert self.conv_norm in ['batchnorm', 'layernorm', 'powernorm']
             self.layer_scale = params.getfloat('layer_scale', None)  # coefficient to initialise learnable channel-wise scalar multipliers for attention outputs, or None to disable this.
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
+            if 'linear_init' in params:
+                self.linear_init = list([e for e in params['linear_init'].split(',')])  # method of initialisation to use for linear layers
+                if len(self.linear_init) > 1:
+                    self.linear_init[1] = None if self.linear_init[1] == 'None' else float(self.linear_init[1])
+            else:
+                self.linear_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
+            self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
             self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', False)  # outputs feats and attn maps from final block of each octformer stage
 
     def print(self):
@@ -221,6 +228,8 @@ class TrainingParams:
         self.test_file = params.get('test_file', None)
         self.dataset_name = params.get('dataset_name', None)
         self.skip_same_run = params.getboolean('skip_same_run', True)
+        self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
+        self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
 
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path)
