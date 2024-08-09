@@ -24,12 +24,12 @@ def get_query_database_splits(params):
         ]
     elif 'WildPlaces_5m_pos' in params.dataset_name:
         eval_database_files = [
-            '5m_pickles/Karawatha_evaluation_database.pickle',
-            '5m_pickles/Venman_evaluation_database.pickle',
+            '5m-pickles/Karawatha_evaluation_database.pickle',
+            '5m-pickles/Venman_evaluation_database.pickle',
         ]
         eval_query_files = [
-            '5m_pickles/Karawatha_evaluation_query.pickle',
-            '5m_pickles/Venman_evaluation_query.pickle',
+            '5m-pickles/Karawatha_evaluation_query.pickle',
+            '5m-pickles/Venman_evaluation_query.pickle',
         ]
     elif 'WildPlaces' in params.dataset_name:
         eval_database_files = [
