@@ -110,12 +110,12 @@ class ModelParams:
             assert self.conv_norm in ['batchnorm', 'layernorm', 'powernorm']
             self.layer_scale = params.getfloat('layer_scale', None)  # coefficient to initialise learnable channel-wise scalar multipliers for attention outputs, or None to disable this.
             self.grad_checkpoint = params.getboolean('grad_checkpoint', True)
-            if 'linear_init' in params:
-                self.linear_init = list([e for e in params['linear_init'].split(',')])  # method of initialisation to use for linear layers
-                if len(self.linear_init) > 1:
-                    self.linear_init[1] = None if self.linear_init[1] == 'None' else float(self.linear_init[1])
+            if 'qkv_init' in params:
+                self.qkv_init = list([e for e in params['qkv_init'].split(',')])  # method of initialisation to use for qkv linear layers
+                if len(self.qkv_init) > 1:
+                    self.qkv_init[1] = None if self.qkv_init[1] == 'None' else float(self.qkv_init[1])
             else:
-                self.linear_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
+                self.qkv_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
             self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
 
     def print(self):
