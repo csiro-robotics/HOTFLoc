@@ -228,6 +228,7 @@ class TrainingParams:
         self.normalize_points = params.getboolean('normalize_points', False)    # Normalize points to [-1, 1]
         self.scale_factor = params.getfloat('scale_factor', None)  # Scale factor to normalize points by a fixed scale (as done in OctFormer)
         self.unit_sphere_norm = params.getboolean('unit_sphere_norm', False)  # Use unit sphere for normalization
+        self.zero_mean = params.getboolean('zero_mean', True)  # Shift point cloud to zero mean during normalization
         self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
         self.full_depth = params.getint('full_depth', 2)    # Depth of octree that is fully populated
         self.train_file = params.get('train_file')
