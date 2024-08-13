@@ -186,7 +186,12 @@ if __name__ == "__main__":
     assert args.max_depth >= args.min_depth, 'Max depth must be >= min depth'
     assert args.patch_size > 0, 'Octree patch size must be positive'
     assert args.dilation > 0, 'Dilation must be positive'
+    # Ensure normalization type is correct for octree coordinate system
     if args.coordinates == 'cylindrical':
-        assert args.normalize and args.unit_sphere_norm, "Unit sphere normalization required for cylindrical octrees."
+        if args.normalize:
+            if not args.unit_sphere_norm:
+                print(f"[WARNING] Unit sphere normalization recommended for cylindrical octrees")
+        else:
+            print(f"[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
     set_seed()
     main()
