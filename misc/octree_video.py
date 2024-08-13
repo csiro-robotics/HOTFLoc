@@ -49,6 +49,12 @@ def main():
         # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
         mask = torch.all(abs(points_tensor) <= 1.0, dim=1)
         points_tensor = points_tensor[mask]
+        # !!! TODO: Implement cylindrical coordinates here !!!
+        # if self.coordinates == 'cylindrical':
+        #     data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+        #     mask = torch.all(data_norm <= 1.0, dim=1)
+        #     data = data[mask]
+        
         # Convert to ocnn Points object, then create Octree
         points_ocnn = Points(points_tensor)
         octree = Octree(args.octree_depth, full_depth=2)

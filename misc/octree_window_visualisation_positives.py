@@ -21,6 +21,7 @@ from ocnn.octree import Octree, Points
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
+from dataset.coordinate_utils import CylindricalCoordinates
 from models.octree import OctreeT
 from misc.utils import rescale_octree_points, set_seed
 
@@ -46,6 +47,15 @@ def process_pcl(cloud: np.ndarray) -> OctreeT:
         cloud_tensor = normalize_transform(cloud_tensor)    
     mask = torch.all(abs(cloud_tensor) <= 1.0, dim=1)
     cloud_tensor = cloud_tensor[mask]
+    # Also ensure this will hold if converting coordinate systems
+    if args.coordinates == 'cylindrical':
+        data_norm = torch.linalg.norm(cloud_tensor[:, :2], dim=1)[:, None]
+        mask = torch.all(data_norm <= 1.0, dim=1)
+        cloud_tensor = cloud_tensor[mask]
+        # Convert to cylindrical coordinates
+        coord_converter = CylindricalCoordinates(use_octree=True)
+        cloud_tensor = coord_converter(cloud_tensor)
+        
     # Convert to ocnn Points object, then create Octree
     cloud_ocnn = Points(cloud_tensor)
     octree = Octree(args.max_depth, full_depth=2)
@@ -59,7 +69,7 @@ def process_pcl(cloud: np.ndarray) -> OctreeT:
 def plot_octree_windows(octree: OctreeT, cloud_path: str, cloud_position: Tuple[float]):
     # Initialise figure
     fig = plt.figure(figsize=(9,7))
-    fig_title = f"{cloud_path.split('/')[-1]} - coords ({cloud_position[0]:.2f}, {cloud_position[1]:.2f})"
+    fig_title = f"{cloud_path.split('/')[-1]} - coords ({cloud_position[0]:.2f}, {cloud_position[1]:.2f}) - {args.coordinates} coords"
     fig.suptitle(fig_title)
     # Iterate through octree depths
     for idx, depth in enumerate(range(args.max_depth, args.min_depth-1, -1)):
@@ -69,6 +79,10 @@ def plot_octree_windows(octree: OctreeT, cloud_path: str, cloud_position: Tuple[
         xyz = torch.stack([x, y, z], dim=1)
         # Convert octree point coords to original scale
         points_octree = rescale_octree_points(xyz, depth)
+        # Convert coordinate system
+        if args.coordinates == 'cylindrical':
+            coord_converter = CylindricalCoordinates(use_octree=True)
+            points_octree = coord_converter.undo_conversion(points_octree)
         # Create window partitions
         points_octree_padded = octree.patch_partition(points_octree, depth)
         patches_idx = torch.zeros(points_octree_padded.shape[0], dtype=torch.int32).view(-1, args.patch_size)
@@ -156,6 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('--training_tuples_path', type = str, required=True, help="path to training tuples pickle")
     parser.add_argument('--ground_aerial', action='store_true', help="Flag if visualising only ground/aerial pairs (CS-Campus3D, CS-Forest3D)")
     parser.add_argument('--normalize', action='store_true', help="normalize submaps if they are not already in [-1, 1] range")
+    parser.add_argument('--coordinates', type = str, default='cartesian', choices=['cartesian','cylindrical'], help="coordinate system to use for octrees")
     parser.add_argument('--scale_factor', type = float, default=None, help="fixed scale factor to normalize by")
     parser.add_argument('--unit_sphere_norm', action='store_true', help="use unit sphere normalization")
     parser.add_argument('--max_depth', type = int, required=True, help="max depth of octree to visualise")
@@ -171,5 +186,12 @@ if __name__ == "__main__":
     assert args.max_depth >= args.min_depth, 'Max depth must be >= min depth'
     assert args.patch_size > 0, 'Octree patch size must be positive'
     assert args.dilation > 0, 'Dilation must be positive'
+    # Ensure normalization type is correct for octree coordinate system
+    if args.coordinates == 'cylindrical':
+        if args.normalize:
+            if not args.unit_sphere_norm:
+                print(f"[WARNING] Unit sphere normalization recommended for cylindrical octrees")
+        else:
+            print(f"[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
     set_seed()
     main()

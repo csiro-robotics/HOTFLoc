@@ -45,14 +45,14 @@ def make_datasets(params: TrainingParams, validation: bool = True):
         datasets['train'] = AboveUnderTrainingDataset(params.dataset_folder, params.train_file,
                                                       transform=train_transform, set_transform=train_set_transform,
                                                       load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                      full_depth=params.full_depth)
+                                                      full_depth=params.full_depth, coordinates=params.model_params.coordinates)
         if validation:
             val_transform = AboveUnderValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
                                                    unit_sphere_norm=params.unit_sphere_norm)
             datasets['val'] = AboveUnderTrainingDataset(params.dataset_folder, params.val_file,
                                                         transform=val_transform,
                                                         load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                        full_depth=params.full_depth)
+                                                        full_depth=params.full_depth, coordinates=params.model_params.coordinates)
     else:
         train_transform = PNVTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
                                             scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
@@ -60,14 +60,14 @@ def make_datasets(params: TrainingParams, validation: bool = True):
         datasets['train'] = PNVTrainingDataset(params.dataset_folder, params.train_file,
                                                transform=train_transform, set_transform=train_set_transform,
                                                load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                               full_depth=params.full_depth)
+                                               full_depth=params.full_depth, coordinates=params.model_params.coordinates)
         if validation:
             val_transform = PNVValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
                                             unit_sphere_norm=params.unit_sphere_norm)
             datasets['val'] = PNVTrainingDataset(params.dataset_folder, params.val_file,
                                                  transform=val_transform,
                                                  load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                 full_depth=params.full_depth)
+                                                 full_depth=params.full_depth, coordinates=params.model_params.coordinates)
 
     return datasets
 
@@ -80,9 +80,12 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
     Args:
         clouds (Sequence[Tensor]): Sequence of point clouds of shape (N, 3).
         quantizer (Optional): If using MinkLoc, quantizer for sparse quantization.
+            If using OctFormer, coordinate system converter.
         params (TrainingParams): Training parameters for the model.
     """
     if params.load_octree:
+        if quantizer is not None:            
+            clouds = [quantizer(e) for e in clouds]
         octrees = []
         # Convert to ocnn Points object, then create Octree
         for cloud in clouds:

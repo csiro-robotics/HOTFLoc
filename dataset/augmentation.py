@@ -217,12 +217,13 @@ class Normalize:
                 box_size = (bbmax - bbmin).max() + 1.0e-6
                 coords_normalized = (coords - center) * (2.0 * self.norm_range / box_size)
         else:
-            # UNIT SPHERE NORMALISATION:
+            # UNIT SPHERE NORMALIZATION:
             centroid = torch.mean(coords, axis=0)
             coords_normalized = coords - centroid
             if self.scale_factor is not None:
                 max_distance = self.scale_factor
             else:
-                max_distance = torch.max(abs(coords_normalized)) / self.norm_range
+                # max_distance = torch.max(abs(coords_normalized)) / self.norm_range  ## INCORRECT, DOES NOT CONSIDER RADIAL DISTANCE
+                max_distance = torch.max(torch.linalg.norm(coords_normalized, dim=1)) / self.norm_range
             coords_normalized /= max_distance        
         return coords_normalized

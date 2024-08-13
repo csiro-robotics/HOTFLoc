@@ -71,7 +71,7 @@ def model_factory(model_params: ModelParams):
             disable_RPE=model_params.disable_RPE,
             conv_norm=model_params.conv_norm,
             layer_scale=model_params.layer_scale,
-            linear_init=model_params.linear_init,
+            qkv_init=model_params.qkv_init,
             xcpe=model_params.xcpe,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )

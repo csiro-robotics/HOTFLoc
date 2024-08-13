@@ -414,7 +414,6 @@ class OctFormerBlock(torch.nn.Module):
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty,
                                         dilated_windows=self.dilated_windows)
-        self.cpe_old = OctreeDWConvNorm(dim, nempty=nempty, conv_norm=conv_norm)
         self.cpe = CPE(dim, nempty=nempty, conv_norm=conv_norm, xcpe=xcpe)
         # Learnable per-channel scale multiplier, originally proposed by
         # https://arxiv.org/pdf/2103.17239
@@ -828,7 +827,7 @@ class OctFormer(torch.nn.Module):
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None,
-                 linear_init: List = ['trunc_normal', 0.02],
+                 qkv_init: List = ['trunc_normal', 0.02],
                  xcpe: bool = False,
                  return_feats_and_attn_maps: bool = False, **kwargs):
         """
@@ -854,7 +853,7 @@ class OctFormer(torch.nn.Module):
             disable_RPE: Disable RPE during self-attention.
             conv_norm: Type of normalisation used after convolution layers, valid params are in ['batchnorm', 'layernorm', 'powernorm'].
             layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
-            linear_init: Method of initialisation to use for linear layers
+            qkv_init: Method of initialisation to use for qkv linear layers
             xcpe: Use xCPE instead of CPE (from PointTransformerV3)
             return_feats_and_attn_maps: Outputs feats and attn maps from final block of each octformer stage
         """
@@ -867,28 +866,38 @@ class OctFormer(torch.nn.Module):
             xcpe, return_feats_and_attn_maps,
         )
         self.head = FPNHeader(channels, fpn_channel, nempty, num_top_down, conv_norm)
-        self.linear_init = linear_init
+        self.qkv_init = qkv_init
         self.apply(self.init_weights)
+        # Apply special initialisation to qkv linear layers
+        for m in self.named_modules():
+            if 'qkv' in m[0]:
+                self.init_qkv_weights(m[1])
 
     def init_weights(self, m):
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.trunc_normal_(m.weight, std=0.02)        
+            if isinstance(m, torch.nn.Linear) and m.bias is not None:
+                torch.nn.init.constant_(m.bias, 0)
+
+    def init_qkv_weights(self, m):
         if not isinstance(m, torch.nn.Linear):
             return
-        
-        if self.linear_init[0] == 'torch_default':
+
+        if self.qkv_init[0] == 'torch_default':
             return
-        elif self.linear_init[0] == 'trunc_normal':
-            torch.nn.init.trunc_normal_(m.weight, std=self.linear_init[1])
-        elif self.linear_init[0] == 'xavier_uniform':
+        elif self.qkv_init[0] == 'trunc_normal':
+            torch.nn.init.trunc_normal_(m.weight, std=self.qkv_init[1])
+        elif self.qkv_init[0] == 'xavier_uniform':
             torch.nn.init.xavier_uniform_(m.weight, gain=torch.nn.init.calculate_gain('relu'))
-        elif self.linear_init[0] == 'xavier_normal':
+        elif self.qkv_init[0] == 'xavier_normal':
             torch.nn.init.xavier_normal_(m.weight, gain=torch.nn.init.calculate_gain('relu'))
-        elif self.linear_init[0] == 'kaiming_uniform':
+        elif self.qkv_init[0] == 'kaiming_uniform':
             torch.nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
-        elif self.linear_init[0] == 'kaiming_normal':
+        elif self.qkv_init[0] == 'kaiming_normal':
             torch.nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
         else:
             raise ValueError("Invalid init type")
-        
+
         if isinstance(m, torch.nn.Linear) and m.bias is not None:
             torch.nn.init.constant_(m.bias, 0)
 

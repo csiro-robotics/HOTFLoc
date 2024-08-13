@@ -43,7 +43,7 @@ class EvaluationTuple:
 
 class TrainingDataset(Dataset):
     def __init__(self, dataset_path, query_filename, transform=None, set_transform=None,
-                 load_octree=False, octree_depth=11, full_depth=2):
+                 load_octree=False, octree_depth=11, full_depth=2, coordinates='cartesian'):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
         self.dataset_path = dataset_path
@@ -51,6 +51,7 @@ class TrainingDataset(Dataset):
         assert os.path.exists(self.query_filepath), 'Cannot access query file: {}'.format(self.query_filepath)
         self.transform = transform
         self.set_transform = set_transform
+        self.coordinates = coordinates
         self.load_octree = load_octree
         self.octree_depth = octree_depth
         self.full_depth = full_depth
@@ -75,6 +76,14 @@ class TrainingDataset(Dataset):
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
             mask = torch.all(abs(data) <= 1.0, dim=1)
             data = data[mask]
+            # Also ensure this will hold if converting coordinate systems
+            if self.coordinates == 'cylindrical':
+                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+                mask = torch.all(data_norm <= 1.0, dim=1)
+                data = data[mask]
+            # elif self.coordinates == 'spherical':  # TODO: if spherical is used
+            #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
+            #     mask = torch.all(data_norm <= 1.0, dim=1)
         return data, ndx
 
     def get_positives(self, ndx):

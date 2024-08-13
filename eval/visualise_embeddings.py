@@ -23,6 +23,7 @@ from misc.utils import TrainingParams, set_seed
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
+from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
 
@@ -170,6 +171,14 @@ def get_latent_vectors(model, data_list: list[str], device, params: TrainingPara
             # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
             mask = torch.all(abs(data) <= 1.0, dim=1)
             data = data[mask]
+            # Also ensure this will hold if converting coordinate systems
+            if params.model_params.coordinates == 'cylindrical':
+                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+                mask = torch.all(data_norm <= 1.0, dim=1)
+                data = data[mask]
+                # Convert to cylindrical coords
+                coord_converter = CylindricalCoordinates(use_octree=True)
+                data = coord_converter(data)                
             # Convert to ocnn Points object, then create Octree
             points = Points(data)
             data = Octree(params.octree_depth, full_depth=2)
