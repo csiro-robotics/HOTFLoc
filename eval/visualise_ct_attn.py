@@ -25,6 +25,7 @@ from misc.utils import TrainingParams, set_seed, rescale_octree_points
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
+from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
 def load_eval_sets(params):
@@ -59,9 +60,19 @@ def process_pcl_to_octree(cloud: np.ndarray, params: TrainingParams) -> OctreeT:
     if params.normalize_points or params.scale_factor is not None:
         normalize_transform = Normalize(scale_factor=params.scale_factor,
                                         unit_sphere_norm=params.unit_sphere_norm)
-        cloud_tensor = normalize_transform(cloud_tensor)    
-    mask = torch.all(abs(cloud_tensor) <= 1.0, dim=1)
-    cloud_tensor = cloud_tensor[mask]
+        cloud_tensor = normalize_transform(cloud_tensor)
+    if params.load_octree:  # Convert to Octree format
+        # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+        mask = torch.all(abs(cloud_tensor) <= 1.0, dim=1)
+        cloud_tensor = cloud_tensor[mask]
+        # Also ensure this will hold if converting coordinate systems
+        if params.model_params.coordinates == 'cylindrical':
+            cloud_tensor_norm = torch.linalg.norm(cloud_tensor[:, :2], dim=1)[:, None]
+            mask = torch.all(cloud_tensor_norm <= 1.0, dim=1)
+            cloud_tensor = cloud_tensor[mask]
+            # Convert to cylindrical coords
+            coord_converter = CylindricalCoordinates(use_octree=True)
+            cloud_tensor = coord_converter(cloud_tensor)
     # Convert to ocnn Points object, then create Octree
     cloud_ocnn = Points(cloud_tensor)
     octree = Octree(params.octree_depth, full_depth=2)
@@ -70,7 +81,7 @@ def process_pcl_to_octree(cloud: np.ndarray, params: TrainingParams) -> OctreeT:
     octree.construct_all_neigh()
     return octree
 
-def get_octree_points_and_windows(query_octree: OctreeT, depth: int):
+def get_octree_points_and_windows(query_octree: OctreeT, depth: int, params: TrainingParams):
     """
     For a given octree depth, returns the octree points, octree points reshaped
     to windows, and a tensor containing the idx of each window. 
@@ -80,6 +91,10 @@ def get_octree_points_and_windows(query_octree: OctreeT, depth: int):
     xyz = torch.stack([x, y, z], dim=1)
     # Convert octree point coords to original scale
     points_octree = rescale_octree_points(xyz, depth)
+    # Undo cylindrical projection
+    if params.model_params.coordinates == 'cylindrical':
+        coord_converter = CylindricalCoordinates(use_octree=True)
+        points_octree = coord_converter.undo_conversion(points_octree)        
     # Create window partitions and get idx
     points_octree_windows = query_octree.data_to_windows(points_octree, depth, False)
     windows_idx = torch.zeros(points_octree_windows.shape[:-1],
@@ -144,7 +159,7 @@ def main(model, device, params: TrainingParams):
     
     for i, depth in enumerate(feats_and_attn_maps.keys()):
         points_octree, points_octree_windows, windows_idx = \
-            get_octree_points_and_windows(query_octree, depth)
+            get_octree_points_and_windows(query_octree, depth, params)
         num_windows = len(points_octree_windows)
         num_blocks = len(feats_and_attn_maps[depth])
 
@@ -209,6 +224,45 @@ def main(model, device, params: TrainingParams):
             ax.axes.get_yaxis().set_ticks([])
             ax.set_xlabel('k')
             ax.set_ylabel('q', rotation=0)
+        plt.tight_layout()
+
+        ##### ALSO PLOT RPE: ####
+        # Get rpe maps for depth
+        local_attn_rpe = feats_and_attn_maps[depth][BLOCK_IDX]['local_attn']['rpe'] # N, H, CT+K, CT+K
+        num_heads = local_attn_rpe.size(1)
+        # Avg over heads
+        local_attn_rpe = torch.mean(local_attn_rpe, 1)
+        # Plot point cloud in grey, then plot attn windows
+        fig = plt.figure(figsize=(18, 9))
+        fig.suptitle(f"RPE of local window - heads averaged, stage {i+1} (depth {depth})",
+                     fontsize='x-large')
+        for j, window_idx in enumerate(range(0, num_windows, max(num_windows//4, 1))):
+            window_mask = windows_idx == window_idx
+            points_octree_plot = points_octree[~window_mask]
+            window_points = points_octree_windows[window_idx].T.numpy()
+            window_rpe_scores = local_attn_rpe[window_idx, 0, 1:].numpy() # idx 0 is CT, if using CTs
+            window_rpe_min = local_attn_rpe[window_idx].min()
+            window_rpe_max = local_attn_rpe[window_idx].max()
+            ax = fig.add_subplot(2, 4, 2*j+1, projection='3d')
+            _ = ax.scatter(*points_octree_plot.T.numpy(), c='grey', alpha=0.2)
+            # local rpe, highlight the first point and show attention for it
+            temp = ax.scatter(*window_points[:, 1:], c=window_rpe_scores, vmin=window_rpe_min, vmax=window_rpe_max, alpha=0.7)
+            _ = ax.scatter(*window_points[:, 0], c='red', marker='D', alpha=1.0)
+            ax.set_title(f"RPE w.r.t first token (red)")
+            ax.set_aspect('equal', adjustable='box')
+
+            # Plot local attn map
+            ax = fig.add_subplot(2, 4, 2*j+1+1)
+            temp = ax.imshow(local_attn_rpe[window_idx].numpy())
+            fig.colorbar(temp, ax=ax, label='RPE weighting')
+            ax.set_title(f"RPE of local window")
+            ax.axes.get_xaxis().set_ticks([])
+            ax.axes.get_yaxis().set_ticks([])
+            ax.set_xlabel('k')
+            ax.set_ylabel('q', rotation=0)
+        plt.tight_layout()
+
+        #########################
                 
         # if ct_attn_map is not None:
         #     # Plot ct global attn maps
@@ -226,13 +280,12 @@ def main(model, device, params: TrainingParams):
         #         ax.set_ylabel('q', rotation=0)
 
         ## VISUALISE ALL ATTN HEADS
-        plt.tight_layout()
 
-        ## VISUALISE AVG ATTN HEADS FOR 4 BLOCKS IN STAGE 2
-        if i == 1:
+        ## VISUALISE ATTN HEADS FOR 4 BLOCKS IN STAGE 2
+        if i == 1 or len(feats_and_attn_maps.keys()) == 1:
             # TODO: Get attn maps for each block
             fig = plt.figure(figsize=(12, 10))
-            fig.suptitle(f"Window attention maps {'after' if args.softmax else 'before'} softmax, stage 2 (depth {depth})",
+            fig.suptitle(f"Window attention maps {'after' if args.softmax else 'before'} softmax, stage {i+1} (depth {depth})",
                          fontsize="x-large")
             block_idx_list = [0, 6, 12, 16]
             for j, block_idx in enumerate(block_idx_list):
@@ -247,7 +300,27 @@ def main(model, device, params: TrainingParams):
                     block_head_local_attn_map = block_local_attn_map[:, head_idx]
                     ax = fig.add_subplot(4, 4, j*4+k+1)
                     temp = ax.imshow(block_head_local_attn_map[window_idx].numpy())
-                    fig.colorbar(temp, ax=ax, label='Attention score')
+                    # fig.colorbar(temp, ax=ax, label='Attention score')
+                    ax.set_title(f"Block {block_idx+1}")
+                    ax.axes.get_xaxis().set_ticks([])
+                    ax.axes.get_yaxis().set_ticks([])
+                    ax.set_xlabel('k')
+                    ax.set_ylabel('q', rotation=0)
+            plt.tight_layout()
+
+            # Also plot RPE per head
+            fig = plt.figure(figsize=(12, 10))
+            fig.suptitle(f"Window attention RPE, stage {i+1} (depth {depth})",
+                         fontsize="x-large")
+            for j, block_idx in enumerate(block_idx_list):
+                block_local_attn_rpe = feats_and_attn_maps[depth][block_idx]['local_attn']['rpe'] # N, H, CT+K, CT+K
+                # Plot local attn rpe
+                for k, head_idx in enumerate(range(0, num_heads, max(num_heads//4, 1))):
+                    # Get desired head
+                    block_head_local_attn_rpe = block_local_attn_rpe[:, head_idx]
+                    ax = fig.add_subplot(4, 4, j*4+k+1)
+                    temp = ax.imshow(block_head_local_attn_rpe[window_idx].numpy())
+                    # fig.colorbar(temp, ax=ax, label='RPE Weighting')
                     ax.set_title(f"Block {block_idx+1}")
                     ax.axes.get_xaxis().set_ticks([])
                     ax.axes.get_yaxis().set_ticks([])
