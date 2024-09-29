@@ -1,23 +1,26 @@
 [DEFAULT]
-dataset_folder = /datasets/work/mlai-fsp-st-div/source/above-under/processed_submaps/latest/rad30m/postproc_pnvlad_ds_4096_normalised
+dataset_folder = /datasets/work/mlai-fsp-st-div/work/gri317/processed_submaps/latest/rad30m/postproc_pnvlad_ds_4096_normalised
 
 [TRAIN]
 num_workers = 4
 batch_size = 2048
-batch_split_size = 64
-val_batch_size = 256
-save_freq = 25
+batch_split_size = 128
+val_batch_size = 128
+save_freq = 50
+eval_freq = 5
 
 lr = 1e-3
 epochs = 400
 scheduler_milestones = 250, 350
 aug_mode = 1
+set_aug_mode = 1
+normalize_points = True
 weight_decay = 1e-4
 loss = TruncatedSmoothAP
 tau1 = 0.01
 positives_per_query = 4
 
-dataset_name = AboveUnder_refined
+dataset_name = AboveUnder_voxel0.8m_refined
 skip_same_run = True
 train_file = training_queries_above-under_refined_v2.pickle
 val_file = test_queries_above-under_v2.pickle

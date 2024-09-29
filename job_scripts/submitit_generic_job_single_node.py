@@ -11,9 +11,10 @@ from misc.utils import TrainingParams, set_seed
 
 job_days = 7
 job_config = {
-    'nodes': 1, 'gpus_per_node': 1, 'cpus_per_task': 3, 'slurm_mem': '280gb',  # 280GB to prevent 2 jobs entering the same node (and having shm overflow)
+    'nodes': 1, 'gpus_per_node': 1, 'cpus_per_task': 3, 'slurm_mem': '220gb',  # 280GB to prevent 2 jobs entering the same node (and having shm overflow)
     'timeout_min': job_days*24*60, 'slurm_mail_user': 'ethan.griffiths@data61.csiro.au',
-    'slurm_mail_type': 'FAIL,END',
+    'slurm_mail_type': 'FAIL,END', 'slurm_gres': 'one:1', 
+    # 'slurm_dependency': 'afterany:57846199'
 }
 
 if __name__ == "__main__":
