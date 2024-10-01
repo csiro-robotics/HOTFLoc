@@ -91,15 +91,9 @@ class ModelParams:
                 self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
             else:
                 self.num_heads = None
-            if 'ct_layers' in params:  # using carrier token attention per stage
-                self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
-            else:
-                self.ct_layers = tuple([False]*len(self.channels))
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
-            self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
-            self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
             self.ADaPE_mode = params.get('ADaPE_mode', None)  # Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
@@ -117,6 +111,19 @@ class ModelParams:
             else:
                 self.qkv_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
             self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
+
+            if 'hotformerloc' in self.model.lower():
+                #######################################################################
+                # HOTFormerLoc-specific params
+                #######################################################################
+                self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
+            else:
+                if 'ct_layers' in params:  # using carrier token attention per stage
+                    self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
+                else:
+                    self.ct_layers = tuple([False]*len(self.channels))
+                self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
+                self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
 
     def print(self):
         print('Model parameters:')
