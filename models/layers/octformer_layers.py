@@ -234,13 +234,19 @@ class OctreeDropPath(torch.nn.Module):
         self.dilated_windows = dilated_windows
         self.use_ct = use_ct
 
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int,
+    def forward(self, data: torch.Tensor, octree: OctreeT,
+                depth: Optional[int] = None,
                 batch_id: Optional[torch.Tensor] = None):
         r''''''
 
         if self.drop_prob <= 0.0 or not self.training:
             return data
 
+        if depth is None:
+            assert batch_id is not None, (
+                "Batch idx must be provided for multi-scale tokens (see " \
+                "calc_rt_attn_mask in RelayTokenTransformerBlock)"
+            )
         batch_size = octree.batch_size
         ndim = data.ndim
         K = data.size(1)  # for ndim = 3, 2nd dim is the window dim

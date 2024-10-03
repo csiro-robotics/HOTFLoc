@@ -13,12 +13,35 @@ from torch.nn.utils.rnn import unpad_sequence
 import ocnn
 
 from ocnn.octree import Octree
-from typing import Optional, List, Dict
+from typing import Optional, List, Tuple, Dict
 from torch.utils.checkpoint import checkpoint
 from models.octree import OctreeT, pad_sequence
 from models.layers.octformer_layers import get_norm_layer, MLP, \
     OctreeConvNormRelu, OctreeDeconvNormRelu, CPE, RPE, ADaPE, OctreeDropPath
 
+
+def debug_time_func(func, num_repetitions: int = 1000, inputs: Tuple = (None,)):
+    """Time a function's runtime with CUDA events"""
+    starter = torch.cuda.Event(enable_timing=True)
+    ender = torch.cuda.Event(enable_timing=True)
+    timings = torch.zeros((num_repetitions, 1))
+    # GPU WARMUP
+    for _ in range(10):
+        _ = func(*inputs)
+    # MEASURE PERFORMANCE
+    for rep in range(num_repetitions):
+        starter.record()
+        _ = func(*inputs)
+        ender.record()
+        # WAIT FOR GPU SYNC
+        torch.cuda.synchronize()
+        curr_time = starter.elapsed_time(ender)
+        timings[rep] = curr_time
+        
+    mean_syn = torch.sum(timings) / num_repetitions
+    std_syn = torch.std(timings)
+    print(f"{func.__class__} runtime:")
+    print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
 
 class OctreeAttention(torch.nn.Module):
 
@@ -169,6 +192,67 @@ class CTAttention(torch.nn.Module):
     def extra_repr(self) -> str:
         return 'dim={}, ct_size={}, num_heads={}'.format(
                     self.dim, self.ct_per_window, self.num_heads)
+
+
+class RTAttention(torch.nn.Module):
+    """
+    Attention block for relay token self attention (RTSA). Assumes multi-scale
+    relay tokens have already been combined in batches with padding.
+    """
+    def __init__(self, dim: int, patch_size: int, num_heads: int,
+                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
+                 attn_drop: float = 0.0, proj_drop: float = 0.0,
+                 use_rpe: bool = True):
+        super().__init__()
+        self.dim = dim
+        self.patch_size = patch_size
+        self.num_heads = num_heads
+        self.use_rpe = use_rpe  # TODO: implement RPE
+        self.scale = qk_scale or (dim // num_heads) ** -0.5
+
+        self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = torch.nn.Dropout(attn_drop)
+        self.proj = torch.nn.Linear(dim, dim)
+        self.proj_drop = torch.nn.Dropout(proj_drop)
+        self.softmax = torch.nn.Softmax(dim=-1)
+
+        # NOTE: RPE table is currently constructed using relative pos of
+        #       octree nodes, but this is not so easy to do for RTs. Need to
+        #       find another solution.
+        # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
+
+    def forward(self, relay_tokens: torch.Tensor, attn_mask: torch.Tensor,
+                octree: OctreeT):
+        B = octree.batch_size
+        H = self.num_heads
+        C = self.dim
+        rt = relay_tokens
+
+        # qkv
+        qkv = self.qkv(rt).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
+        q = q * self.scale
+
+        # attn
+        attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
+        # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
+        attn = attn + attn_mask.unsqueeze(1)
+        attn = self.softmax(attn)
+        attn = self.attn_drop(attn)
+        rt = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+
+        # ffn
+        rt = self.proj(rt)
+        rt = self.proj_drop(rt)
+        return rt
+    
+    def apply_rpe(self, attn, rel_pos):
+        if self.use_rpe:
+            attn = attn + self.rpe(rel_pos)
+        return attn
+
+    def extra_repr(self) -> str:
+        return 'dim={}, num_heads={}'.format(self.dim, self.num_heads)
 
 
 class OctFormerBlock(torch.nn.Module):
@@ -427,49 +511,177 @@ class RelayTokenTransformerBlock(torch.nn.Module):
 
         # NOTE: No longer using ADaPE per octformer block
         # if self.use_ADaPE:
-        #     self.ct_adape = ADaPE(dim, activation)
-        self.ct_norm1 = torch.nn.LayerNorm(dim)
-        self.ct_attention = CTAttention(dim, patch_size, num_heads, qkv_bias,
-                                        qk_scale, attn_drop, proj_drop,
-                                        rt_per_window,)
-        self.ct_norm2 = torch.nn.LayerNorm(dim)
-        self.ct_mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
-        self.ct_drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
-        self.ct_gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-        self.ct_gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-        
+        #     self.rt_adape = ADaPE(dim, activation)
+        self.norm1 = torch.nn.LayerNorm(dim)
+        self.rt_attention = RTAttention(dim, patch_size, num_heads, qkv_bias,
+                                        qk_scale, attn_drop, proj_drop)
+        self.norm2 = torch.nn.LayerNorm(dim)
+        self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
+        self.drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
+        self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
+        self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
-    def forward(self, relay_token_dict: torch.Tensor, octree: OctreeT):
-        K = self.patch_size
-        C = self.dim
-        G = self.rt_per_window
 
-        # TODO: Concatenate multi-scale tokens for each batch
-
-        
-        # DEBUG:
+    def forward(self, relay_token_dict: Dict[int, torch.Tensor], octree: OctreeT):
         pyramid_depths = list(relay_token_dict.keys())
-        ct_temp = relay_token_dict[pyramid_depths[0]]
-        ct_debug = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct_temp), octree, pyramid_depths[0])
 
+        # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~2.4ms with bs 128)
+        # debug_time_func(func=self.concat_and_pad_rt, inputs=(relay_token_dict, octree, pyramid_depths))
+        # Concatenate and pad multi-scale relay tokens per batch
+        rt, batch_num_relay_tokens_combined = self.concat_and_pad_rt(
+            relay_token_dict, octree, pyramid_depths
+        )
 
-        # TODO: Copy core code from CTAttention class. Need to concat CTs for
-        #       all 3 scales in each batch, then pad, then need to fix the CT
-        #       attn mask, then compute all the things and unpad + split CTs
+        # # TODO: TIME THIS FUNC, MOVE TO octree.py (~1ms with bs 128)
+        # debug_time_func(func=self.calc_rt_attn_mask, inputs=(batch_num_relay_tokens_combined, octree, pyramid_depths))
+        # Generate attn mask 
+        rt_attn_mask = self.calc_rt_attn_mask(
+            batch_num_relay_tokens_combined, octree, pyramid_depths 
+        )        
+        # Generate drop_path batch idx (simple for padded tokens, each row is a batch)
+        drop_path_batch_idx = self.get_drop_path_idx(rt)
 
-        # ct = carrier_tokens
-        
-        # # Do global attention via carrier tokens
-        # # NOTE: No longer using ADaPE per octformer block
-        # # if self.use_ADaPE:
-        # #     ct = ct + self.ct_adape(octree, depth)
-        # ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
-        # ct = ct + self.ct_drop_path(ct_attn, octree, depth)
-        # ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
-        # ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
+        # Compute global attention via relay tokens
+        # NOTE: No longer using ADaPE per octformer block
+        # if self.use_ADaPE:
+        #     rt = rt + self.rt_adape(octree, depth)
+        rt_attn = self.gamma1 * self.rt_attention(self.norm1(rt),
+                                                  rt_attn_mask, octree)
+        rt = rt + self.drop_path(rt_attn, octree, batch_id=drop_path_batch_idx)
+        rt_ffn = self.gamma2 * self.mlp(self.norm2(rt))
+        rt = rt + self.drop_path(rt_ffn, octree, batch_id=drop_path_batch_idx)
+
+        # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~3.5ms with bs 128)
+        # debug_time_func(func=self.unpad_and_split_rt, inputs=(rt, batch_num_relay_tokens_combined, octree, pyramid_depths))
+        # Unpad + split CTs
+        relay_token_dict = self.unpad_and_split_rt(
+            rt, batch_num_relay_tokens_combined, octree, pyramid_depths
+        )
+
+        # TODO: VERIFY FOR SURE THAT THIS BEHAVES AS EXPECTED, FOR BS 1 and BS 128.
+        #       ALSO VERIFY THAT HOSA BLOCKS WORK WITH THIS BLOCK AS EXPECTED.
             
         return relay_token_dict
 
+    def concat_and_pad_rt(
+        self,
+        relay_token_dict: Dict[int, torch.Tensor],
+        octree: OctreeT,
+        pyramid_depths: List[int]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Concatenates relay tokens from different levels in the pyramid
+        batch-wise, then applies padding for parallelisation. Returns a single
+        (B, N, C) tensor, where B = batch size, N = number of tokens (incl.
+        padding), and C = channel size. Also returns the combined number of
+        relay tokens per batch element.
+        """        
+        # Split relay tokens into batches for each depth
+        relay_tokens_split_per_depth = []
+        for j, depth_j in enumerate(pyramid_depths):
+            batch_num_relay_tokens_depth_j = octree.batch_num_windows[depth_j]
+            if j == 0:
+                batch_num_relay_tokens_combined = batch_num_relay_tokens_depth_j.clone().detach()
+            else:
+                batch_num_relay_tokens_combined += batch_num_relay_tokens_depth_j
+            relay_tokens_split_per_depth.append(
+                relay_token_dict[depth_j].split(batch_num_relay_tokens_depth_j.tolist())
+            )
+        
+        # Combine relay tokens for each batch in all depths
+        relay_tokens_combined_list = []
+        for relay_token_pyramid_batch in zip(*relay_tokens_split_per_depth):
+            relay_tokens_combined_list.append(
+                torch.cat(relay_token_pyramid_batch)
+            )
+        padded_pyramid_relay_tokens = pad_sequence(relay_tokens_combined_list)
+        return padded_pyramid_relay_tokens, batch_num_relay_tokens_combined
+
+    def unpad_and_split_rt(
+        self,
+        padded_pyramid_relay_tokens: torch.Tensor,
+        batch_num_relay_tokens_combined: torch.Tensor,
+        octree: OctreeT,
+        pyramid_depths: List[int]
+    ) -> dict[int, torch.Tensor]:
+        """
+        Reverses the concatenation and padding applied to multi-scale relay
+        tokens. Returns a dictionary where keys are octree depth, and values
+        are the corresponding relay tokens in a (M, C) tensor.
+        """
+        # Remove padding
+        relay_tokens_combined_list = unpad_sequence(
+            padded_pyramid_relay_tokens, batch_num_relay_tokens_combined,
+            batch_first=True
+        )
+        # Separate relay tokens for each depth
+        batch_num_relay_tokens_per_depth = [
+            octree.batch_num_windows[depth_j].tolist()
+                for depth_j in pyramid_depths
+        ]
+        relay_tokens_split_per_depth = [
+            [] for _ in range(len(pyramid_depths))
+        ]
+        for i, batch_num_tokens in enumerate(zip(*batch_num_relay_tokens_per_depth)):
+            relay_tokens_split_temp = relay_tokens_combined_list[i].split(
+                batch_num_tokens
+            )
+            for j in range(len(pyramid_depths)):
+                relay_tokens_split_per_depth[j].append(
+                    relay_tokens_split_temp[j]
+                )
+
+        # Concatenate relay tokens for each depth and put back in dict
+        relay_token_dict = {}
+        for i, depth_j in enumerate(pyramid_depths):
+            relay_token_dict[depth_j] = torch.cat(relay_tokens_split_per_depth[i])
+        
+        return relay_token_dict
+    
+    def calc_rt_attn_mask(
+        self,
+        batch_num_relay_tokens_combined: torch.Tensor,
+        octree: OctreeT,
+        pyramid_depths: List[int],
+    ) -> torch.Tensor:
+        """
+        Compute the attention mask for combined multi-scale relay tokens.
+        Expects that concat_and_pad_rt has been run already.
+        """
+        # Generate (B, N) mask of batch idx for all relay tokens.
+        # (N = number of relay tokens in largest batch element, which all
+        #   elements are padded to)
+        B = octree.batch_size
+        N = batch_num_relay_tokens_combined.max().item()
+        rt_batch_idx = torch.full(
+            (B, N), fill_value = 1e4, dtype=torch.long, device=octree.device
+        )
+        for batch_idx, batch_length in enumerate(batch_num_relay_tokens_combined):
+            rt_batch_idx[batch_idx, :batch_length] = batch_idx
+
+        # Correct the mask for last batch (as padding is unaccounted for)
+        prev_end_idx = 0
+        for depth_j in pyramid_depths:
+            num_padded_tokens = torch.sum(octree.ct_batch_idx[depth_j]
+                                          >= B).item()
+            batch_rel_idx = octree.batch_num_windows[depth_j][-1].item()
+            if num_padded_tokens > 0:
+                batch_end_idx = prev_end_idx + batch_rel_idx
+                batch_pad_start_idx = batch_end_idx - num_padded_tokens
+                rt_batch_idx[-1, batch_pad_start_idx:batch_end_idx] = B
+            prev_end_idx += batch_rel_idx
+
+        # Convert to attn mask with (B, N, N)
+        rt_attn_mask = octree._calc_attn_mask(rt_batch_idx)            
+        return rt_attn_mask
+
+    def get_drop_path_idx(self, relay_tokens: torch.Tensor) -> torch.Tensor:
+        """Compute the batch idx tensor for drop_path."""
+        B, N = relay_tokens.shape[:2]
+        drop_path_batch_idx = torch.zeros((B, N), dtype=torch.long)
+        drop_path_batch_idx += torch.arange(B).unsqueeze(1)
+        return drop_path_batch_idx
+        
 
 class RelayTokenInitialiser(torch.nn.Module):
     """
