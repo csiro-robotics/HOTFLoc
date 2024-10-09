@@ -312,6 +312,8 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
     params_dict = {e: params.__dict__[e] for e in params.__dict__ if e != 'model_params'}
     model_params_dict = {"model_params." + e: params.model_params.__dict__[e] for e in params.model_params.__dict__}
     params_dict.update(model_params_dict)
+    n_params = sum([param.nelement() for param in model.parameters()])
+    params_dict['num_params'] = n_params
     if not params.debug:
         # trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
         wandb.init(project='HOT-Net', config=params_dict)
