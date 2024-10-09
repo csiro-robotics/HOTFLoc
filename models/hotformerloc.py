@@ -34,16 +34,23 @@ class HOTFormerLoc(torch.nn.Module):
         octree = batch['octree']
         data = self.get_input_feature(octree)
 
-        # TODO: Expect multi-scale features at output
-        x, output_depth = self.backbone(data=data, octree=octree, depth=octree.depth)
-        # x is (num_points, n_features) tensor
-        assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
-                                                  f'Expected: {self.pooling.in_dim}'
-        x = self.pooling(x, octree=octree, depth=output_depth)
+        local_feat_dict, relay_token_dict, octree = self.backbone(
+            data=data, octree=octree, depth=octree.depth
+        )
+        # # x is (num_points, n_features) tensor
+        # assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
+        #                                           f'Expected: {self.pooling.in_dim}'
+        if self.pooling.pooled_feats == 'local':
+            x = local_feat_dict
+        elif self.pooling.pooled_feats == 'relaytokens':
+            x = relay_token_dict
+        else:
+            raise ValueError(f'Invalid option for pooled features: '
+                             f'\'{self.pooling.pooled_feats}\'')
+        x = self.pooling(x, octree=octree)
         if hasattr(self.pooling, 'stats'):
             self.stats.update(self.pooling.stats)
 
-        #x = x.flatten(1)
         assert x.dim() == 2, f'Expected 2-dimensional tensor (batch_size,output_dim). Got {x.dim()} dimensions.'
         assert x.shape[1] == self.pooling.output_dim, f'Output tensor has: {x.shape[1]} channels. ' \
                                                       f'Expected: {self.pooling.output_dim}'
@@ -69,15 +76,7 @@ class HOTFormerLoc(torch.nn.Module):
         n_params += sum([param.nelement() for param in base_model.downsample.parameters()])
         print(f"  OctF Layers:\t#parameters: {n_params}")
         n_params = sum([param.nelement() for param in base_model.hotf_stage.parameters()])
-        print(f"  HOTF Layers:\t#parameters: {n_params}")
-        # for i, stage in enumerate(base_model.hotf_stage):
-            # n_params = sum([param.nelement() for param in stage.parameters()])
-            # if i < base_model.num_stages - 1:  # add downsample params
-            #     n_params += sum([param.nelement() for param in base_model.downsamples[i].parameters()])
-            # print(f"  Stage {i}:\t#parameters: {n_params}")
-        # # FPN
-        # n_params = sum([param.nelement() for param in self.backbone.head.parameters()])
-        # print(f"  FPN:\t#parameters: {n_params}")        
+        print(f"  HOTF Layers:\t#parameters: {n_params}")    
         # Pooling
         n_params = sum([param.nelement() for param in self.pooling.parameters()])
         print(f'Pooling method: {self.pooling.pool_method}\t#parameters: {n_params}')

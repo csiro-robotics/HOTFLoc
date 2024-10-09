@@ -8,6 +8,7 @@
 # --------------------------------------------------------
 
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 from torch.nn.utils.rnn import unpad_sequence
 import ocnn
@@ -15,183 +16,15 @@ import ocnn
 from ocnn.octree import Octree
 from typing import Optional, List, Tuple, Dict
 from torch.utils.checkpoint import checkpoint
+from misc.utils import debug_time_func
 from models.octree import OctreeT, pad_sequence
-from models.layers.octformer_layers import get_norm_layer, MLP, \
-    OctreeConvNormRelu, OctreeDeconvNormRelu, CPE, RPE, ADaPE, OctreeDropPath
-
-
-def debug_time_func(func, num_repetitions: int = 1000, inputs: Tuple = (None,)):
-    """Time a function's runtime with CUDA events"""
-    starter = torch.cuda.Event(enable_timing=True)
-    ender = torch.cuda.Event(enable_timing=True)
-    timings = torch.zeros((num_repetitions, 1))
-    # GPU WARMUP
-    for _ in range(10):
-        _ = func(*inputs)
-    # MEASURE PERFORMANCE
-    for rep in range(num_repetitions):
-        starter.record()
-        _ = func(*inputs)
-        ender.record()
-        # WAIT FOR GPU SYNC
-        torch.cuda.synchronize()
-        curr_time = starter.elapsed_time(ender)
-        timings[rep] = curr_time
-        
-    mean_syn = torch.sum(timings) / num_repetitions
-    std_syn = torch.std(timings)
-    print(f"{func.__class__} runtime:")
-    print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
-
-class OctreeAttention(torch.nn.Module):
-
-    def __init__(self, dim: int, patch_size: int, num_heads: int,
-                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
-                 attn_drop: float = 0.0, proj_drop: float = 0.0,
-                 dilation: int = 1, rt_per_window: int = 0, use_rpe: bool = True):
-        super().__init__()
-        self.dim = dim
-        self.patch_size = patch_size
-        self.num_heads = num_heads
-        self.dilation = dilation
-        self.rt_per_window = rt_per_window
-        self.use_rpe = use_rpe
-        self.scale = qk_scale or (dim // num_heads) ** -0.5
-
-        self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = torch.nn.Dropout(attn_drop)
-        self.proj = torch.nn.Linear(dim, dim)
-        self.proj_drop = torch.nn.Dropout(proj_drop)
-        self.softmax = torch.nn.Softmax(dim=-1)
-
-        # NOTE: self.rpe is not used in the original experiments of my paper. When
-        # releasing the code, I added self.rpe because I observed that it could
-        # stablize the training process and improve the performance on ScanNet by
-        # 0.3 to 0.5; on the other datasets, the improvements are more marginal. So
-        # it is not indispensible, and can be removed by setting `use_rpe` as False.
-        self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
-
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
-        H = self.num_heads
-        K = self.patch_size
-        C = self.dim
-        D = self.dilation
-        G = self.rt_per_window
-
-        if D > 1:  # dilation
-            rel_pos = octree.dilate_pos[depth]
-            mask = octree.dilate_mask[depth]
-        else:
-            rel_pos = octree.rel_pos[depth]
-            if G > 0:  # get correct mask for HAT attention
-                mask = octree.hat_window_mask[depth]
-            else:
-                mask = octree.patch_mask[depth]
-
-        # qkv
-        qkv = self.qkv(data).reshape(-1, K+G, 3, H, C // H).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]      # (N, H, K+G, C')
-        q = q * self.scale
-
-        # attn
-        attn = q @ k.transpose(-2, -1)        # (N, H, K+G, K+G)
-        attn = self.apply_rpe(attn, rel_pos)  # (N, H, K+G, K+G)
-        attn = attn + mask.unsqueeze(1)
-        attn = self.softmax(attn)
-        attn = self.attn_drop(attn)
-        data = (attn @ v).transpose(1, 2).reshape(-1, K+G, C)  # (N, K+G, C)
-
-        # ffn
-        data = self.proj(data)
-        data = self.proj_drop(data)
-        return data
-
-    def apply_rpe(self, attn, rel_pos):
-        if self.use_rpe:
-            rpe = self.rpe(rel_pos)
-            if self.rt_per_window > 0:
-                # Pad RPE for RTs (assume no relative pos for RTs)
-                rpe = F.pad(rpe, (self.rt_per_window, 0, self.rt_per_window, 0))
-            attn = attn + rpe
-        return attn
-
-    def extra_repr(self) -> str:
-        return 'dim={}, patch_size={}, num_heads={}, dilation={}'.format(
-                        self.dim, self.patch_size, self.num_heads, self.dilation)  # noqa
-
-
-class CTAttention(torch.nn.Module):
-    def __init__(self, dim: int, patch_size: int, num_heads: int,
-                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
-                 attn_drop: float = 0.0, proj_drop: float = 0.0,
-                 ct_per_window: int = 0,
-                 use_rpe: bool = True):
-        super().__init__()
-        self.dim = dim
-        self.patch_size = patch_size
-        self.ct_per_window = ct_per_window
-        self.num_heads = num_heads
-        self.use_rpe = use_rpe  # TODO: implement RPE
-        self.scale = qk_scale or (dim // num_heads) ** -0.5
-
-        self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = torch.nn.Dropout(attn_drop)
-        self.proj = torch.nn.Linear(dim, dim)
-        self.proj_drop = torch.nn.Dropout(proj_drop)
-        self.softmax = torch.nn.Softmax(dim=-1)
-
-        # NOTE: RPE table is currently constructed using relative pos of
-        #       octree nodes, but this is not so easy to do for CTs. Need to
-        #       find another solution.
-        # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
-
-    def forward(self, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
-        B = octree.batch_size
-        H = self.num_heads
-        C = self.dim
-        ct = carrier_tokens
-
-        # split CTs into batches for each batch elem, padded to size of largest batch
-        batch_num_windows = octree.batch_num_windows[depth]
-        ct = ct.split(batch_num_windows.tolist())
-        ### OLD METHOD ###
-        # batch_boundary = octree.batch_boundary[depth]
-        # data = data.tensor_split(batch_boundary)[:octree.batch_size]
-        ##################
-        ct = pad_sequence(ct)
-
-        # get CT attn mask
-        ct_mask = octree.ct_mask[depth]
-
-        # qkv
-        qkv = self.qkv(ct).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
-        q = q * self.scale
-
-        # attn
-        attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
-        # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
-        attn = attn + ct_mask.unsqueeze(1)
-        attn = self.softmax(attn)
-        attn = self.attn_drop(attn)
-        ct = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
-
-        # Undo padding
-        ct = torch.cat(unpad_sequence(ct, batch_num_windows, batch_first=True))
-
-        # ffn
-        ct = self.proj(ct)
-        ct = self.proj_drop(ct)
-        return ct
-
-    def apply_rpe(self, attn, rel_pos):
-        if self.use_rpe:
-            attn = attn + self.rpe(rel_pos)
-        return attn
-
-    def extra_repr(self) -> str:
-        return 'dim={}, ct_size={}, num_heads={}'.format(
-                    self.dim, self.ct_per_window, self.num_heads)
+from models.layers.octformer_layers import (
+    MLP, CPE, RPE, ADaPE, OctreeDropPath
+)
+from models.octformer_backbone import (
+    PatchEmbed, Downsample, OctreeAttention, OctFormerStage
+)
+from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 
 
 class RTAttention(torch.nn.Module):
@@ -221,26 +54,38 @@ class RTAttention(torch.nn.Module):
         #       find another solution.
         # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
 
-    def forward(self, relay_tokens: torch.Tensor, attn_mask: torch.Tensor,
-                octree: OctreeT):
+    def forward(self, relay_tokens: Tensor, octree: OctreeT):
         B = octree.batch_size
         H = self.num_heads
         C = self.dim
         rt = relay_tokens
 
+        # get rt attn mask
+        attn_mask = octree.rt_attn_mask
+
         # qkv
         qkv = self.qkv(rt).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
-        q = q * self.scale
 
-        # attn
-        attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
-        # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
-        attn = attn + attn_mask.unsqueeze(1)
-        attn = self.softmax(attn)
-        attn = self.attn_drop(attn)
-        rt = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+        #### EFFICIENT IMPLEMENTATION
+        attn_mask = attn_mask.to(q.dtype).unsqueeze(1)
+        rt = F.scaled_dot_product_attention(
+            query=q, key=k, value=v, attn_mask=attn_mask,
+        ).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+        ####
 
+        #### ORIGINAL IMPLEMENTATION ####
+        # q = q * self.scale
+
+        # # attn
+        # attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
+        # # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
+        # attn = attn + attn_mask.unsqueeze(1)
+        # attn = self.softmax(attn)
+        # attn = self.attn_drop(attn)
+        # rt = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+        ####
+        
         # ffn
         rt = self.proj(rt)
         rt = self.proj_drop(rt)
@@ -253,129 +98,6 @@ class RTAttention(torch.nn.Module):
 
     def extra_repr(self) -> str:
         return 'dim={}, num_heads={}'.format(self.dim, self.num_heads)
-
-
-class OctFormerBlock(torch.nn.Module):
-    """
-    Octree Transformer Block adapted from https://github.com/octree-nn/octformer,
-    with Hierarchical Attention (HAT) design inspired by
-    https://github.com/NVlabs/FasterViT.
-    """
-    
-    def __init__(self, dim: int, num_heads: int, patch_size: int = 32,
-                 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
-                 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
-                 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
-                 activation: torch.nn.Module = torch.nn.GELU, use_ct: bool = False,
-                 ct_size: int = 1, ct_propagation: bool = False,
-                 ct_propagation_scale: Optional[float] = None,
-                 use_ADaPE: bool = False, disable_RPE: bool = False,
-                 conv_norm: str = 'batchnorm', last: bool = False,
-                 layer_scale: Optional[float] = None, xcpe: bool = False,
-                 **kwargs):
-        super().__init__()
-        self.patch_size = patch_size
-        self.use_ct = use_ct
-        # self.use_ADaPE = use_ADaPE,
-        self.dim = dim
-        # NOTE: Dilation is disabled when using carrier tokens, as it is
-        #       likely redundant to use both (and carrier tokens for dilated
-        #       windows does not make sense).
-        dilation = 1 if self.use_ct else dilation
-        self.dilated_windows = dilation > 1
-        ct_per_window = ct_size if self.use_ct else 0  # track number of carrier tokens per window
-        self.ct_per_window = ct_per_window
-        self.last = last
-        self.ct_propagation = ct_propagation
-        use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
-        use_ct_propagation_scale = ct_propagation_scale is not None and type(ct_propagation_scale) in [int, float]
-        self.norm1 = torch.nn.LayerNorm(dim)
-        self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
-                                         qk_scale, attn_drop, proj_drop, dilation,
-                                         rt_per_window=ct_per_window,
-                                         use_rpe=(not disable_RPE))
-        self.norm2 = torch.nn.LayerNorm(dim)
-        self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
-        self.drop_path = OctreeDropPath(drop_path, nempty,
-                                        dilated_windows=self.dilated_windows)
-        self.cpe = CPE(dim, nempty=nempty, conv_norm=conv_norm, xcpe=xcpe)
-        # Learnable per-channel scale multiplier, originally proposed by
-        # https://arxiv.org/pdf/2103.17239
-        self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-        self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-
-        if not self.use_ct:  # carrier token attention layers
-            return
-        # NOTE: No longer using ADaPE per octformer block
-        # if self.use_ADaPE:
-        #     self.ct_adape = ADaPE(dim, activation)
-        self.ct_norm1 = torch.nn.LayerNorm(dim)
-        self.ct_attention = CTAttention(dim, patch_size, num_heads, qkv_bias,
-                                        qk_scale, attn_drop, proj_drop,
-                                        ct_per_window,
-                                        use_rpe=(not disable_RPE))
-        self.ct_norm2 = torch.nn.LayerNorm(dim)
-        self.ct_mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
-        self.ct_drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
-        self.ct_gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-        self.ct_gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-        
-        if not (self.last and self.ct_propagation):
-            return
-        self.upsampler = torch.nn.Upsample(scale_factor=patch_size//ct_per_window, mode='nearest')
-        # Just use a scalar multiplier for CT propagation scaling, which
-        # prevents 'blurring' local features with CT features
-        self.ct_gamma_propagate = torch.nn.Parameter(torch.tensor(ct_propagation_scale)) if use_ct_propagation_scale else 1
-
-    def forward(self, data: torch.Tensor, carrier_tokens: torch.Tensor, octree: OctreeT, depth: int):
-        K = self.patch_size
-        C = self.dim
-        G = self.ct_per_window
-        ct = carrier_tokens
-        
-        # Apply conditional positional encoding
-        data = data + self.cpe(data, octree, depth)
-        # Pad batch and reshape into windows
-        data = octree.data_to_windows(  # (N, K, C)
-            data, depth, dilated_windows=self.dilated_windows
-        )
-        # Do global attention via carrier tokens
-        if self.use_ct:
-            # NOTE: No longer using ADaPE per octformer block
-            # if self.use_ADaPE:
-            #     ct = ct + self.ct_adape(octree, depth)
-            ct_attn = self.ct_gamma1 * self.ct_attention(self.ct_norm1(ct), octree, depth)
-            ct = ct + self.ct_drop_path(ct_attn, octree, depth)
-            ct_ffn = self.ct_gamma2 * self.ct_mlp(self.ct_norm2(ct))
-            ct = ct + self.ct_drop_path(ct_ffn, octree, depth)
-            # Concatenate carrier tokens with window tokens
-            data = torch.cat((ct.unsqueeze(1), data), dim=1)
-
-        attn = self.gamma1 * self.attention(self.norm1(data), octree, depth)
-        data = data + self.drop_path(attn, octree, depth)
-        ffn = self.gamma2 * self.mlp(self.norm2(data))
-        data = data + self.drop_path(ffn, octree, depth)
-
-        # Split CTs from window tokens
-        if self.use_ct:
-            ct, data = data.split([G, K], dim=1)
-            ct = ct.squeeze(1)
-        # Unpad batch and restore original data shape
-        data = octree.windows_to_data(
-            data, depth, dilated_windows=self.dilated_windows
-        )        
-        # On last block, propagate carrier token features to local feature map
-        if self.last and self.use_ct and self.ct_propagation:
-            # TODO: Make this work with ct_size > 1
-            mask = octree.ct_init_mask[depth].unsqueeze(-1)
-            ct_upsampled = ct.unsqueeze(0).transpose(1, 2)
-            ct_upsampled = self.upsampler(ct_upsampled).transpose(1,2).squeeze(0)
-            ct_upsampled = ct_upsampled.view(-1, K//G, C)
-            # Mask out padded and overlap CTs
-            ct_upsampled = ct_upsampled.masked_fill(mask, value=0).view(-1, C)
-            ct_upsampled = octree.patch_reverse(ct_upsampled, depth)
-            data = data + self.ct_gamma_propagate*ct_upsampled
-        return data, ct
 
 
 class HOTFormerBlock(torch.nn.Module):
@@ -415,10 +137,11 @@ class HOTFormerBlock(torch.nn.Module):
             and type(rt_propagation_scale) in [int, float]
         )
         self.norm1 = torch.nn.LayerNorm(dim)
-        self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
-                                         qk_scale, attn_drop, proj_drop, dilation,
-                                         rt_per_window=rt_per_window,
-                                         use_rpe=(not disable_RPE))
+        self.attention = OctreeAttention(
+            dim, patch_size, num_heads, qkv_bias, qk_scale, attn_drop,
+            proj_drop, dilation, ct_per_window=rt_per_window,
+            use_rpe=(not disable_RPE)
+        )
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty,
@@ -444,7 +167,7 @@ class HOTFormerBlock(torch.nn.Module):
             torch.tensor(rt_propagation_scale)
         ) if use_rt_propagation_scale else 1
 
-    def forward(self, data: torch.Tensor, relay_tokens: torch.Tensor, octree: OctreeT, depth: int):
+    def forward(self, data: Tensor, relay_tokens: Tensor, octree: OctreeT, depth: int):
         K = self.patch_size
         C = self.dim
         G = self.rt_per_window
@@ -479,7 +202,7 @@ class HOTFormerBlock(torch.nn.Module):
             rt_upsampled = rt.unsqueeze(0).transpose(1, 2)
             rt_upsampled = self.upsampler(rt_upsampled).transpose(1,2).squeeze(0)
             rt_upsampled = rt_upsampled.view(-1, K//G, C)
-            # Mask out padded and overlap CTs
+            # Mask out padded and overlap RTs
             rt_upsampled = rt_upsampled.masked_fill(mask, value=0).view(-1, C)
             rt_upsampled = octree.patch_reverse(rt_upsampled, depth)
             data = data + self.rt_gamma_propagate*rt_upsampled
@@ -522,22 +245,13 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
 
-    def forward(self, relay_token_dict: Dict[int, torch.Tensor], octree: OctreeT):
+    def forward(self, relay_token_dict: Dict[int, Tensor], octree: OctreeT):
         pyramid_depths = list(relay_token_dict.keys())
 
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~2.4ms with bs 128)
-        # debug_time_func(func=self.concat_and_pad_rt, inputs=(relay_token_dict, octree, pyramid_depths))
         # Concatenate and pad multi-scale relay tokens per batch
-        rt, batch_num_relay_tokens_combined = self.concat_and_pad_rt(
-            relay_token_dict, octree, pyramid_depths
-        )
-
-        # # TODO: TIME THIS FUNC, MOVE TO octree.py (~1ms with bs 128)
-        # debug_time_func(func=self.calc_rt_attn_mask, inputs=(batch_num_relay_tokens_combined, octree, pyramid_depths))
-        # Generate attn mask 
-        rt_attn_mask = self.calc_rt_attn_mask(
-            batch_num_relay_tokens_combined, octree, pyramid_depths 
-        )        
+        rt = concat_and_pad_rt(relay_token_dict, octree, pyramid_depths)
+        
         # Generate drop_path batch idx (simple for padded tokens, each row is a batch)
         drop_path_batch_idx = self.get_drop_path_idx(rt)
 
@@ -545,137 +259,17 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         # NOTE: No longer using ADaPE per octformer block
         # if self.use_ADaPE:
         #     rt = rt + self.rt_adape(octree, depth)
-        rt_attn = self.gamma1 * self.rt_attention(self.norm1(rt),
-                                                  rt_attn_mask, octree)
+        rt_attn = self.gamma1 * self.rt_attention(self.norm1(rt), octree)
         rt = rt + self.drop_path(rt_attn, octree, batch_id=drop_path_batch_idx)
         rt_ffn = self.gamma2 * self.mlp(self.norm2(rt))
         rt = rt + self.drop_path(rt_ffn, octree, batch_id=drop_path_batch_idx)
 
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~3.5ms with bs 128)
-        # debug_time_func(func=self.unpad_and_split_rt, inputs=(rt, batch_num_relay_tokens_combined, octree, pyramid_depths))
         # Unpad + split CTs
-        relay_token_dict = self.unpad_and_split_rt(
-            rt, batch_num_relay_tokens_combined, octree, pyramid_depths
-        )
-
-        # TODO: VERIFY FOR SURE THAT THIS BEHAVES AS EXPECTED, FOR BS 1 and BS 128.
-        #       ALSO VERIFY THAT HOSA BLOCKS WORK WITH THIS BLOCK AS EXPECTED.
-            
+        relay_token_dict = unpad_and_split_rt(rt, octree, pyramid_depths)
         return relay_token_dict
 
-    def concat_and_pad_rt(
-        self,
-        relay_token_dict: Dict[int, torch.Tensor],
-        octree: OctreeT,
-        pyramid_depths: List[int]
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Concatenates relay tokens from different levels in the pyramid
-        batch-wise, then applies padding for parallelisation. Returns a single
-        (B, N, C) tensor, where B = batch size, N = number of tokens (incl.
-        padding), and C = channel size. Also returns the combined number of
-        relay tokens per batch element.
-        """        
-        # Split relay tokens into batches for each depth
-        relay_tokens_split_per_depth = []
-        for j, depth_j in enumerate(pyramid_depths):
-            batch_num_relay_tokens_depth_j = octree.batch_num_windows[depth_j]
-            if j == 0:
-                batch_num_relay_tokens_combined = batch_num_relay_tokens_depth_j.clone().detach()
-            else:
-                batch_num_relay_tokens_combined += batch_num_relay_tokens_depth_j
-            relay_tokens_split_per_depth.append(
-                relay_token_dict[depth_j].split(batch_num_relay_tokens_depth_j.tolist())
-            )
-        
-        # Combine relay tokens for each batch in all depths
-        relay_tokens_combined_list = []
-        for relay_token_pyramid_batch in zip(*relay_tokens_split_per_depth):
-            relay_tokens_combined_list.append(
-                torch.cat(relay_token_pyramid_batch)
-            )
-        padded_pyramid_relay_tokens = pad_sequence(relay_tokens_combined_list)
-        return padded_pyramid_relay_tokens, batch_num_relay_tokens_combined
-
-    def unpad_and_split_rt(
-        self,
-        padded_pyramid_relay_tokens: torch.Tensor,
-        batch_num_relay_tokens_combined: torch.Tensor,
-        octree: OctreeT,
-        pyramid_depths: List[int]
-    ) -> dict[int, torch.Tensor]:
-        """
-        Reverses the concatenation and padding applied to multi-scale relay
-        tokens. Returns a dictionary where keys are octree depth, and values
-        are the corresponding relay tokens in a (M, C) tensor.
-        """
-        # Remove padding
-        relay_tokens_combined_list = unpad_sequence(
-            padded_pyramid_relay_tokens, batch_num_relay_tokens_combined,
-            batch_first=True
-        )
-        # Separate relay tokens for each depth
-        batch_num_relay_tokens_per_depth = [
-            octree.batch_num_windows[depth_j].tolist()
-                for depth_j in pyramid_depths
-        ]
-        relay_tokens_split_per_depth = [
-            [] for _ in range(len(pyramid_depths))
-        ]
-        for i, batch_num_tokens in enumerate(zip(*batch_num_relay_tokens_per_depth)):
-            relay_tokens_split_temp = relay_tokens_combined_list[i].split(
-                batch_num_tokens
-            )
-            for j in range(len(pyramid_depths)):
-                relay_tokens_split_per_depth[j].append(
-                    relay_tokens_split_temp[j]
-                )
-
-        # Concatenate relay tokens for each depth and put back in dict
-        relay_token_dict = {}
-        for i, depth_j in enumerate(pyramid_depths):
-            relay_token_dict[depth_j] = torch.cat(relay_tokens_split_per_depth[i])
-        
-        return relay_token_dict
-    
-    def calc_rt_attn_mask(
-        self,
-        batch_num_relay_tokens_combined: torch.Tensor,
-        octree: OctreeT,
-        pyramid_depths: List[int],
-    ) -> torch.Tensor:
-        """
-        Compute the attention mask for combined multi-scale relay tokens.
-        Expects that concat_and_pad_rt has been run already.
-        """
-        # Generate (B, N) mask of batch idx for all relay tokens.
-        # (N = number of relay tokens in largest batch element, which all
-        #   elements are padded to)
-        B = octree.batch_size
-        N = batch_num_relay_tokens_combined.max().item()
-        rt_batch_idx = torch.full(
-            (B, N), fill_value = 1e4, dtype=torch.long, device=octree.device
-        )
-        for batch_idx, batch_length in enumerate(batch_num_relay_tokens_combined):
-            rt_batch_idx[batch_idx, :batch_length] = batch_idx
-
-        # Correct the mask for last batch (as padding is unaccounted for)
-        prev_end_idx = 0
-        for depth_j in pyramid_depths:
-            num_padded_tokens = torch.sum(octree.ct_batch_idx[depth_j]
-                                          >= B).item()
-            batch_rel_idx = octree.batch_num_windows[depth_j][-1].item()
-            if num_padded_tokens > 0:
-                batch_end_idx = prev_end_idx + batch_rel_idx
-                batch_pad_start_idx = batch_end_idx - num_padded_tokens
-                rt_batch_idx[-1, batch_pad_start_idx:batch_end_idx] = B
-            prev_end_idx += batch_rel_idx
-
-        # Convert to attn mask with (B, N, N)
-        rt_attn_mask = octree._calc_attn_mask(rt_batch_idx)            
-        return rt_attn_mask
-
-    def get_drop_path_idx(self, relay_tokens: torch.Tensor) -> torch.Tensor:
+    def get_drop_path_idx(self, relay_tokens: Tensor) -> Tensor:
         """Compute the batch idx tensor for drop_path."""
         B, N = relay_tokens.shape[:2]
         drop_path_batch_idx = torch.zeros((B, N), dtype=torch.long)
@@ -724,12 +318,12 @@ class RelayTokenInitialiser(torch.nn.Module):
         self.dim = dim
         self.rt_size = rt_size
 
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
+    def forward(self, data: Tensor, octree: OctreeT, depth: int):
         K = self.patch_size
         C = self.dim
         G = self.rt_size
         
-        if self.use_cpe:
+        if self.use_cpe:  # CPE disabled when using ADaPE
             data = self.cpe(data, octree, depth)
         data = octree.patch_partition(data, depth)
         # Reshape to windows, and mask out ignored values as NaN
@@ -743,66 +337,7 @@ class RelayTokenInitialiser(torch.nn.Module):
         assert(not torch.any(relay_tokens.isnan())), \
             "NaN propagated during relay token init, check code"
         return relay_tokens
-
-class OctFormerStage(torch.nn.Module):
-
-    def __init__(self, dim: int, num_heads: int, patch_size: int = 32,
-                 dilation: int = 0, mlp_ratio: float = 4.0, qkv_bias: bool = True,
-                 qk_scale: Optional[float] = None, attn_drop: float = 0.0,
-                 proj_drop: float = 0.0, drop_path: float = 0.0, nempty: bool = True,
-                 activation: torch.nn.Module = torch.nn.GELU, interval: int = 6,
-                 disable_RPE: bool = False, use_ct: bool = False, ct_size: int = 1,
-                 ct_propagation: bool = False,
-                 ct_propagation_scale: Optional[float] = None,
-                 ADaPE_mode: Optional[str] = None,
-                 grad_checkpoint: bool = True, num_blocks: int = 2,
-                 conv_norm: str = 'batchnorm', layer_scale: Optional[float] = None,
-                 xcpe: bool = False, octformer_block=OctFormerBlock, **kwargs):
-        super().__init__()
-        self.num_blocks = num_blocks
-        self.grad_checkpoint = grad_checkpoint
-        self.use_ct = use_ct
-        self.use_ADaPE = ADaPE_mode is not None
-        # self.interval = interval  # normalisation interval
-        # self.num_norms = (num_blocks - 1) // self.interval
-
-        self.blocks = torch.nn.ModuleList([octformer_block(
-            dim=dim, num_heads=num_heads, patch_size=patch_size,
-            dilation=1 if (i % 2 == 0) else dilation,
-            mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=proj_drop,
-            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-            nempty=nempty, activation=activation, disable_RPE=disable_RPE,
-            use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
-            ct_propagation_scale=ct_propagation_scale, use_ADaPE=self.use_ADaPE,
-            conv_norm=conv_norm, last=(i == num_blocks - 1),
-            layer_scale=layer_scale, xcpe=xcpe) for i in range(num_blocks)])
-        # self.norms = torch.nn.ModuleList([
-        #     torch.nn.BatchNorm1d(dim) for _ in range(self.num_norms)])
-        if not self.use_ct:
-            return
-        self.global_tokeniser = RelayTokenInitialiser(dim, patch_size=patch_size,
-                                                 nempty=nempty,
-                                                 conv_norm=conv_norm,
-                                                 rt_size=ct_size,
-                                                 use_cpe=(not self.use_ADaPE),
-                                                 xcpe=xcpe)
-        if self.use_ADaPE:
-            self.ct_adape = ADaPE(dim, activation, ADaPE_mode)
-
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
-        ct = self.global_tokeniser(data, octree, depth) if self.use_ct else None
-        # Inject positional encoding for CTs
-        if self.use_ADaPE and ct is not None:
-            ct = ct + self.ct_adape(octree, depth)
-        for i in range(self.num_blocks):
-            if self.grad_checkpoint and self.training:
-                data, ct = checkpoint(self.blocks[i], data, ct, octree, depth, use_reentrant=False)  # disable reentrant to fix error with no_grad?
-            else:
-                data, ct = self.blocks[i](data, ct, octree, depth)
-            # if i % self.interval == 0 and i != 0:
-            #   data = self.norms[(i - 1) // self.interval](data)
-        return data
+    
 
 class HOTFormerStage(torch.nn.Module):
 
@@ -814,6 +349,8 @@ class HOTFormerStage(torch.nn.Module):
                  drop_path: float = 0.0, nempty: bool = True,
                  activation: torch.nn.Module = torch.nn.GELU,
                  disable_RPE: bool = False, rt_size: int = 1,
+                 rt_propagation: bool = False,
+                 rt_propagation_scale: Optional[float] = None,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None, xcpe: bool = False, **kwargs):
@@ -841,8 +378,11 @@ class HOTFormerStage(torch.nn.Module):
                     activation=activation,
                     disable_RPE=disable_RPE,
                     rt_size=rt_size,
+                    rt_propagation=rt_propagation,
+                    rt_propagation_scale=rt_propagation_scale,
                     use_ADaPE=self.use_ADaPE,
                     conv_norm=conv_norm,
+                    last=(i == self.num_blocks - 1),
                     layer_scale=layer_scale,
                     xcpe=xcpe
                 ) for i in range(self.num_blocks)]
@@ -886,21 +426,16 @@ class HOTFormerStage(torch.nn.Module):
         if self.use_ADaPE:
             self.rt_adape = ADaPE(dim, activation, ADaPE_mode)
 
-    def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
-        # TODO: Take input local features, init features for d-1, d-2, init
-        #       relay tokens for all scales
-        pyramid_depths = [(depth - j) for j in range(self.num_pyramid_levels)]
+    def init_pyramid_feats(self, data: Tensor, octree: OctreeT):
         # Store local features and relay tokens by octree depth in dict
-        local_feat_dict = {depth: data}
+        local_feat_dict = {self.pyramid_depths[0]: data}
         relay_token_dict = {}
 
         # Initialise local features and relay tokens
-        for j, depth_j in enumerate(pyramid_depths):
+        for j, depth_j in enumerate(self.pyramid_depths):
             relay_token_dict[depth_j] = self.relay_tokeniser(
                 local_feat_dict[depth_j], octree, depth_j,
             )
-            # TODO: Ensure ADaPE uses correct position coordinates,for
-            #       multi-scale compatibility
             if self.use_ADaPE:  # Inject positional encoding for RTs
                 relay_token_dict[depth_j] = (
                     relay_token_dict[depth_j] + self.rt_adape(octree, depth_j)
@@ -909,8 +444,16 @@ class HOTFormerStage(torch.nn.Module):
                 local_feat_dict[depth_j - 1] = self.downsamples[j](
                     local_feat_dict[depth_j], octree, depth_j,
                 )
+        return local_feat_dict, relay_token_dict
+    
+    def forward(self, data: Tensor, octree: OctreeT, depth: int):
+        self.pyramid_depths = [(depth - j)
+                               for j in range(self.num_pyramid_levels)]
+        # Initialise local features + relay token dicts
+        local_feat_dict, relay_token_dict = self.init_pyramid_feats(data,
+                                                                    octree)
 
-        # TODO: Begin loop of RTSA + H-OSA
+        # Begin loop of RTSA + H-OSA
         for i in range(self.num_blocks):
             # Compute global multi-scale interactions through RTSA
             if self.grad_checkpoint and self.training:
@@ -922,89 +465,24 @@ class HOTFormerStage(torch.nn.Module):
                 relay_token_dict = self.rtsa_blocks[i](relay_token_dict, octree)
             
             # Propagate to local features with H-OSA
-            for j, depth_j in enumerate(pyramid_depths):
+            for j, depth_j in enumerate(self.pyramid_depths):
                 if self.grad_checkpoint and self.training:
-                    local_feat_dict[depth_j], relay_token_dict[depth_j] = \
+                    local_feat_dict[depth_j], relay_token_dict[depth_j] = (
                         checkpoint(
                             self.hosa_blocks[j][i], local_feat_dict[depth_j],
                             relay_token_dict[depth_j], octree, depth_j,
                             use_reentrant=False,
                         )
+                    )
                 else:
-                    local_feat_dict[depth_j], relay_token_dict[depth_j] = \
+                    local_feat_dict[depth_j], relay_token_dict[depth_j] = (
                         self.hosa_blocks[j][i](
                             local_feat_dict[depth_j], relay_token_dict[depth_j],
                             octree, depth_j,
                         )
-            
-        # TODO: Work out how batching will work with multi-scale RTs?
-                
-            
-        # if self.grad_checkpoint and self.training:
-        #     data, ct = checkpoint(self.blocks[i], data, ct, octree, depth, use_reentrant=False)
-        # else:
-        #     data, ct = self.blocks[i](data, ct, octree, depth)
+                    )
 
-        # TODO: Return local feats + RTs for all scales
-
-        
-        
         return local_feat_dict, relay_token_dict
-        
-
-
-class PatchEmbed(torch.nn.Module):
-
-    def __init__(self, in_channels: int = 3, dim: int = 96, num_down: int = 2,
-                 nempty: bool = True, downsample_input_embeddings: bool = True,
-                 conv_norm: str = 'batchnorm', **kwargs):
-        super().__init__()
-        self.num_stages = num_down
-        self.delta_depth = -num_down
-        self.downsample_input_embeddings = downsample_input_embeddings
-
-        if self.downsample_input_embeddings:
-            channels = [int(dim * 2**i) for i in range(-self.num_stages, 1)]
-            self.convs = torch.nn.ModuleList([OctreeConvNormRelu(
-                in_channels if i == 0 else channels[i], channels[i], kernel_size=[3],
-                stride=1, nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages)])
-            self.downsamples = torch.nn.ModuleList([OctreeConvNormRelu(
-                channels[i], channels[i+1], kernel_size=[2], stride=2, nempty=nempty, conv_norm=conv_norm)
-                for i in range(self.num_stages)])
-            self.proj = OctreeConvNormRelu(
-                channels[-1], dim, kernel_size=[3], stride=1, nempty=nempty, conv_norm=conv_norm)
-        else:
-            self.convs = torch.nn.ModuleList([OctreeConvNormRelu(
-                in_channels if i == 0 else dim, dim, kernel_size=[3],
-                stride=1, nempty=nempty, conv_norm=conv_norm) for i in range(self.num_stages)])
-
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        if self.downsample_input_embeddings:
-            for i in range(self.num_stages):
-                depth_i = depth - i
-                data = self.convs[i](data, octree, depth_i)
-                data = self.downsamples[i](data, octree, depth_i)
-            data = self.proj(data, octree, depth_i - 1)
-        else:
-            for i in range(self.num_stages):
-                data = self.convs[i](data, octree, depth)
-        return data
-
-
-class Downsample(torch.nn.Module):
-
-    def __init__(self, in_channels: int, out_channels: int,
-                 kernel_size: List[int] = [2], nempty: bool = True,
-                 conv_norm: str = 'batchnorm'):
-        super().__init__()
-        self.conv = ocnn.nn.OctreeConv(in_channels, out_channels, kernel_size,
-                                       stride=2, nempty=nempty, use_bias=True)
-        self.norm = get_norm_layer(out_channels, conv_norm)
-
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        data = self.conv(data, octree, depth)
-        data = self.norm(data)
-        return data
 
 
 class HOTFormerBase(torch.nn.Module):
@@ -1016,6 +494,8 @@ class HOTFormerBase(torch.nn.Module):
                  num_pyramid_levels: int = 3,
                  patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
                  nempty: bool = True, stem_down: int = 2, rt_size: int = 1,
+                 rt_propagation: bool = False,
+                 rt_propagation_scale: Optional[float] = None,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
@@ -1030,10 +510,6 @@ class HOTFormerBase(torch.nn.Module):
         self.num_pyramid_levels = num_pyramid_levels
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
-        # if len(ct_layers) < len(channels):
-        #     ct_layers += (False,) * (len(channels)-len(ct_layers))
-        # self.ct_layers = ct_layers
-        # ct_size = ct_size if any(ct_layers) else 0
         self.ct_size = rt_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
@@ -1050,8 +526,9 @@ class HOTFormerBase(torch.nn.Module):
             dim=channels[0], num_heads=num_heads[0], patch_size=patch_size,
             drop_path=drop_ratio[sum(num_blocks[:0]):sum(num_blocks[:0+1])],
             dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
-            grad_checkpoint=grad_checkpoint, num_blocks=num_blocks[0],
-            conv_norm=conv_norm, layer_scale=layer_scale, xcpe=xcpe)
+            use_ct=False, grad_checkpoint=grad_checkpoint,
+            num_blocks=num_blocks[0], conv_norm=conv_norm,
+            layer_scale=layer_scale, xcpe=xcpe)
         self.downsample = Downsample(
             channels[0], channels[1], kernel_size=[2], nempty=nempty,
             conv_norm=conv_norm)
@@ -1061,83 +538,30 @@ class HOTFormerBase(torch.nn.Module):
             drop_path=drop_ratio[sum(num_blocks[:1]):sum(num_blocks[:1+1])],
             nempty=nempty, disable_RPE=disable_RPE,
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
-            rt_size=rt_size, ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
-            xcpe=xcpe)
-        
-        # self.oct_layers = torch.nn.ModuleList([OctFormerStage(
-        #         dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
-        #         drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
-        #         dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
-        #         grad_checkpoint=grad_checkpoint, num_blocks=num_blocks[i],
-        #         conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
-        #         ct_propagation=ct_propagation,
-        #         ct_propagation_scale=ct_propagation_scale,
-        #         ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
-        #         xcpe=xcpe) for i in range(self.num_stages)])
-        # self.downsamples = torch.nn.ModuleList([Downsample(
-        #         channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
-        #         conv_norm=conv_norm) for i in range(self.num_stages - 1)])
-        # self.hot_layers = None
+            rt_size=rt_size, rt_propagation=rt_propagation,
+            rt_propagation_scale=rt_propagation_scale,
+            ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe)
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
+    def forward(self, data: Tensor, octree: Octree, depth: int):
         # Generate initial convolution embeddings
         data = self.patch_embed(data, octree, depth)
+        
+        # Refine local features with standard octree attention
         if self.downsample_input_embeddings:
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_layers=[False]+[True]*self.num_pyramid_levels,
-                         ct_size=self.ct_size, ADaPE_mode=self.ADaPE_mode)
+                         ct_size=self.ct_size, ADaPE_mode=self.ADaPE_mode,
+                         num_pyramid_levels=self.num_pyramid_levels)
         octree.build_t()
-        
-        # Refine local features with standard octree attention
-        features = {}
         data = self.octf_stage(data, octree, depth)
-        features[depth] = data
         data = self.downsample(data, octree, depth)
         depth = depth - 1
-        # TODO: Get correct output from HOTF parallel stages
-        data = self.hotf_stage(data, octree, depth)
 
-        # # TODO: Begin hierarchical attention
-        # for i in range(1, self.num_stages):
-        #     depth_i = depth - i
-        #     data = self.layers[i](data, octree, depth_i)
-        #     features[depth_i] = data
-        return features
+        # Compute Hierarchical Octree Attention with multi-scale Relay Tokens
+        local_feat_dict, relay_token_dict = self.hotf_stage(data, octree, depth)
 
-
-class FPNHeader(torch.nn.Module):
-
-    def __init__(self, channels: List[int], fpn_channel: int, nempty: bool,
-                 num_top_down: int = 1, conv_norm: str = 'batchnorm'):
-        super().__init__()
-        self.num_top_down = num_top_down
-        self.conv1x1 = torch.nn.ModuleList()  # lateral connections
-        self.up_conv = torch.nn.ModuleList()  # top-down transposed convolutions
-
-        # Generate top-down path
-        for i in range(self.num_top_down):
-            self.conv1x1.append(ocnn.modules.Conv1x1(
-                channels[-1 - i], fpn_channel, use_bias=True))
-            self.up_conv.append(OctreeDeconvNormRelu(
-                fpn_channel, fpn_channel, kernel_size=[2],
-                stride=2, nempty=nempty, conv_norm=conv_norm))
-
-        # Final lateral connection from Conv block 1 or above
-        self.conv1x1.append(torch.nn.Linear(channels[-1 - self.num_top_down], fpn_channel))
-
-    def forward(self, features: Dict[int, torch.Tensor], octree: Octree):
-        depth = min(features.keys())
-        output_depth = depth + self.num_top_down
-
-        # Top-down pass
-        data = self.conv1x1[0](features[depth])
-        for i in range(self.num_top_down):
-            data = self.up_conv[i](data, octree, depth + i)
-            data = data + self.conv1x1[i + 1](features[depth + i + 1])
-
-        return data, output_depth
+        return local_feat_dict, relay_token_dict, octree
 
 
 class HOTFormer(torch.nn.Module):
@@ -1162,6 +586,8 @@ class HOTFormer(torch.nn.Module):
         num_top_down: int = 2,
         fpn_channel: int = 168,
         rt_size: int = 1,
+        rt_propagation: bool = False,
+        rt_propagation_scale: Optional[float] = None,
         ADaPE_mode: Optional[str] = None,
         grad_checkpoint: bool = True,
         downsample_input_embeddings: bool = True,
@@ -1183,7 +609,9 @@ class HOTFormer(torch.nn.Module):
             dilation: Dilation amount for Octree attention
             drop_path: Stochastic depth probability (this is the max value stochastic depth scales to).
             nempty: Boolean indicating if only non-empty octants should be used (set True for sparse operation).
-            rt_size: Size of carrier tokens, note that patch_size must be divisible by this.
+            rt_size: Size of relay tokens, note that patch_size must be divisible by this.
+            rt_propagation: Boolean indicating if relay token features should be propagated to local features at the end of the stage.
+            rt_propagation_scale: Learnable scalar multiplier for rt propagation step, to prevent 'blurring' of local features.
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
             fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
@@ -1208,6 +636,8 @@ class HOTFormer(torch.nn.Module):
             nempty=nempty,
             stem_down=stem_down,
             rt_size=rt_size,
+            rt_propagation=rt_propagation,
+            rt_propagation_scale=rt_propagation_scale,
             ADaPE_mode=ADaPE_mode,
             grad_checkpoint=grad_checkpoint,
             downsample_input_embeddings=downsample_input_embeddings,
@@ -1215,14 +645,6 @@ class HOTFormer(torch.nn.Module):
             conv_norm=conv_norm,
             layer_scale=layer_scale,
             xcpe=xcpe,
-        )
-        # TODO: replace or remove FPN header
-        self.head = FPNHeader(
-            channels=channels,
-            fpn_channel=fpn_channel,
-            nempty=nempty,
-            num_top_down=num_top_down,
-            conv_norm=conv_norm,
         )
         self.qkv_init = qkv_init
         self.apply(self.init_weights)
@@ -1259,8 +681,8 @@ class HOTFormer(torch.nn.Module):
         if isinstance(m, torch.nn.Linear) and m.bias is not None:
             torch.nn.init.constant_(m.bias, 0)
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        features = self.backbone(data, octree, depth)
-        # TODO: replace or remove FPN header
-        output, output_depth = self.head(features, octree)
-        return output, output_depth
+    def forward(self, data: Tensor, octree: Octree, depth: int):
+        local_feat_dict, relay_token_dict, octree = self.backbone(data,
+                                                                  octree,
+                                                                  depth) 
+        return local_feat_dict, relay_token_dict, octree

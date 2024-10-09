@@ -1,13 +1,18 @@
 # Pooling methods code based on: https://github.com/filipradenovic/cnnimageretrieval-pytorch
 
+from typing import Dict
 import torch
-import ocnn
 import torch.nn as nn
+from torch import Tensor
+import ocnn
 import MinkowskiEngine as ME
 from ocnn.octree import Octree
+from models.octree import OctreeT
 
 from models.layers.netvlad import NetVLADLoupe
-
+from models.layers.salsa import AdaptivePooling, Mixer
+from models.layers.octformer_layers import MLP
+from models.relay_token_utils import concat_and_pad_rt
 
 class MAC(nn.Module):
     def __init__(self, input_dim):
@@ -68,11 +73,26 @@ class OctGeM(nn.Module):
         self.eps = eps
         self.f = ocnn.nn.OctreeGlobalPool(nempty=True)
 
-    def forward(self, x: torch.Tensor, octree: Octree, depth: int):
+    def forward(self, x: Tensor, octree: Octree, depth: int):
         # This implicitly applies ReLU on x (clamps negative values)
         temp = x.clamp(min=self.eps).pow(self.p)
         temp = self.f(temp, octree, depth)  # Apply GlobalAvgPooling
         return temp.pow(1./self.p)          # Return (batch_size, n_features) tensor
+
+class RelayTokenGeM(OctGeM):
+    """
+    GeM pooling compatible with multi-scale relay tokens (or really any
+    batched tensor input.)
+    """
+    def __init__(self, input_dim, p=3, eps=1e-6):
+        super().__init__(input_dim=input_dim, p=p, eps=eps)
+        self.f = None
+    
+    def forward(self, x: Tensor):  # x: (B, N, C)
+        # This implicitly applies ReLU on x (clamps negative values)
+        temp = x.clamp(min=self.eps).pow(self.p)
+        temp = torch.mean(temp, dim=1)  # Apply GlobalAvgPooling
+        return temp.pow(1./self.p)      # Return (batch_size, n_features) tensor
 
 
 class NetVLADWrapper(nn.Module):
@@ -96,3 +116,73 @@ class NetVLADWrapper(nn.Module):
         assert x.shape[0] == batch_size
         assert x.shape[1] == self.output_dim
         return x    # Return (batch_size, output_dim) tensor
+
+
+class AttnPoolWrapper(nn.Module):
+    """
+    Wrapper for adaptive attention pooling + MLP token mixer, inspired by
+    SALSA: https://arxiv.org/pdf/2407.08260. Also allows using GeM instead of
+    token mixer.
+    """
+    def __init__(self, feature_size: int = 256, output_dim: int = 256,
+                 k_pooled_tokens: int = 64, mlp_ratio: int = 1,
+                 aggregator: str = 'mixer', mix_depth: int = 4):
+        super().__init__()
+        self.feature_size = feature_size
+        self.output_dim = output_dim
+        self.k_pooled_tokens = k_pooled_tokens
+        self.mlp_ratio = mlp_ratio
+        self.aggregator = aggregator
+        self.attpool = AdaptivePooling(
+            feature_dim=feature_size,         # originally 512
+            k_pooled_tokens=k_pooled_tokens,  # originally 16
+        )
+        if aggregator.lower() == 'mixer':
+            # TODO: Currently these values are based on a fixed ratio to ensure
+            #       the output is equal to output_dim, but may be worth trying
+            #       different ratios of tokens to channels in the MLP mixer.
+            k_output_tokens = k_pooled_tokens // 4  # originally 128
+            out_d = output_dim // k_output_tokens   # originally 4
+            self.descriptor_extractor = Mixer(
+                k_input_tokens=k_pooled_tokens,
+                k_output_tokens=k_output_tokens,
+                in_d=feature_size,
+                mix_depth=mix_depth,
+                mlp_ratio=mlp_ratio,
+                out_d=out_d,
+            )  # output size = k_output_tokens * out_d
+        elif aggregator.lower() == 'gem':
+            self.token_processor = nn.Sequential(
+                nn.LayerNorm(feature_size),
+                MLP(
+                    in_features=feature_size,
+                    hidden_features=feature_size*mlp_ratio,
+                    out_features=output_dim,
+                ),
+            )
+            self.descriptor_extractor = RelayTokenGeM(input_dim=feature_size)
+        else:
+            raise NotImplementedError(f'No valid aggregator: {aggregator}')
+            
+
+    def forward(self, relay_token_dict: Dict[int, Tensor],
+                octree: OctreeT, depth: int = None):
+        split_tokens = concat_and_pad_rt(relay_token_dict, octree)
+        attn_mask = self.calc_rt_attn_mask(octree.rt_attn_mask)
+        # Pool to k tokens
+        token_attn = self.attpool(split_tokens, attn_mask)
+        # Aggregate tokens into a global descriptor
+        if self.aggregator.lower() != 'mixer':
+            token_attn = token_attn + self.token_processor(token_attn)
+        global_descriptor = self.descriptor_extractor(token_attn)
+        return global_descriptor
+
+    def calc_rt_attn_mask(self, rt_attn_mask: Tensor) -> Tensor:
+        """
+        Alters relay token attention mask to be suitable for
+        attentional pooling with learnable query matrix.
+        """
+        # All query tokens should ignore padding tokens
+        attn_mask = rt_attn_mask[:, 0, :].unsqueeze(1)  # (B, N, N) -> (B, k, N)
+        attn_mask = attn_mask.repeat(1, self.k_pooled_tokens, 1)
+        return attn_mask

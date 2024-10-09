@@ -1,19 +1,29 @@
-from typing import Union
+from typing import Union, Dict, Optional
 
-import torch
+from torch import Tensor
 import torch.nn as nn
 import MinkowskiEngine as ME
 
-from models.layers.pooling import MAC, SPoC, GeM, OctGeM, NetVLADWrapper
+from models.layers.pooling import (
+    MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper
+)
 
 
 class PoolingWrapper(nn.Module):
-    def __init__(self, pool_method, in_dim, output_dim):
+    def __init__(
+        self,
+        pool_method: str,
+        in_dim: int,
+        output_dim: int,
+        k_pooled_tokens: Optional[int]=None
+    ):
         super().__init__()
 
         self.pool_method = pool_method
         self.in_dim = in_dim
         self.output_dim = output_dim
+        self.k_pooled_tokens = k_pooled_tokens
+        self.pooled_feats = 'local'  # flag if local feats or relay tokens are pooled
 
         if pool_method == 'MAC':
             # Global max pooling
@@ -28,7 +38,7 @@ class PoolingWrapper(nn.Module):
             assert in_dim == output_dim
             self.pooling = GeM(input_dim=in_dim)
         elif pool_method == 'OctGeM':
-            # Generalized mean pooling
+            # Generalized mean pooling (octree-based)
             assert in_dim == output_dim
             self.pooling = OctGeM(input_dim=in_dim)
         elif self.pool_method == 'netvlad':
@@ -37,10 +47,24 @@ class PoolingWrapper(nn.Module):
         elif self.pool_method == 'netvladgc':
             # NetVLAD with Gating Context
             self.pooling = NetVLADWrapper(feature_size=in_dim, output_dim=output_dim, gating=True)
+        elif self.pool_method == 'AttnPoolMixer':
+            # Attentional pooling with token mixing MLP
+            self.pooled_feats = 'relaytokens'
+            self.pooling = AttnPoolWrapper(
+                feature_size=in_dim, output_dim=output_dim,
+                k_pooled_tokens=k_pooled_tokens, aggregator='mixer'
+            )
+        elif self.pool_method == 'AttnPoolGeM':
+            # Attentional pooling with GeM pooling
+            self.pooled_feats = 'relaytokens'
+            self.pooling = AttnPoolWrapper(
+                feature_size=in_dim, output_dim=output_dim,
+                k_pooled_tokens=k_pooled_tokens, aggregator='GeM'
+            )
         else:
             raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
 
-    def forward(self, x: Union[ME.SparseTensor, torch.Tensor], octree=None, depth=None):
+    def forward(self, x: Union[ME.SparseTensor, Tensor, Dict], octree=None, depth=None):
         if octree is None:
             return self.pooling(x)
         else:

@@ -46,6 +46,7 @@ class OctreeT(Octree):
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
                  ct_size: int = 0, ADaPE_mode: Optional[str] = None,
+                 num_pyramid_levels: int = 0,
                  **kwargs):
         super().__init__(octree.depth, octree.full_depth)
         self.__dict__.update(octree.__dict__)
@@ -57,6 +58,10 @@ class OctreeT(Octree):
         self.nempty = nempty
         self.max_depth = max_depth or self.depth
         self.start_depth = start_depth or self.full_depth
+        self.num_pyramid_levels = num_pyramid_levels
+        if self.num_pyramid_levels > 0:  # HOTFormerLoc
+            self.ct_layers = [False] + [True]*self.num_pyramid_levels
+            self.pyramid_depths = [(self.max_depth - 1 - j) for j in range(self.num_pyramid_levels)]
         self.invalid_mask_value = -1e3
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = self.ADaPE_mode is not None
@@ -74,12 +79,14 @@ class OctreeT(Octree):
         self.ct_batch_idx = [None] * num
         self.batch_boundary = [None] * num
         self.batch_num_windows = [None] * num
+        self.batch_num_relay_tokens_combined = None
         self.batch_window_overlap_mask = [None] * num
         self.patch_mask = [None] * num
         self.dilate_mask = [None] * num
         self.hat_window_mask = [None] * num
         self.ct_mask = [None] * num
         self.ct_init_mask  = [None] * num
+        self.rt_attn_mask = None
         self.rel_pos = [None] * num
         self.dilate_pos = [None] * num
         self.window_stats = [None] * num
@@ -98,6 +105,9 @@ class OctreeT(Octree):
             self.build_attn_mask(depth, use_ct)
             self.build_rel_pos(depth)
             self.compute_window_stats(depth, use_ct)
+            
+        if self.num_pyramid_levels > 0:
+            self.build_rt_attn_mask()
 
     def build_batch_idx(self, depth: int, use_ct: bool):
         # Build batch idx for regular octree operation
@@ -202,6 +212,44 @@ class OctreeT(Octree):
         # #       so that batch element with higher overlap is unmasked
         # mode_max_mask = (batch_windows.max(dim=1).values == batch_windows.mode(dim=1).values)
         # torch.nonzero(mode_max_mask == False)
+    
+    def build_rt_attn_mask(self):
+        """
+        Compute the attention mask for multi-scale relay tokens.
+        """
+        for j, depth_j in enumerate(self.pyramid_depths):
+            batch_num_relay_tokens_depth_j = self.batch_num_windows[depth_j]
+            if j == 0:
+                batch_num_relay_tokens_combined = batch_num_relay_tokens_depth_j.clone().detach()
+            else:
+                batch_num_relay_tokens_combined += batch_num_relay_tokens_depth_j
+        self.batch_num_relay_tokens_combined = batch_num_relay_tokens_combined
+
+        # Generate (B, N) mask of batch idx for all relay tokens.
+        # (N = number of relay tokens in largest batch element, which all
+        #   elements are padded to)
+        B = self.batch_size
+        N = self.batch_num_relay_tokens_combined.max().item()
+        rt_batch_idx = torch.full(
+            (B, N), fill_value = 1e4, dtype=torch.long, device=self.device
+        )
+        for batch_idx, batch_length in enumerate(self.batch_num_relay_tokens_combined):
+            rt_batch_idx[batch_idx, :batch_length] = batch_idx
+
+        # Correct the mask for last batch (as padding is unaccounted for)
+        prev_end_idx = 0
+        for depth_j in self.pyramid_depths:
+            num_padded_tokens = torch.sum(self.ct_batch_idx[depth_j]
+                                          >= B).item()
+            batch_rel_idx = self.batch_num_windows[depth_j][-1].item()
+            if num_padded_tokens > 0:
+                batch_end_idx = prev_end_idx + batch_rel_idx
+                batch_pad_start_idx = batch_end_idx - num_padded_tokens
+                rt_batch_idx[-1, batch_pad_start_idx:batch_end_idx] = B
+            prev_end_idx += batch_rel_idx
+
+        # Convert to attn mask with (B, N, N)
+        self.rt_attn_mask = self._calc_attn_mask(rt_batch_idx)
 
     def _calc_attn_mask(self, mask: torch.Tensor):
         attn_mask = mask.unsqueeze(2) - mask.unsqueeze(1)

@@ -94,6 +94,8 @@ class ModelParams:
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
+            self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
+            self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
             self.ADaPE_mode = params.get('ADaPE_mode', None)  # Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
@@ -117,13 +119,12 @@ class ModelParams:
                 # HOTFormerLoc-specific params
                 #######################################################################
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
+                self.k_pooled_tokens = params.getint('k_pooled_tokens', 64)  # number of tokens to pool to when using attentional pooling
             else:
                 if 'ct_layers' in params:  # using carrier token attention per stage
                     self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
                 else:
                     self.ct_layers = tuple([False]*len(self.channels))
-                self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
-                self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
 
     def print(self):
         print('Model parameters:')
@@ -356,3 +357,26 @@ def plot_points(points: np.ndarray, show=True):
     ax.set_aspect('equal', adjustable='box')
     if show:
         plt.show()
+
+def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
+    """Time a function's runtime with CUDA events"""
+    starter = torch.cuda.Event(enable_timing=True)
+    ender = torch.cuda.Event(enable_timing=True)
+    timings = torch.zeros((num_repetitions, 1))
+    # GPU WARMUP
+    for _ in range(10):
+        _ = func(*inputs)
+    # MEASURE PERFORMANCE
+    for rep in range(num_repetitions):
+        starter.record()
+        _ = func(*inputs)
+        ender.record()
+        # WAIT FOR GPU SYNC
+        torch.cuda.synchronize()
+        curr_time = starter.elapsed_time(ender)
+        timings[rep] = curr_time
+        
+    mean_syn = torch.sum(timings) / num_repetitions
+    std_syn = torch.std(timings)
+    print(f"{func.__class__} runtime:")
+    print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
