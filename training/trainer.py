@@ -18,6 +18,7 @@ os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
 from misc.utils import TrainingParams, get_datetime, set_seed, update_params_from_dict
 from models.losses.loss import make_losses
 from models.model_factory import model_factory
+from models.hotformerloc import HOTFormerLoc
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 
@@ -372,7 +373,8 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
                     epoch_embeddings = temp_embeddings
 
             # Log average gradients per stage
-            if phase == 'train':
+            if phase == 'train' and not isinstance(model, HOTFormerLoc):
+                # FIXME: currently broken for HOTFormerLoc
                 epoch_stage_gradient_magnitudes = log_stage_gradient_magnitudes(model, params.load_octree)
 
             # Compute mean stats for the phase
