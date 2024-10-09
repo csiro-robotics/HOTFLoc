@@ -316,7 +316,7 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
     params_dict['num_params'] = n_params
     if not params.debug:
         # trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
-        wandb.init(project='HOT-Net', config=params_dict)
+        wandb.init(project='HOTFormerLoc', config=params_dict)
         wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
 
     ###########################################################################
