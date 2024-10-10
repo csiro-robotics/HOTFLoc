@@ -225,6 +225,9 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
 def do_train(params: TrainingParams = None, *args, **kwargs):
     # Set params for hyperparam search
     if params.hyperparam_search:
+        if len(args) == 1 and isinstance(args[0], dict):  # This is required for submitit job arrays currently
+            kwargs = args[0]
+        assert kwargs != {}, 'No valid hyperparams were provided for search'
         params = update_params_from_dict(params, kwargs)
     params.print()
     # Seed RNG
