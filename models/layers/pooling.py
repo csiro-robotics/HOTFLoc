@@ -9,7 +9,8 @@ import MinkowskiEngine as ME
 from ocnn.octree import Octree
 from models.octree import OctreeT
 
-from models.layers.netvlad import NetVLADLoupe
+from models.layers.netvlad import NetVLADLoupe, GatingContext
+from models.layers.pyramid_netvlad import PyramidNetVLAD
 from models.layers.salsa import AdaptivePooling, Mixer
 from models.layers.octformer_layers import MLP
 from models.relay_token_utils import concat_and_pad_rt
@@ -117,6 +118,65 @@ class NetVLADWrapper(nn.Module):
         assert x.shape[1] == self.output_dim
         return x    # Return (batch_size, output_dim) tensor
 
+class PyramidOctGeMWrapper(nn.Module):
+    def __init__(self, input_dim, output_dim, num_pyramid_levels: int, p=3,
+                 eps=1e-6, gating=False, add_batch_norm=True):
+        super().__init__()
+        self.input_dim = input_dim
+        assert num_pyramid_levels > 0, "Minimum 1 pyramid layer"
+        self.num_pyramid_levels = num_pyramid_levels
+        # Same output number of channels as input number of channels
+        self.output_dim = output_dim
+        self.p = nn.Parameter(torch.ones(num_pyramid_levels) * p)
+        self.eps = eps
+        self.gating = gating
+        self.f = ocnn.nn.OctreeGlobalPool(nempty=True)
+        self.linear_bn = nn.Sequential(
+            nn.Linear(
+                input_dim*num_pyramid_levels, output_dim, bias=False
+            ),
+            nn.BatchNorm1d(input_dim),
+        )
+        if self.gating:
+            self.context_gating = GatingContext(output_dim,
+                                                add_batch_norm=add_batch_norm)
+
+    def forward(self, local_feat_dict: Dict[int, Tensor], octree: OctreeT,
+                depth: int = None):
+        # Generate global descriptor for each pyramid level
+        pyramid_descriptors = []
+        for j, depth_j in enumerate(local_feat_dict.keys()):
+            temp = local_feat_dict[depth_j].clamp(min=self.eps).pow(self.p[j])
+            temp = self.f(temp, octree, depth_j)  # Apply GlobalAvgPooling
+            pyramid_descriptors.append(temp.pow(1./self.p[j]))  # (batch_size, n_features) tensor
+        
+        # Concat and fuse into a single descriptor
+        global_descriptor = torch.cat(pyramid_descriptors, dim=-1)
+        global_descriptor = self.linear_bn(global_descriptor)
+
+        if self.gating:
+            global_descriptor = self.context_gating(global_descriptor)
+        
+        return global_descriptor
+
+# TODO
+class PyramidNetVLADWrapper(nn.Module):
+    """
+    Wrapper for PyramidNetVLAD, based on PPT-Net.
+    """
+    def __init__(self, feature_size, output_dim, cluster_size=[64, 16, 4],
+                 gating=True, add_batch_norm=True):
+        super().__init__()
+        self.feature_size = feature_size
+        self.output_dim = output_dim
+        self.cluster_size = cluster_size
+        self.pyramid_netvlad = PyramidNetVLAD(
+            feature_size, output_dim, cluster_size, gating, add_batch_norm
+        )
+
+    def forward(self, local_feat_dict: Dict[int, Tensor], depth: int = None):
+        pass
+        
 
 class AttnPoolWrapper(nn.Module):
     """

@@ -5,7 +5,7 @@ import torch.nn as nn
 import MinkowskiEngine as ME
 
 from models.layers.pooling import (
-    MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper
+    MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper, PyramidOctGeMWrapper
 )
 
 
@@ -15,13 +15,15 @@ class PoolingWrapper(nn.Module):
         pool_method: str,
         in_dim: int,
         output_dim: int,
-        k_pooled_tokens: Optional[int]=None
+        num_pyramid_levels: Optional[int]=None,
+        k_pooled_tokens: Optional[int]=None,
     ):
         super().__init__()
 
         self.pool_method = pool_method
         self.in_dim = in_dim
         self.output_dim = output_dim
+        self.num_pyramid_levels = num_pyramid_levels
         self.k_pooled_tokens = k_pooled_tokens
         self.pooled_feats = 'local'  # flag if local feats or relay tokens are pooled
 
@@ -47,6 +49,20 @@ class PoolingWrapper(nn.Module):
         elif self.pool_method == 'netvladgc':
             # NetVLAD with Gating Context
             self.pooling = NetVLADWrapper(feature_size=in_dim, output_dim=output_dim, gating=True)
+        elif self.pool_method == 'PyramidNetVLAD':
+            raise NotImplementedError(f'Not implemented yet: {self.pool_method}')
+        elif self.pool_method == 'PyramidOctGeM':
+            # Pyramid GeM pooling using Octree-based implementation
+            self.pooling = PyramidOctGeMWrapper(
+                input_dim=in_dim, output_dim=output_dim,
+                num_pyramid_levels=num_pyramid_levels, gating=False
+            )
+        elif self.pool_method == 'PyramidOctGeMgc':
+            # Pyramid GeM pooling using Octree-based implementation with gating context
+            self.pooling = PyramidOctGeMWrapper(
+                input_dim=in_dim, output_dim=output_dim,
+                num_pyramid_levels=num_pyramid_levels, gating=True
+            )
         elif self.pool_method == 'AttnPoolMixer':
             # Attentional pooling with token mixing MLP
             self.pooled_feats = 'relaytokens'

@@ -79,6 +79,7 @@ def model_factory(model_params: ModelParams):
             pool_method=model_params.pooling,
             in_dim=model_params.feature_size,
             output_dim=model_params.output_dim,
+            num_pyramid_levels=model_params.num_pyramid_levels,
             k_pooled_tokens=model_params.k_pooled_tokens,
         )
         model = HOTFormerLoc(
