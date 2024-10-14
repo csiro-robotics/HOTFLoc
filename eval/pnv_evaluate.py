@@ -42,6 +42,9 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
         else:
             location_name = database_file.split('_')[0]
             temp = query_file.split('_')[0]
+            if "5m-pickles/" in database_file:
+                location_name = location_name.split('/')[-1]
+                temp = temp.split('/')[-1]
         assert location_name == temp, 'Database location: {} does not match query location: {}'.format(database_file,
                                                                                                        query_file)
 

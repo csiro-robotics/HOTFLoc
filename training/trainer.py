@@ -18,6 +18,7 @@ os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
 from misc.utils import TrainingParams, get_datetime, set_seed, update_params_from_dict
 from models.losses.loss import make_losses
 from models.model_factory import model_factory
+from models.hotformerloc import HOTFormerLoc
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 
@@ -224,6 +225,9 @@ def multistaged_training_step(global_iter, model, phase, device, optimizer, loss
 def do_train(params: TrainingParams = None, *args, **kwargs):
     # Set params for hyperparam search
     if params.hyperparam_search:
+        if len(args) == 1 and isinstance(args[0], dict):  # This is required for submitit job arrays currently
+            kwargs = args[0]
+        assert kwargs != {}, 'No valid hyperparams were provided for search'
         params = update_params_from_dict(params, kwargs)
     params.print()
     # Seed RNG
@@ -312,9 +316,11 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
     params_dict = {e: params.__dict__[e] for e in params.__dict__ if e != 'model_params'}
     model_params_dict = {"model_params." + e: params.model_params.__dict__[e] for e in params.model_params.__dict__}
     params_dict.update(model_params_dict)
+    n_params = sum([param.nelement() for param in model.parameters()])
+    params_dict['num_params'] = n_params
     if not params.debug:
         # trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
-        wandb.init(project='HOT-Net', config=params_dict)
+        wandb.init(project='HOTFormerLoc', config=params_dict)
         wandb.watch(model, log='all', log_freq=params.embeddings_log_freq)
 
     ###########################################################################
@@ -370,7 +376,8 @@ def do_train(params: TrainingParams = None, *args, **kwargs):
                     epoch_embeddings = temp_embeddings
 
             # Log average gradients per stage
-            if phase == 'train':
+            if phase == 'train' and not isinstance(model, HOTFormerLoc):
+                # FIXME: currently broken for HOTFormerLoc
                 epoch_stage_gradient_magnitudes = log_stage_gradient_magnitudes(model, params.load_octree)
 
             # Compute mean stats for the phase

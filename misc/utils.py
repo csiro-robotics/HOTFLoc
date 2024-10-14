@@ -91,10 +91,6 @@ class ModelParams:
                 self.num_heads = tuple([int(e) for e in params['num_heads'].split(',')])
             else:
                 self.num_heads = None
-            if 'ct_layers' in params:  # using carrier token attention per stage
-                self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
-            else:
-                self.ct_layers = tuple([False]*len(self.channels))
             self.patch_size = params.getint('patch_size', 32)  # size of window attention patch
             self.dilation = params.getint('dilation', 4)  # dilation value for octree attention
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
@@ -118,6 +114,18 @@ class ModelParams:
                 self.qkv_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
             self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
             self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', False)  # outputs feats and attn maps from final block of each octformer stage
+
+            if 'hotformerloc' in self.model.lower():
+                #######################################################################
+                # HOTFormerLoc-specific params
+                #######################################################################
+                self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
+                self.k_pooled_tokens = params.getint('k_pooled_tokens', 64)  # number of tokens to pool to when using attentional pooling
+            else:
+                if 'ct_layers' in params:  # using carrier token attention per stage
+                    self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
+                else:
+                    self.ct_layers = tuple([False]*len(self.channels))
 
     def print(self):
         print('Model parameters:')
@@ -229,6 +237,7 @@ class TrainingParams:
         self.normalize_points = params.getboolean('normalize_points', False)    # Normalize points to [-1, 1]
         self.scale_factor = params.getfloat('scale_factor', None)  # Scale factor to normalize points by a fixed scale (as done in OctFormer)
         self.unit_sphere_norm = params.getboolean('unit_sphere_norm', False)  # Use unit sphere for normalization
+        self.zero_mean = params.getboolean('zero_mean', True)  # Shift point cloud to zero mean during normalization
         self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
         self.full_depth = params.getint('full_depth', 2)    # Depth of octree that is fully populated
         self.train_file = params.get('train_file')
@@ -349,3 +358,26 @@ def plot_points(points: np.ndarray, show=True):
     ax.set_aspect('equal', adjustable='box')
     if show:
         plt.show()
+
+def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
+    """Time a function's runtime with CUDA events"""
+    starter = torch.cuda.Event(enable_timing=True)
+    ender = torch.cuda.Event(enable_timing=True)
+    timings = torch.zeros((num_repetitions, 1))
+    # GPU WARMUP
+    for _ in range(10):
+        _ = func(*inputs)
+    # MEASURE PERFORMANCE
+    for rep in range(num_repetitions):
+        starter.record()
+        _ = func(*inputs)
+        ender.record()
+        # WAIT FOR GPU SYNC
+        torch.cuda.synchronize()
+        curr_time = starter.elapsed_time(ender)
+        timings[rep] = curr_time
+        
+    mean_syn = torch.sum(timings) / num_repetitions
+    std_syn = torch.std(timings)
+    print(f"{func.__class__} runtime:")
+    print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
