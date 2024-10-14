@@ -57,6 +57,7 @@ def model_factory(model_params: ModelParams):
             num_blocks=model_params.num_blocks,
             num_heads=model_params.num_heads,
             num_pyramid_levels=model_params.num_pyramid_levels,
+            num_octf_levels=model_params.num_octf_levels,
             patch_size=model_params.patch_size,
             dilation=model_params.dilation,
             drop_path=model_params.drop_path,

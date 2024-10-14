@@ -491,7 +491,7 @@ class HOTFormerBase(torch.nn.Module):
                  channels: List[int] = [128, 256],
                  num_blocks: List[int] = [4, 10],
                  num_heads: Optional[List[int]] = [8, 16],
-                 num_pyramid_levels: int = 3,
+                 num_pyramid_levels: int = 3, num_octf_levels: int = 1,
                  patch_size: int = 32, dilation: int = 4, drop_path: float = 0.5,
                  nempty: bool = True, stem_down: int = 2, rt_size: int = 1,
                  rt_propagation: bool = False,
@@ -506,8 +506,9 @@ class HOTFormerBase(torch.nn.Module):
         self.patch_size = patch_size
         self.dilation = dilation
         self.nempty = nempty
-        self.num_stages = 1 + num_pyramid_levels
         self.num_pyramid_levels = num_pyramid_levels
+        self.num_octf_levels = num_octf_levels
+        self.num_stages = num_octf_levels + num_pyramid_levels
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
         self.ct_size = rt_size
@@ -522,20 +523,20 @@ class HOTFormerBase(torch.nn.Module):
         if num_heads is None:
             num_heads = [channel // 16 for channel in channels]
 
-        self.octf_stage = OctFormerStage(
-            dim=channels[0], num_heads=num_heads[0], patch_size=patch_size,
-            drop_path=drop_ratio[sum(num_blocks[:0]):sum(num_blocks[:0+1])],
+        self.octf_stage = torch.nn.ModuleList([OctFormerStage(
+            dim=channels[i], num_heads=num_heads[i], patch_size=patch_size,
+            drop_path=drop_ratio[sum(num_blocks[:i]):sum(num_blocks[:i+1])],
             dilation=dilation, nempty=nempty, disable_RPE=disable_RPE,
             use_ct=False, grad_checkpoint=grad_checkpoint,
-            num_blocks=num_blocks[0], conv_norm=conv_norm,
-            layer_scale=layer_scale, xcpe=xcpe)
-        self.downsample = Downsample(
-            channels[0], channels[1], kernel_size=[2], nempty=nempty,
-            conv_norm=conv_norm)
-        self.hotf_stage = HOTFormerStage(
-            dim=channels[1], num_heads=num_heads[1], num_blocks=num_blocks[1],
+            num_blocks=num_blocks[i], conv_norm=conv_norm,
+            layer_scale=layer_scale, xcpe=xcpe) for i in range(num_octf_levels)])
+        self.downsample = torch.nn.ModuleList([Downsample(
+            channels[i], channels[i+1], kernel_size=[2], nempty=nempty,
+            conv_norm=conv_norm) for i in range(num_octf_levels)])
+        self.hotf_stage = HOTFormerStage(  # use last element of channels/num_blocks/num_heads for all levels
+            dim=channels[-1], num_heads=num_heads[-1], num_blocks=num_blocks[-1],
             num_pyramid_levels=num_pyramid_levels, patch_size=patch_size,
-            drop_path=drop_ratio[sum(num_blocks[:1]):sum(num_blocks[:1+1])],
+            drop_path=drop_ratio[sum(num_blocks[:-1]):sum(num_blocks[:])],
             nempty=nempty, disable_RPE=disable_RPE,
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
@@ -552,11 +553,13 @@ class HOTFormerBase(torch.nn.Module):
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
                          ct_size=self.ct_size, ADaPE_mode=self.ADaPE_mode,
-                         num_pyramid_levels=self.num_pyramid_levels)
+                         num_pyramid_levels=self.num_pyramid_levels,
+                         num_octf_levels=self.num_octf_levels)
         octree.build_t()
-        data = self.octf_stage(data, octree, depth)
-        data = self.downsample(data, octree, depth)
-        depth = depth - 1
+        for i in range(self.num_octf_levels):
+            data = self.octf_stage[i](data, octree, depth)
+            data = self.downsample[i](data, octree, depth)
+            depth = depth - 1
 
         # Compute Hierarchical Octree Attention with multi-scale Relay Tokens
         local_feat_dict, relay_token_dict = self.hotf_stage(data, octree, depth)
@@ -578,6 +581,7 @@ class HOTFormer(torch.nn.Module):
         num_blocks: List[int] = [2, 2, 6, 2],
         num_heads: Optional[List[int]] = [6, 12, 24, 24],
         num_pyramid_levels: int = 3,
+        num_octf_levels: int = 1,
         patch_size: int = 32,
         dilation: int = 4,
         drop_path: float = 0.5,
@@ -605,6 +609,7 @@ class HOTFormer(torch.nn.Module):
             num_blocks: List containing number of OctFormer blocks per stage.
             num_heads: List containing number of attention heads per stage, defaults to channel_size//16.
             num_pyramid_levels: Number of octree levels to consider for hierarchical attention.
+            num_octf_levels: Number of octformer levels to process local features before hierarchical attention
             patch_size: Size of local attention patches/windows, constructed using z-order curve traversal.
             dilation: Dilation amount for Octree attention
             drop_path: Stochastic depth probability (this is the max value stochastic depth scales to).
@@ -630,6 +635,7 @@ class HOTFormer(torch.nn.Module):
             num_blocks=num_blocks,
             num_heads=num_heads,
             num_pyramid_levels=num_pyramid_levels,
+            num_octf_levels=num_octf_levels,
             patch_size=patch_size,
             dilation=dilation,
             drop_path=drop_path,
