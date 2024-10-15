@@ -341,10 +341,10 @@ class RelayTokenInitialiser(torch.nn.Module):
 
 class HOTFormerStage(torch.nn.Module):
 
-    def __init__(self, dim: int, num_heads: int, num_blocks: int = 10,
-                 num_pyramid_levels: int = 3, patch_size: int = 32,
-                 mlp_ratio: float = 4.0, qkv_bias: bool = True,
-                 qk_scale: Optional[float] = None,
+    def __init__(self, channels: List[int], num_heads: List[int],
+                 num_blocks: int = 10, num_pyramid_levels: int = 3,
+                 patch_size: int = 32, mlp_ratio: float = 4.0,
+                 qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
                  drop_path: float = 0.0, nempty: bool = True,
                  activation: torch.nn.Module = torch.nn.GELU,
@@ -355,17 +355,39 @@ class HOTFormerStage(torch.nn.Module):
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None, xcpe: bool = False, **kwargs):
         super().__init__()
+        self.use_projections = True
+        # Handle case where a single num channels or heads is specified for all levels
+        if len(channels) == 1:
+            channels = channels * num_pyramid_levels
+            self.use_projections = False
+        if len(num_heads) == 1:
+            num_heads = num_heads * num_pyramid_levels
+        assert len(channels) == num_pyramid_levels, "Invalid num channels specified"
+        assert len(num_heads) == num_pyramid_levels, "Invalid num heads specified"
+
+        self.channels = channels
+        self.num_heads = num_heads
+        self.max_rt_channels = max(channels)
+        self.max_rt_num_heads = num_heads[channels.index(self.max_rt_channels)]
         self.num_pyramid_levels = num_pyramid_levels
         self.num_blocks = num_blocks
         self.use_ADaPE = ADaPE_mode is not None
         self.grad_checkpoint = grad_checkpoint
 
         self.hosa_blocks = torch.nn.ModuleList([])
-        for _ in range(self.num_pyramid_levels):
-            self.hosa_blocks.append(torch.nn.ModuleList(
-                [HOTFormerBlock(
-                    dim=dim,
-                    num_heads=num_heads,
+        if self.use_projections:
+            self.up_projections = torch.nn.ModuleList([])
+            self.down_projections = torch.nn.ModuleList([])
+            self.init_up_projections = torch.nn.ModuleList([])
+        
+        for j in range(self.num_pyramid_levels):
+            hosa_blocks_j = torch.nn.ModuleList([])
+            up_projections_j = torch.nn.ModuleList([])
+            down_projections_j = torch.nn.ModuleList([])
+            for i in range(self.num_blocks):
+                hosa_blocks_j.append(HOTFormerBlock(
+                    dim=channels[j],
+                    num_heads=num_heads[j],
                     patch_size=patch_size,
                     dilation=1,
                     mlp_ratio=mlp_ratio,
@@ -385,12 +407,29 @@ class HOTFormerStage(torch.nn.Module):
                     last=(i == self.num_blocks - 1),
                     layer_scale=layer_scale,
                     xcpe=xcpe
-                ) for i in range(self.num_blocks)]
-            ))
+                ))
+                if self.use_projections:
+                    up_projections_j.append(torch.nn.Linear(
+                        in_features=channels[j],
+                        out_features=self.max_rt_channels,
+                    ))
+                    down_projections_j.append(torch.nn.Linear(
+                        in_features=self.max_rt_channels,
+                        out_features=channels[j],
+                    ))
+            self.hosa_blocks.append(hosa_blocks_j)
+            if self.use_projections:
+                self.up_projections.append(up_projections_j)
+                self.down_projections.append(down_projections_j)
+                self.init_up_projections.append(torch.nn.Linear(
+                    in_features=channels[j],
+                    out_features=self.max_rt_channels,
+                ))
+            
         self.rtsa_blocks = torch.nn.ModuleList(
-            [RelayTokenTransformerBlock(
-                dim=dim,
-                num_heads=num_heads,
+            [RelayTokenTransformerBlock(  # Largest channel size for output
+                dim=self.max_rt_channels,
+                num_heads=self.max_rt_num_heads,
                 patch_size=patch_size,
                 mlp_ratio=mlp_ratio,
                 qkv_bias=qkv_bias,
@@ -403,28 +442,50 @@ class HOTFormerStage(torch.nn.Module):
                 rt_size=rt_size,
                 use_ADaPE=self.use_ADaPE,
                 conv_norm=conv_norm,
-                layer_scale=layer_scale,) for i in range(self.num_blocks)]
+                layer_scale=layer_scale,
+            ) for i in range(self.num_blocks)]
         )
-        self.relay_tokeniser = RelayTokenInitialiser(
-            dim=dim,
-            patch_size=patch_size,
-            nempty=nempty,
-            conv_norm=conv_norm,
-            rt_size=rt_size,
-            use_cpe=(not self.use_ADaPE),
-            xcpe=xcpe
-        )
+        if self.use_projections:
+            self.relay_tokeniser = torch.nn.ModuleList(
+                [RelayTokenInitialiser(
+                    dim=channels[j],
+                    patch_size=patch_size,
+                    nempty=nempty,
+                    conv_norm=conv_norm,
+                    rt_size=rt_size,
+                    use_cpe=(not self.use_ADaPE),
+                    xcpe=xcpe,
+                ) for j in range(self.num_pyramid_levels)]
+            )
+        else:
+            self.relay_tokeniser = RelayTokenInitialiser(
+                dim=self.max_rt_channels,
+                patch_size=patch_size,
+                nempty=nempty,
+                conv_norm=conv_norm,
+                rt_size=rt_size,
+                use_cpe=(not self.use_ADaPE),
+                xcpe=xcpe,
+            )
+
         self.downsamples = torch.nn.ModuleList(
             [Downsample(
-                in_channels=dim,
-                out_channels=dim,
+                in_channels=channels[j],
+                out_channels=channels[j+1],
                 kernel_size=[2],
                 nempty=nempty,
-                conv_norm=conv_norm
-            ) for _ in range(self.num_pyramid_levels - 1)]
+                conv_norm=conv_norm,
+            ) for j in range(self.num_pyramid_levels - 1)]
         )
         if self.use_ADaPE:
-            self.rt_adape = ADaPE(dim, activation, ADaPE_mode)
+            self.rt_adape = ADaPE(self.max_rt_channels, activation, ADaPE_mode)
+            if self.use_projections:
+                self.rt_adape_projections = torch.nn.ModuleList(
+                    [torch.nn.Linear(
+                        in_features=self.max_rt_channels,
+                        out_features=self.channels[j],
+                    ) for j in range(self.num_pyramid_levels)]
+                )
 
     def init_pyramid_feats(self, data: Tensor, octree: OctreeT):
         # Store local features and relay tokens by octree depth in dict
@@ -433,13 +494,23 @@ class HOTFormerStage(torch.nn.Module):
 
         # Initialise local features and relay tokens
         for j, depth_j in enumerate(self.pyramid_depths):
-            relay_token_dict[depth_j] = self.relay_tokeniser(
-                local_feat_dict[depth_j], octree, depth_j,
-            )
-            if self.use_ADaPE:  # Inject positional encoding for RTs
-                relay_token_dict[depth_j] = (
-                    relay_token_dict[depth_j] + self.rt_adape(octree, depth_j)
-                )            
+            if self.use_projections:
+                relay_token_dict[depth_j] = self.relay_tokeniser[j](
+                    local_feat_dict[depth_j], octree, depth_j,
+                )
+                if self.use_ADaPE:  # Inject positional encoding for RTs
+                    relay_token_dict[depth_j] = (
+                        relay_token_dict[depth_j]
+                        + self.rt_adape_projections[j](self.rt_adape(octree, depth_j))
+                    )
+            else:
+                relay_token_dict[depth_j] = self.relay_tokeniser(
+                    local_feat_dict[depth_j], octree, depth_j,
+                )
+                if self.use_ADaPE:  # Inject positional encoding for RTs
+                    relay_token_dict[depth_j] = (
+                        relay_token_dict[depth_j] + self.rt_adape(octree, depth_j)
+                    ) 
             if j < (self.num_pyramid_levels - 1):
                 local_feat_dict[depth_j - 1] = self.downsamples[j](
                     local_feat_dict[depth_j], octree, depth_j,
@@ -452,7 +523,13 @@ class HOTFormerStage(torch.nn.Module):
         # Initialise local features + relay token dicts
         local_feat_dict, relay_token_dict = self.init_pyramid_feats(data,
                                                                     octree)
-
+        if self.use_projections:  # Project RTs to same channel size
+            for j, depth_j in enumerate(self.pyramid_depths):
+                # Project RTs to global channel dim
+                relay_token_dict[depth_j] = self.init_up_projections[j](
+                    relay_token_dict[depth_j]
+                )
+        
         # Begin loop of RTSA + H-OSA
         for i in range(self.num_blocks):
             # Compute global multi-scale interactions through RTSA
@@ -464,8 +541,13 @@ class HOTFormerStage(torch.nn.Module):
             else:
                 relay_token_dict = self.rtsa_blocks[i](relay_token_dict, octree)
             
-            # Propagate to local features with H-OSA
             for j, depth_j in enumerate(self.pyramid_depths):
+                # Project RTs back to local feat channel size
+                if self.use_projections:
+                    relay_token_dict[depth_j] = self.down_projections[j][i](
+                        relay_token_dict[depth_j]
+                    )
+                # Propagate to local features with H-OSA
                 if self.grad_checkpoint and self.training:
                     local_feat_dict[depth_j], relay_token_dict[depth_j] = (
                         checkpoint(
@@ -480,6 +562,11 @@ class HOTFormerStage(torch.nn.Module):
                             local_feat_dict[depth_j], relay_token_dict[depth_j],
                             octree, depth_j,
                         )
+                    )
+                # Project RTs to global channel dim
+                if self.use_projections:
+                    relay_token_dict[depth_j] = self.up_projections[j][i](
+                        relay_token_dict[depth_j]
                     )
 
         return local_feat_dict, relay_token_dict
@@ -533,8 +620,11 @@ class HOTFormerBase(torch.nn.Module):
         self.downsample = torch.nn.ModuleList([Downsample(
             channels[i], channels[i+1], kernel_size=[2], nempty=nempty,
             conv_norm=conv_norm) for i in range(num_octf_levels)])
-        self.hotf_stage = HOTFormerStage(  # use last element of channels/num_blocks/num_heads for all levels
-            dim=channels[-1], num_heads=num_heads[-1], num_blocks=num_blocks[-1],
+        # Use last element of num_blocks for all HOTFormer levels (same for
+        #   channels and num_heads, but can also specify per level)
+        self.hotf_stage = HOTFormerStage(
+            channels=channels[num_octf_levels:],
+            num_heads=num_heads[num_octf_levels:], num_blocks=num_blocks[-1],
             num_pyramid_levels=num_pyramid_levels, patch_size=patch_size,
             drop_path=drop_ratio[sum(num_blocks[:-1]):sum(num_blocks[:])],
             nempty=nempty, disable_RPE=disable_RPE,

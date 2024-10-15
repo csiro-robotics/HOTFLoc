@@ -1,6 +1,6 @@
 # Pooling methods code based on: https://github.com/filipradenovic/cnnimageretrieval-pytorch
 
-from typing import Dict
+from typing import Dict, List
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -119,12 +119,18 @@ class NetVLADWrapper(nn.Module):
         return x    # Return (batch_size, output_dim) tensor
 
 class PyramidOctGeMWrapper(nn.Module):
-    def __init__(self, input_dim, output_dim, num_pyramid_levels: int, p=3,
-                 eps=1e-6, gating=False, add_batch_norm=True):
+    def __init__(self, input_dim, output_dim, num_pyramid_levels: int,
+                 channels: List[int], p=3, eps=1e-6, gating=False,
+                 add_batch_norm=True):
         super().__init__()
         self.input_dim = input_dim
         assert num_pyramid_levels > 0, "Minimum 1 pyramid layer"
         self.num_pyramid_levels = num_pyramid_levels
+        if len(channels) == 1:
+            input_concat_dim = input_dim*num_pyramid_levels
+        else:
+            assert len(channels) == num_pyramid_levels, "Incorrect num channels"
+            input_concat_dim = sum(channels)
         # Same output number of channels as input number of channels
         self.output_dim = output_dim
         self.p = nn.Parameter(torch.ones(num_pyramid_levels) * p)
@@ -133,7 +139,7 @@ class PyramidOctGeMWrapper(nn.Module):
         self.f = ocnn.nn.OctreeGlobalPool(nempty=True)
         self.linear_bn = nn.Sequential(
             nn.Linear(
-                input_dim*num_pyramid_levels, output_dim, bias=False
+                input_concat_dim, output_dim, bias=False
             ),
             nn.BatchNorm1d(input_dim),
         )

@@ -1,4 +1,4 @@
-from typing import Union, Dict, Optional
+from typing import Union, Dict, Optional, List
 
 from torch import Tensor
 import torch.nn as nn
@@ -16,6 +16,7 @@ class PoolingWrapper(nn.Module):
         in_dim: int,
         output_dim: int,
         num_pyramid_levels: Optional[int]=None,
+        channels: Optional[List[int]]=None,
         k_pooled_tokens: Optional[int]=None,
     ):
         super().__init__()
@@ -24,6 +25,7 @@ class PoolingWrapper(nn.Module):
         self.in_dim = in_dim
         self.output_dim = output_dim
         self.num_pyramid_levels = num_pyramid_levels
+        self.channels = channels
         self.k_pooled_tokens = k_pooled_tokens
         self.pooled_feats = 'local'  # flag if local feats or relay tokens are pooled
 
@@ -54,13 +56,13 @@ class PoolingWrapper(nn.Module):
         elif self.pool_method == 'PyramidOctGeM':
             # Pyramid GeM pooling using Octree-based implementation
             self.pooling = PyramidOctGeMWrapper(
-                input_dim=in_dim, output_dim=output_dim,
+                input_dim=in_dim, output_dim=output_dim, channels=channels,
                 num_pyramid_levels=num_pyramid_levels, gating=False
             )
         elif self.pool_method == 'PyramidOctGeMgc':
             # Pyramid GeM pooling using Octree-based implementation with gating context
             self.pooling = PyramidOctGeMWrapper(
-                input_dim=in_dim, output_dim=output_dim,
+                input_dim=in_dim, output_dim=output_dim, channels=channels,
                 num_pyramid_levels=num_pyramid_levels, gating=True
             )
         elif self.pool_method == 'AttnPoolMixer':
