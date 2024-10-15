@@ -46,7 +46,7 @@ class OctreeT(Octree):
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
                  ct_size: int = 0, ADaPE_mode: Optional[str] = None,
-                 num_pyramid_levels: int = 0,
+                 num_pyramid_levels: int = 0, num_octf_levels: int = 0,
                  **kwargs):
         super().__init__(octree.depth, octree.full_depth)
         self.__dict__.update(octree.__dict__)
@@ -59,9 +59,10 @@ class OctreeT(Octree):
         self.max_depth = max_depth or self.depth
         self.start_depth = start_depth or self.full_depth
         self.num_pyramid_levels = num_pyramid_levels
+        self.num_octf_levels = num_octf_levels
         if self.num_pyramid_levels > 0:  # HOTFormerLoc
-            self.ct_layers = [False] + [True]*self.num_pyramid_levels
-            self.pyramid_depths = [(self.max_depth - 1 - j) for j in range(self.num_pyramid_levels)]
+            self.ct_layers = [False]*self.num_octf_levels + [True]*self.num_pyramid_levels
+            self.pyramid_depths = [(self.max_depth - self.num_octf_levels - j) for j in range(self.num_pyramid_levels)]
         self.invalid_mask_value = -1e3
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = self.ADaPE_mode is not None

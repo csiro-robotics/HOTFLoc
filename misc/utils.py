@@ -120,6 +120,7 @@ class ModelParams:
                 # HOTFormerLoc-specific params
                 #######################################################################
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
+                self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.k_pooled_tokens = params.getint('k_pooled_tokens', 64)  # number of tokens to pool to when using attentional pooling
             else:
                 if 'ct_layers' in params:  # using carrier token attention per stage
