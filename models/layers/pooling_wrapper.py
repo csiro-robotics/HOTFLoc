@@ -5,7 +5,8 @@ import torch.nn as nn
 import MinkowskiEngine as ME
 
 from models.layers.pooling import (
-    MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper, PyramidOctGeMWrapper
+    MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper,
+    AttnPoolLocalWrapper, PyramidOctGeMWrapper,
 )
 
 
@@ -17,7 +18,7 @@ class PoolingWrapper(nn.Module):
         output_dim: int,
         num_pyramid_levels: Optional[int]=None,
         channels: Optional[List[int]]=None,
-        k_pooled_tokens: Optional[int]=None,
+        k_pooled_tokens: Union[List[int],int,None]=None,
     ):
         super().__init__()
 
@@ -65,19 +66,26 @@ class PoolingWrapper(nn.Module):
                 input_dim=in_dim, output_dim=output_dim, channels=channels,
                 num_pyramid_levels=num_pyramid_levels, gating=True
             )
+        elif self.pool_method == 'AttnPoolMixerLocal':
+            # Attentional pooling with token mixing MLP - local features
+            self.pooling = AttnPoolLocalWrapper(
+                feature_size=in_dim, output_dim=output_dim,
+                num_pyramid_levels=num_pyramid_levels,
+                k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
+            )
         elif self.pool_method == 'AttnPoolMixer':
-            # Attentional pooling with token mixing MLP
+            # Attentional pooling with token mixing MLP - relay tokens
             self.pooled_feats = 'relaytokens'
             self.pooling = AttnPoolWrapper(
                 feature_size=in_dim, output_dim=output_dim,
-                k_pooled_tokens=k_pooled_tokens, aggregator='mixer'
+                k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
             )
         elif self.pool_method == 'AttnPoolGeM':
-            # Attentional pooling with GeM pooling
+            # Attentional pooling with GeM pooling - relay tokens
             self.pooled_feats = 'relaytokens'
             self.pooling = AttnPoolWrapper(
                 feature_size=in_dim, output_dim=output_dim,
-                k_pooled_tokens=k_pooled_tokens, aggregator='GeM'
+                k_pooled_tokens=k_pooled_tokens, aggregator='GeM',
             )
         else:
             raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
