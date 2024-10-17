@@ -6,7 +6,7 @@ import MinkowskiEngine as ME
 
 from models.layers.pooling import (
     MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper,
-    AttnPoolLocalWrapper, PyramidOctGeMWrapper,
+    PyramidAttnPoolWrapper, PyramidOctGeMWrapper,
 )
 
 
@@ -66,9 +66,9 @@ class PoolingWrapper(nn.Module):
                 input_dim=in_dim, output_dim=output_dim, channels=channels,
                 num_pyramid_levels=num_pyramid_levels, gating=True
             )
-        elif self.pool_method == 'AttnPoolMixerLocal':
-            # Attentional pooling with token mixing MLP - local features
-            self.pooling = AttnPoolLocalWrapper(
+        elif self.pool_method == 'PyramidAttnPoolMixer':
+            # Pyramid attentional pooling with token mixing MLP - local features
+            self.pooling = PyramidAttnPoolWrapper(
                 feature_size=in_dim, output_dim=output_dim,
                 num_pyramid_levels=num_pyramid_levels,
                 k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
