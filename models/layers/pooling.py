@@ -185,11 +185,11 @@ class PyramidNetVLADWrapper(nn.Module):
         pass
         
 
-class AttnPoolLocalWrapper(nn.Module):
+class PyramidAttnPoolWrapper(nn.Module):
     """
-    Wrapper for adaptive attention pooling + MLP token mixer on local features,
-    inspired by SALSA: https://arxiv.org/pdf/2407.08260. Also allows using
-    GeM instead of token mixer.
+    Wrapper for adaptive attention pooling + MLP token mixer on pyramidal
+    local features, inspired by SALSA: https://arxiv.org/pdf/2407.08260.
+    Also allows using GeM instead of token mixer.
     """
     def __init__(self, feature_size: int = 256, output_dim: int = 256,
                  num_pyramid_levels: int = 3,
