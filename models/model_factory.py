@@ -67,6 +67,7 @@ def model_factory(model_params: ModelParams):
             rt_size=model_params.ct_size,
             rt_propagation=model_params.ct_propagation,
             rt_propagation_scale=model_params.ct_propagation_scale,
+            disable_rt=model_params.disable_rt,
             ADaPE_mode=model_params.ADaPE_mode,
             grad_checkpoint=model_params.grad_checkpoint,
             downsample_input_embeddings=model_params.downsample_input_embeddings,
@@ -84,6 +85,11 @@ def model_factory(model_params: ModelParams):
             channels=model_params.channels[model_params.num_octf_levels:],
             k_pooled_tokens=model_params.k_pooled_tokens,
         )
+        if model_params.disable_rt:
+            assert pooling.pooled_feats != 'relaytokens', (
+                "If relay tokens are disabled, a local feature pooling method "
+                + "must be used!"
+            )
         model = HOTFormerLoc(
             backbone=backbone,
             pooling=pooling,

@@ -22,7 +22,7 @@ from models.layers.octformer_layers import (
     MLP, CPE, RPE, ADaPE, OctreeDropPath
 )
 from models.octformer_backbone import (
-    PatchEmbed, Downsample, OctreeAttention, OctFormerStage
+    PatchEmbed, Downsample, OctreeAttention, OctFormerStage, OctFormerBlock
 )
 from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 
@@ -343,7 +343,7 @@ class HOTFormerStage(torch.nn.Module):
 
     def __init__(self, channels: List[int], num_heads: List[int],
                  num_blocks: int = 10, num_pyramid_levels: int = 3,
-                 patch_size: int = 32, mlp_ratio: float = 4.0,
+                 patch_size: int = 32, dilation: int = 1, mlp_ratio: float = 4.0,
                  qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
                  drop_path: float = 0.0, nempty: bool = True,
@@ -351,6 +351,7 @@ class HOTFormerStage(torch.nn.Module):
                  disable_RPE: bool = False, rt_size: int = 1,
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
+                 disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None, xcpe: bool = False, **kwargs):
@@ -367,6 +368,9 @@ class HOTFormerStage(torch.nn.Module):
 
         self.channels = channels
         self.num_heads = num_heads
+        self.disable_rt = disable_rt
+        if self.disable_rt:
+            self.use_projections = False
         self.max_rt_channels = max(channels)
         self.max_rt_num_heads = num_heads[channels.index(self.max_rt_channels)]
         self.num_pyramid_levels = num_pyramid_levels
@@ -385,29 +389,50 @@ class HOTFormerStage(torch.nn.Module):
             up_projections_j = torch.nn.ModuleList([])
             down_projections_j = torch.nn.ModuleList([])
             for i in range(self.num_blocks):
-                hosa_blocks_j.append(HOTFormerBlock(
-                    dim=channels[j],
-                    num_heads=num_heads[j],
-                    patch_size=patch_size,
-                    dilation=1,
-                    mlp_ratio=mlp_ratio,
-                    qkv_bias=qkv_bias,
-                    qk_scale=qk_scale,
-                    attn_drop=attn_drop,
-                    proj_drop=proj_drop,
-                    drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                    nempty=nempty,
-                    activation=activation,
-                    disable_RPE=disable_RPE,
-                    rt_size=rt_size,
-                    rt_propagation=rt_propagation,
-                    rt_propagation_scale=rt_propagation_scale,
-                    use_ADaPE=self.use_ADaPE,
-                    conv_norm=conv_norm,
-                    last=(i == self.num_blocks - 1),
-                    layer_scale=layer_scale,
-                    xcpe=xcpe
-                ))
+                if not self.disable_rt:  # for ablations disabling RT attn
+                    hosa_blocks_j.append(HOTFormerBlock(
+                        dim=channels[j],
+                        num_heads=num_heads[j],
+                        patch_size=patch_size,
+                        dilation=1,
+                        mlp_ratio=mlp_ratio,
+                        qkv_bias=qkv_bias,
+                        qk_scale=qk_scale,
+                        attn_drop=attn_drop,
+                        proj_drop=proj_drop,
+                        drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                        nempty=nempty,
+                        activation=activation,
+                        disable_RPE=disable_RPE,
+                        rt_size=rt_size,
+                        rt_propagation=rt_propagation,
+                        rt_propagation_scale=rt_propagation_scale,
+                        use_ADaPE=self.use_ADaPE,
+                        conv_norm=conv_norm,
+                        last=(i == self.num_blocks - 1),
+                        layer_scale=layer_scale,
+                        xcpe=xcpe,
+                    ))
+                else:
+                    hosa_blocks_j.append(OctFormerBlock(
+                        dim=channels[j],
+                        num_heads=num_heads[j],
+                        patch_size=patch_size,
+                        dilation=1 if (i % 2 == 0) else dilation,
+                        mlp_ratio=mlp_ratio,
+                        qkv_bias=qkv_bias,
+                        qk_scale=qk_scale,
+                        attn_drop=attn_drop,
+                        proj_drop=proj_drop,
+                        drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                        nempty=nempty,
+                        activation=activation,
+                        disable_RPE=disable_RPE,
+                        conv_norm=conv_norm,
+                        last=(i == self.num_blocks - 1),
+                        layer_scale=layer_scale,
+                        xcpe=xcpe,
+                    ))                    
                 if self.use_projections:
                     up_projections_j.append(torch.nn.Linear(
                         in_features=channels[j],
@@ -425,48 +450,57 @@ class HOTFormerStage(torch.nn.Module):
                     in_features=channels[j],
                     out_features=self.max_rt_channels,
                 ))
-            
-        self.rtsa_blocks = torch.nn.ModuleList(
-            [RelayTokenTransformerBlock(  # Largest channel size for output
-                dim=self.max_rt_channels,
-                num_heads=self.max_rt_num_heads,
-                patch_size=patch_size,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=qkv_bias,
-                qk_scale=qk_scale,
-                attn_drop=attn_drop,
-                proj_drop=proj_drop,
-                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                nempty=nempty,
-                activation=activation,
-                rt_size=rt_size,
-                use_ADaPE=self.use_ADaPE,
-                conv_norm=conv_norm,
-                layer_scale=layer_scale,
-            ) for i in range(self.num_blocks)]
-        )
-        if self.use_projections:
-            self.relay_tokeniser = torch.nn.ModuleList(
-                [RelayTokenInitialiser(
-                    dim=channels[j],
+        if not self.disable_rt:
+            self.rtsa_blocks = torch.nn.ModuleList(
+                [RelayTokenTransformerBlock(  # Largest channel size for output
+                    dim=self.max_rt_channels,
+                    num_heads=self.max_rt_num_heads,
+                    patch_size=patch_size,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    qk_scale=qk_scale,
+                    attn_drop=attn_drop,
+                    proj_drop=proj_drop,
+                    drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                    nempty=nempty,
+                    activation=activation,
+                    rt_size=rt_size,
+                    use_ADaPE=self.use_ADaPE,
+                    conv_norm=conv_norm,
+                    layer_scale=layer_scale,
+                ) for i in range(self.num_blocks)]
+            )
+            if self.use_projections:
+                self.relay_tokeniser = torch.nn.ModuleList(
+                    [RelayTokenInitialiser(
+                        dim=channels[j],
+                        patch_size=patch_size,
+                        nempty=nempty,
+                        conv_norm=conv_norm,
+                        rt_size=rt_size,
+                        use_cpe=(not self.use_ADaPE),
+                        xcpe=xcpe,
+                    ) for j in range(self.num_pyramid_levels)]
+                )
+            else:
+                self.relay_tokeniser = RelayTokenInitialiser(
+                    dim=self.max_rt_channels,
                     patch_size=patch_size,
                     nempty=nempty,
                     conv_norm=conv_norm,
                     rt_size=rt_size,
                     use_cpe=(not self.use_ADaPE),
                     xcpe=xcpe,
-                ) for j in range(self.num_pyramid_levels)]
-            )
-        else:
-            self.relay_tokeniser = RelayTokenInitialiser(
-                dim=self.max_rt_channels,
-                patch_size=patch_size,
-                nempty=nempty,
-                conv_norm=conv_norm,
-                rt_size=rt_size,
-                use_cpe=(not self.use_ADaPE),
-                xcpe=xcpe,
-            )
+                )
+            if self.use_ADaPE:
+                self.rt_adape = ADaPE(self.max_rt_channels, activation, ADaPE_mode)
+                if self.use_projections:
+                    self.rt_adape_projections = torch.nn.ModuleList(
+                        [torch.nn.Linear(
+                            in_features=self.max_rt_channels,
+                            out_features=self.channels[j],
+                        ) for j in range(self.num_pyramid_levels)]
+                    )
 
         self.downsamples = torch.nn.ModuleList(
             [Downsample(
@@ -477,15 +511,6 @@ class HOTFormerStage(torch.nn.Module):
                 conv_norm=conv_norm,
             ) for j in range(self.num_pyramid_levels - 1)]
         )
-        if self.use_ADaPE:
-            self.rt_adape = ADaPE(self.max_rt_channels, activation, ADaPE_mode)
-            if self.use_projections:
-                self.rt_adape_projections = torch.nn.ModuleList(
-                    [torch.nn.Linear(
-                        in_features=self.max_rt_channels,
-                        out_features=self.channels[j],
-                    ) for j in range(self.num_pyramid_levels)]
-                )
 
     def init_pyramid_feats(self, data: Tensor, octree: OctreeT):
         # Store local features and relay tokens by octree depth in dict
@@ -494,23 +519,27 @@ class HOTFormerStage(torch.nn.Module):
 
         # Initialise local features and relay tokens
         for j, depth_j in enumerate(self.pyramid_depths):
-            if self.use_projections:
-                relay_token_dict[depth_j] = self.relay_tokeniser[j](
-                    local_feat_dict[depth_j], octree, depth_j,
-                )
-                if self.use_ADaPE:  # Inject positional encoding for RTs
-                    relay_token_dict[depth_j] = (
-                        relay_token_dict[depth_j]
-                        + self.rt_adape_projections[j](self.rt_adape(octree, depth_j))
+            if not self.disable_rt:
+                if self.use_projections:
+                    relay_token_dict[depth_j] = self.relay_tokeniser[j](
+                        local_feat_dict[depth_j], octree, depth_j,
                     )
+                    if self.use_ADaPE:  # Inject positional encoding for RTs
+                        relay_token_dict[depth_j] = (
+                            relay_token_dict[depth_j]
+                            + self.rt_adape_projections[j](self.rt_adape(octree, depth_j))
+                        )
+                else:
+                    relay_token_dict[depth_j] = self.relay_tokeniser(
+                        local_feat_dict[depth_j], octree, depth_j,
+                    )
+                    if self.use_ADaPE:  # Inject positional encoding for RTs
+                        relay_token_dict[depth_j] = (
+                            relay_token_dict[depth_j] + self.rt_adape(octree, depth_j)
+                        )
             else:
-                relay_token_dict[depth_j] = self.relay_tokeniser(
-                    local_feat_dict[depth_j], octree, depth_j,
-                )
-                if self.use_ADaPE:  # Inject positional encoding for RTs
-                    relay_token_dict[depth_j] = (
-                        relay_token_dict[depth_j] + self.rt_adape(octree, depth_j)
-                    ) 
+                relay_token_dict[depth_j] = None
+
             if j < (self.num_pyramid_levels - 1):
                 local_feat_dict[depth_j - 1] = self.downsamples[j](
                     local_feat_dict[depth_j], octree, depth_j,
@@ -523,7 +552,7 @@ class HOTFormerStage(torch.nn.Module):
         # Initialise local features + relay token dicts
         local_feat_dict, relay_token_dict = self.init_pyramid_feats(data,
                                                                     octree)
-        if self.use_projections:  # Project RTs to same channel size
+        if self.use_projections and not self.disable_rt:  # Project RTs to same channel size
             for j, depth_j in enumerate(self.pyramid_depths):
                 # Project RTs to global channel dim
                 relay_token_dict[depth_j] = self.init_up_projections[j](
@@ -533,17 +562,18 @@ class HOTFormerStage(torch.nn.Module):
         # Begin loop of RTSA + H-OSA
         for i in range(self.num_blocks):
             # Compute global multi-scale interactions through RTSA
-            if self.grad_checkpoint and self.training:
-                relay_token_dict = checkpoint(
-                    self.rtsa_blocks[i], relay_token_dict, octree,
-                    use_reentrant=False,
-                )
-            else:
-                relay_token_dict = self.rtsa_blocks[i](relay_token_dict, octree)
+            if not self.disable_rt:
+                if self.grad_checkpoint and self.training:
+                    relay_token_dict = checkpoint(
+                        self.rtsa_blocks[i], relay_token_dict, octree,
+                        use_reentrant=False,
+                    )
+                else:
+                    relay_token_dict = self.rtsa_blocks[i](relay_token_dict, octree)
             
             for j, depth_j in enumerate(self.pyramid_depths):
                 # Project RTs back to local feat channel size
-                if self.use_projections:
+                if self.use_projections and not self.disable_rt:
                     relay_token_dict[depth_j] = self.down_projections[j][i](
                         relay_token_dict[depth_j]
                     )
@@ -564,7 +594,7 @@ class HOTFormerStage(torch.nn.Module):
                         )
                     )
                 # Project RTs to global channel dim
-                if self.use_projections:
+                if self.use_projections and not self.disable_rt:
                     relay_token_dict[depth_j] = self.up_projections[j][i](
                         relay_token_dict[depth_j]
                     )
@@ -583,6 +613,7 @@ class HOTFormerBase(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, rt_size: int = 1,
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
+                 disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
@@ -601,6 +632,7 @@ class HOTFormerBase(torch.nn.Module):
         self.ct_size = rt_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
+        self.disable_rt = disable_rt
         # Stochastic depth per block
         drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
@@ -626,11 +658,12 @@ class HOTFormerBase(torch.nn.Module):
             channels=channels[num_octf_levels:],
             num_heads=num_heads[num_octf_levels:], num_blocks=num_blocks[-1],
             num_pyramid_levels=num_pyramid_levels, patch_size=patch_size,
+            dilation=dilation,
             drop_path=drop_ratio[sum(num_blocks[:-1]):sum(num_blocks[:])],
             nempty=nempty, disable_RPE=disable_RPE,
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
-            rt_propagation_scale=rt_propagation_scale,
+            rt_propagation_scale=rt_propagation_scale, disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
@@ -682,6 +715,7 @@ class HOTFormer(torch.nn.Module):
         rt_size: int = 1,
         rt_propagation: bool = False,
         rt_propagation_scale: Optional[float] = None,
+        disable_rt: bool = False,
         ADaPE_mode: Optional[str] = None,
         grad_checkpoint: bool = True,
         downsample_input_embeddings: bool = True,
@@ -707,6 +741,7 @@ class HOTFormer(torch.nn.Module):
             rt_size: Size of relay tokens, note that patch_size must be divisible by this.
             rt_propagation: Boolean indicating if relay token features should be propagated to local features at the end of the stage.
             rt_propagation_scale: Learnable scalar multiplier for rt propagation step, to prevent 'blurring' of local features.
+            disable_rt: Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
             fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
@@ -734,6 +769,7 @@ class HOTFormer(torch.nn.Module):
             rt_size=rt_size,
             rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale,
+            disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode,
             grad_checkpoint=grad_checkpoint,
             downsample_input_embeddings=downsample_input_embeddings,
