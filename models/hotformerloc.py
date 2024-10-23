@@ -17,12 +17,14 @@ from models.layers.pooling_wrapper import PoolingWrapper
 
 class HOTFormerLoc(torch.nn.Module):
     def __init__(self, backbone: nn.Module, pooling: PoolingWrapper,
-                 normalize_embeddings: bool = False, input_features='P'):
+                 normalize_embeddings: bool = False, input_features='P',
+                 return_feats_and_attn_maps: bool = False):
         super().__init__()
         self.backbone = backbone
         self.pooling = pooling
         self.normalize_embeddings = normalize_embeddings
         self.input_features = input_features
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.stats = {}
         
     def get_input_feature(self, octree):
@@ -34,8 +36,8 @@ class HOTFormerLoc(torch.nn.Module):
         octree = batch['octree']
         data = self.get_input_feature(octree)
 
-        local_feat_dict, relay_token_dict, octree = self.backbone(
-            data=data, octree=octree, depth=octree.depth
+        local_feat_dict, relay_token_dict, octree, feats_and_attn_maps = (
+            self.backbone(data=data, octree=octree, depth=octree.depth)
         )
         # # x is (num_points, n_features) tensor
         # assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
@@ -59,6 +61,8 @@ class HOTFormerLoc(torch.nn.Module):
             x = F.normalize(x, dim=1)
 
         # x is (batch_size, output_dim) tensor
+        if self.return_feats_and_attn_maps:
+            return {'global': x, 'feats_and_attn_maps': feats_and_attn_maps}
         return {'global': x}
 
 

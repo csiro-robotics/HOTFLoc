@@ -75,6 +75,7 @@ def model_factory(model_params: ModelParams):
             layer_scale=model_params.layer_scale,
             qkv_init=model_params.qkv_init,
             xcpe=model_params.xcpe,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
         pooling = PoolingWrapper(
             pool_method=model_params.pooling,
@@ -88,7 +89,8 @@ def model_factory(model_params: ModelParams):
             backbone=backbone,
             pooling=pooling,
             normalize_embeddings=model_params.normalize_embeddings,
-            input_features=model_params.input_features
+            input_features=model_params.input_features,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)

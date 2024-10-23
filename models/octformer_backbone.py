@@ -26,7 +26,8 @@ class OctreeAttention(torch.nn.Module):
     def __init__(self, dim: int, patch_size: int, num_heads: int,
                  qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
-                 dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True):
+                 dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True,
+                 return_attn_maps: bool = False):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
@@ -34,6 +35,7 @@ class OctreeAttention(torch.nn.Module):
         self.dilation = dilation
         self.ct_per_window = ct_per_window
         self.use_rpe = use_rpe
+        self.return_attn_maps = return_attn_maps
         self.scale = qk_scale or (dim // num_heads) ** -0.5
 
         self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -50,6 +52,7 @@ class OctreeAttention(torch.nn.Module):
         self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
 
     def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
+        attn_dict = None
         H = self.num_heads
         K = self.patch_size
         C = self.dim
@@ -84,7 +87,9 @@ class OctreeAttention(torch.nn.Module):
         data = self.proj(data)
         data = self.proj_drop(data)
 
-        attn_dict = {'attn_map': attn_map, 'q': q, 'k': k, 'rpe': rpe}
+        if self.return_attn_maps:
+            attn_dict = {'attn_map': attn_map, 'q': q, 'k': k, 'v': v,
+                         'rpe': rpe}
         return data, attn_dict
 
     def apply_rpe(self, attn, rel_pos):
@@ -217,7 +222,8 @@ class OctFormerBlock(torch.nn.Module):
         self.attention = OctreeAttention(dim, patch_size, num_heads, qkv_bias,
                                          qk_scale, attn_drop, proj_drop, dilation,
                                          ct_per_window=ct_per_window,
-                                         use_rpe=(not disable_RPE))
+                                         use_rpe=(not disable_RPE),
+                                         return_attn_maps=return_feats_and_attn_maps)
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty,

@@ -35,12 +35,13 @@ class RTAttention(torch.nn.Module):
     def __init__(self, dim: int, patch_size: int, num_heads: int,
                  qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
-                 use_rpe: bool = True):
+                 use_rpe: bool = True, return_attn_maps: bool = False):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
         self.num_heads = num_heads
         self.use_rpe = use_rpe  # TODO: implement RPE
+        self.return_attn_maps = return_attn_maps
         self.scale = qk_scale or (dim // num_heads) ** -0.5
 
         self.qkv = torch.nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -55,6 +56,7 @@ class RTAttention(torch.nn.Module):
         # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
 
     def forward(self, relay_tokens: Tensor, octree: OctreeT):
+        attn_dict = None
         B = octree.batch_size
         H = self.num_heads
         C = self.dim
@@ -74,6 +76,13 @@ class RTAttention(torch.nn.Module):
         ).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
         ####
 
+        if self.return_attn_maps:
+            q_temp = q * self.scale
+            attn_map = q_temp @ k.transpose(-2, -1)
+            attn_map = attn_map + attn_mask
+            # attn_map = self.softmax(attn_map)
+            attn_dict = {'attn_map': attn_map, 'q': q_temp, 'k': k, 'v': v}
+
         #### ORIGINAL IMPLEMENTATION ####
         # q = q * self.scale
 
@@ -89,7 +98,7 @@ class RTAttention(torch.nn.Module):
         # ffn
         rt = self.proj(rt)
         rt = self.proj_drop(rt)
-        return rt
+        return rt, attn_dict
     
     def apply_rpe(self, attn, rel_pos):
         if self.use_rpe:
@@ -116,10 +125,11 @@ class HOTFormerBlock(torch.nn.Module):
                  rt_propagation_scale: Optional[float] = None,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  last: bool = False, layer_scale: Optional[float] = None,
-                 xcpe: bool = False, **kwargs):
+                 xcpe: bool = False, return_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dim = dim
+        self.return_attn_maps = return_attn_maps
         # NOTE: Dilation is disabled when using carrier tokens, as it is
         #       likely redundant to use both (and carrier tokens for dilated
         #       windows does not make sense).
@@ -140,7 +150,7 @@ class HOTFormerBlock(torch.nn.Module):
         self.attention = OctreeAttention(
             dim, patch_size, num_heads, qkv_bias, qk_scale, attn_drop,
             proj_drop, dilation, ct_per_window=rt_per_window,
-            use_rpe=(not disable_RPE)
+            use_rpe=(not disable_RPE), return_attn_maps=return_attn_maps,
         )
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
@@ -183,7 +193,8 @@ class HOTFormerBlock(torch.nn.Module):
         data = torch.cat((rt.unsqueeze(1), data), dim=1)
 
         # Pass through transformer
-        attn = self.gamma1 * self.attention(self.norm1(data), octree, depth)
+        attn, attn_dict = self.attention(self.norm1(data), octree, depth)
+        attn = self.gamma1 * attn
         data = data + self.drop_path(attn, octree, depth)
         ffn = self.gamma2 * self.mlp(self.norm2(data))
         data = data + self.drop_path(ffn, octree, depth)
@@ -206,7 +217,7 @@ class HOTFormerBlock(torch.nn.Module):
             rt_upsampled = rt_upsampled.masked_fill(mask, value=0).view(-1, C)
             rt_upsampled = octree.patch_reverse(rt_upsampled, depth)
             data = data + self.rt_gamma_propagate*rt_upsampled
-        return data, rt
+        return data, rt, attn_dict
 
 
 class RelayTokenTransformerBlock(torch.nn.Module):
@@ -223,11 +234,13 @@ class RelayTokenTransformerBlock(torch.nn.Module):
                  activation: torch.nn.Module = torch.nn.GELU,
                  rt_size: int = 1, use_ADaPE: bool = False,
                  conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, **kwargs):
+                 layer_scale: Optional[float] = None,
+                 return_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         # self.use_ADaPE = use_ADaPE,
         self.dim = dim
+        self.return_attn_maps = return_attn_maps
         rt_per_window = rt_size  # track number of carrier tokens per window
         self.rt_per_window = rt_per_window
         use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
@@ -237,13 +250,13 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         #     self.rt_adape = ADaPE(dim, activation)
         self.norm1 = torch.nn.LayerNorm(dim)
         self.rt_attention = RTAttention(dim, patch_size, num_heads, qkv_bias,
-                                        qk_scale, attn_drop, proj_drop)
+                                        qk_scale, attn_drop, proj_drop,
+                                        return_attn_maps=return_attn_maps)
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
         self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
         self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
-
 
     def forward(self, relay_token_dict: Dict[int, Tensor], octree: OctreeT):
         pyramid_depths = list(relay_token_dict.keys())
@@ -259,7 +272,8 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         # NOTE: No longer using ADaPE per octformer block
         # if self.use_ADaPE:
         #     rt = rt + self.rt_adape(octree, depth)
-        rt_attn = self.gamma1 * self.rt_attention(self.norm1(rt), octree)
+        rt_attn, rt_attn_dict = self.rt_attention(self.norm1(rt), octree)
+        rt_attn = self.gamma1 * rt_attn
         rt = rt + self.drop_path(rt_attn, octree, batch_id=drop_path_batch_idx)
         rt_ffn = self.gamma2 * self.mlp(self.norm2(rt))
         rt = rt + self.drop_path(rt_ffn, octree, batch_id=drop_path_batch_idx)
@@ -267,7 +281,7 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~3.5ms with bs 128)
         # Unpad + split CTs
         relay_token_dict = unpad_and_split_rt(rt, octree, pyramid_depths)
-        return relay_token_dict
+        return relay_token_dict, rt_attn_dict
 
     def get_drop_path_idx(self, relay_tokens: Tensor) -> Tensor:
         """Compute the batch idx tensor for drop_path."""
@@ -353,7 +367,8 @@ class HOTFormerStage(torch.nn.Module):
                  rt_propagation_scale: Optional[float] = None,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
-                 layer_scale: Optional[float] = None, xcpe: bool = False, **kwargs):
+                 layer_scale: Optional[float] = None, xcpe: bool = False,
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.use_projections = True
         # Handle case where a single num channels or heads is specified for all levels
@@ -373,6 +388,7 @@ class HOTFormerStage(torch.nn.Module):
         self.num_blocks = num_blocks
         self.use_ADaPE = ADaPE_mode is not None
         self.grad_checkpoint = grad_checkpoint
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
 
         self.hosa_blocks = torch.nn.ModuleList([])
         if self.use_projections:
@@ -406,7 +422,8 @@ class HOTFormerStage(torch.nn.Module):
                     conv_norm=conv_norm,
                     last=(i == self.num_blocks - 1),
                     layer_scale=layer_scale,
-                    xcpe=xcpe
+                    xcpe=xcpe,
+                    return_attn_maps=return_feats_and_attn_maps,
                 ))
                 if self.use_projections:
                     up_projections_j.append(torch.nn.Linear(
@@ -443,6 +460,7 @@ class HOTFormerStage(torch.nn.Module):
                 use_ADaPE=self.use_ADaPE,
                 conv_norm=conv_norm,
                 layer_scale=layer_scale,
+                return_attn_maps=return_feats_and_attn_maps,
             ) for i in range(self.num_blocks)]
         )
         if self.use_projections:
@@ -520,6 +538,11 @@ class HOTFormerStage(torch.nn.Module):
     def forward(self, data: Tensor, octree: OctreeT, depth: int):
         self.pyramid_depths = [(depth - j)
                                for j in range(self.num_pyramid_levels)]
+        feats_and_attn_maps_per_block = None
+        if self.return_feats_and_attn_maps:
+            feats_and_attn_maps_per_block = [
+                {'local_attn': {}, 'local_feats': {}, 'rt_feats_post_local': {}}
+            for _ in range(self.num_blocks)]
         # Initialise local features + relay token dicts
         local_feat_dict, relay_token_dict = self.init_pyramid_feats(data,
                                                                     octree)
@@ -534,12 +557,27 @@ class HOTFormerStage(torch.nn.Module):
         for i in range(self.num_blocks):
             # Compute global multi-scale interactions through RTSA
             if self.grad_checkpoint and self.training:
-                relay_token_dict = checkpoint(
+                relay_token_dict, relay_token_attn_dict = checkpoint(
                     self.rtsa_blocks[i], relay_token_dict, octree,
                     use_reentrant=False,
                 )
             else:
-                relay_token_dict = self.rtsa_blocks[i](relay_token_dict, octree)
+                relay_token_dict, relay_token_attn_dict = self.rtsa_blocks[i](
+                    relay_token_dict, octree
+                )
+                
+            # Log feats and attn maps
+            if self.return_feats_and_attn_maps:
+                feats_and_attn_maps_per_block[i].update({
+                    'rt_attn': {
+                        k: v.detach().cpu()
+                        for k, v in relay_token_attn_dict.items()
+                    },
+                    'rt_feats_pre_local': {
+                        k: v.detach().cpu()
+                        for k, v in relay_token_dict.items()
+                    },
+                })
             
             for j, depth_j in enumerate(self.pyramid_depths):
                 # Project RTs back to local feat channel size
@@ -549,7 +587,8 @@ class HOTFormerStage(torch.nn.Module):
                     )
                 # Propagate to local features with H-OSA
                 if self.grad_checkpoint and self.training:
-                    local_feat_dict[depth_j], relay_token_dict[depth_j] = (
+                    (local_feat_dict[depth_j], relay_token_dict[depth_j],
+                     local_attn_dict_depth_j) = (
                         checkpoint(
                             self.hosa_blocks[j][i], local_feat_dict[depth_j],
                             relay_token_dict[depth_j], octree, depth_j,
@@ -557,19 +596,36 @@ class HOTFormerStage(torch.nn.Module):
                         )
                     )
                 else:
-                    local_feat_dict[depth_j], relay_token_dict[depth_j] = (
+                    (local_feat_dict[depth_j], relay_token_dict[depth_j],
+                     local_attn_dict_depth_j) = (
                         self.hosa_blocks[j][i](
                             local_feat_dict[depth_j], relay_token_dict[depth_j],
                             octree, depth_j,
                         )
                     )
+
+                # Log feats and attn maps
+                if self.return_feats_and_attn_maps:
+                    feats_and_attn_maps_per_block[i]['local_attn'].update({
+                        depth_j: {
+                            k: v.detach().cpu()
+                            for k, v in local_attn_dict_depth_j.items()
+                        },
+                    })
+                    feats_and_attn_maps_per_block[i]['local_feats'].update({
+                        depth_j: local_feat_dict[depth_j].detach().cpu(),
+                    })
+                    feats_and_attn_maps_per_block[i]['rt_feats_post_local'].update({
+                        depth_j: relay_token_dict[depth_j].detach().cpu(),
+                    })
+                    
                 # Project RTs to global channel dim
                 if self.use_projections:
                     relay_token_dict[depth_j] = self.up_projections[j][i](
                         relay_token_dict[depth_j]
                     )
 
-        return local_feat_dict, relay_token_dict
+        return local_feat_dict, relay_token_dict, feats_and_attn_maps_per_block
 
 
 class HOTFormerBase(torch.nn.Module):
@@ -588,7 +644,7 @@ class HOTFormerBase(torch.nn.Module):
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None, xcpe: bool = False,
-                 **kwargs):
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dilation = dilation
@@ -601,6 +657,7 @@ class HOTFormerBase(torch.nn.Module):
         self.ct_size = rt_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # Stochastic depth per block
         drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
 
@@ -631,7 +688,8 @@ class HOTFormerBase(torch.nn.Module):
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale,
-            ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe)
+            ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe, 
+            return_feats_and_attn_maps=return_feats_and_attn_maps)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
         # Generate initial convolution embeddings
@@ -647,14 +705,16 @@ class HOTFormerBase(torch.nn.Module):
                          num_octf_levels=self.num_octf_levels)
         octree.build_t()
         for i in range(self.num_octf_levels):
-            data = self.octf_stage[i](data, octree, depth)
+            data, _ = self.octf_stage[i](data, octree, depth)
             data = self.downsample[i](data, octree, depth)
             depth = depth - 1
 
         # Compute Hierarchical Octree Attention with multi-scale Relay Tokens
-        local_feat_dict, relay_token_dict = self.hotf_stage(data, octree, depth)
+        local_feat_dict, relay_token_dict, feats_and_attn_maps = (
+            self.hotf_stage(data, octree, depth)
+        )
 
-        return local_feat_dict, relay_token_dict, octree
+        return local_feat_dict, relay_token_dict, octree, feats_and_attn_maps
 
 
 class HOTFormer(torch.nn.Module):
@@ -690,6 +750,7 @@ class HOTFormer(torch.nn.Module):
         layer_scale: Optional[float] = None,
         qkv_init: List = ['trunc_normal', 0.02],
         xcpe: bool = False,
+        return_feats_and_attn_maps: bool = False,
         **kwargs
     ):
         """
@@ -717,6 +778,7 @@ class HOTFormer(torch.nn.Module):
             layer_scale: Coefficient to initialise learnable channel-wise scale multipliers for attention outputs, or None to disable this.
             qkv_init: Method of initialisation to use for qkv linear layers
             xcpe: Use xCPE instead of CPE (from PointTransformerV3)
+            return_feats_and_attn_maps: Outputs feats and attn maps from final block of each HOTFormerLoc stage
         """
         super().__init__()
         self.backbone = HOTFormerBase(
@@ -741,6 +803,7 @@ class HOTFormer(torch.nn.Module):
             conv_norm=conv_norm,
             layer_scale=layer_scale,
             xcpe=xcpe,
+            return_feats_and_attn_maps=return_feats_and_attn_maps
         )
         self.qkv_init = qkv_init
         self.apply(self.init_weights)
@@ -778,7 +841,7 @@ class HOTFormer(torch.nn.Module):
             torch.nn.init.constant_(m.bias, 0)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
-        local_feat_dict, relay_token_dict, octree = self.backbone(data,
-                                                                  octree,
-                                                                  depth) 
-        return local_feat_dict, relay_token_dict, octree
+        local_feat_dict, relay_token_dict, octree, feats_and_attn_maps = (
+            self.backbone(data, octree, depth)
+        )
+        return local_feat_dict, relay_token_dict, octree, feats_and_attn_maps
