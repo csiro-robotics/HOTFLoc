@@ -9,6 +9,7 @@ import pickle
 import os
 import argparse
 import torch
+from torch import Tensor
 import torch.nn.functional as F
 import MinkowskiEngine as ME
 import random
@@ -166,9 +167,9 @@ def print_token_similarity(token_dict, token_type: str = 'Local'):
     ax.set_ylim([-0.4, 1])
 
 def remove_rt_attn_padding(
-    relay_token_attn_map: torch.Tensor,
+    relay_token_attn_map: Tensor,
     octree: OctreeT,
-) -> torch.Tensor:
+) -> Tensor:
     """
     Removes padding tokens from relay token attention map. Expects a single 
     attention head as input.
@@ -180,6 +181,26 @@ def remove_rt_attn_padding(
     rt_row_mask_idx = octree.rt_attn_mask[0,0] != octree.invalid_mask_value
     relay_token_attn_map = relay_token_attn_map[rt_row_mask_idx][:,rt_row_mask_idx]
     return relay_token_attn_map
+
+def get_rt_boundary_idx(
+    octree: OctreeT,
+    pyramid_depths: List[int],
+    return_cumsum: bool = True
+):
+    """
+    Returns the idx of the final relay token for each pyramid level, minus the
+    padding elements. Also optionally returns the cumsum of these indices. 
+    """
+    rt_boundary_idx = [
+        (octree.batch_num_windows[depth_j].item()
+         - torch.count_nonzero(octree.ct_batch_idx[depth_j]).item())
+        for depth_j in pyramid_depths
+    ]
+    if not return_cumsum:
+        return rt_boundary_idx
+    else: 
+        rt_boundary_idx_cumsum = np.cumsum(rt_boundary_idx).tolist()
+        return rt_boundary_idx, rt_boundary_idx_cumsum
 
 def plot_rt_attn_per_block_head(
     feats_and_attn_maps: List[Dict],
@@ -263,6 +284,200 @@ def plot_rt_attn_per_block_head(
             )
         fig.tight_layout()
 
+def plot_rt_attn_in_octree(
+    rt_attn_map_i: Tensor,
+    octree: OctreeT,
+    pyramid_depths: List[int],
+    block_idx: int,
+    rt_viz_topk_idx: int,
+    num_hotf_blocks: int,
+):
+    """
+    Visualises the attention of multi-scale relay tokens within the octree.
+    """
+    # Get points from finest octree resolution in pyramid, and colourise by
+    #   attn window index
+    points_octree_per_depth = []
+    windows_idx_per_depth = []
+    for depth_j in pyramid_depths:
+        points_octree, points_octree_windows, windows_idx = (
+            get_octree_points_and_windows(octree, depth_j, params)
+        )
+        points_octree_per_depth.append(points_octree)
+        windows_idx_per_depth.append(windows_idx)
+
+    # Get relay token boundaries and centroids
+    rt_boundary_idx, rt_boundary_idx_cumsum = get_rt_boundary_idx(
+        octree, pyramid_depths, return_cumsum=True
+    )
+    rt_centroids = [
+        octree.window_stats[depth_j][:rt_boundary_idx[j],:3]
+        for j, depth_j in enumerate(pyramid_depths)
+    ]
+    
+    # Correct idx for the pyramid depth
+    for j, rt_boundary in enumerate(rt_boundary_idx_cumsum):
+        if rt_viz_topk_idx < rt_boundary:
+            rt_topk_depth = pyramid_depths[j]
+            rt_topk_idx_depth_j = rt_viz_topk_idx - (rt_boundary_idx_cumsum[j-1] if j > 0 else 0)
+            break
+    
+    # Convert to list of hex colours
+    # TODO: Add small change to colour every iteration, to make distinct windows
+    #       look different
+    patches_idx_colours_per_depth = []
+    for j in range(len(pyramid_depths)):
+        if args.octree_window_cmap == 'tab20':
+            windows_idx_cmap = windows_idx_per_depth[j] % 20  # cap values at 20 for compatibility with tab20 colormap
+            patches_idx_colours_per_depth.append([cm.to_hex(plt.cm.tab20(val)) for val in windows_idx_cmap])
+        elif args.octree_window_cmap == 'tab10':
+            windows_idx_cmap = windows_idx_per_depth[j] % 10  # cap values at 20 for compatibility with tab20 colormap
+            patches_idx_colours_per_depth.append([cm.to_hex(plt.cm.tab10(val)) for val in windows_idx_cmap])
+        else:
+            raise ValueError(f"Unknown cmap type: {args.octree_window_cmap}")
+    
+    # Get point cloud boundaries of each octree depth to keep plots consistent
+    ## lims = {}
+    ## for i, coord in enumerate(['x','y','z']):
+    ##     lims[coord] = [points_octree_per_depth[0][:,i].min(),
+    ##                    points_octree_per_depth[0][:,i].max()]
+    points_min_per_depth = []
+    points_max_per_depth = []
+    for j, points_octree_depth_j in enumerate(points_octree_per_depth):
+        points_min_per_depth.append(points_octree_depth_j.min(0).values)
+        points_max_per_depth.append(points_octree_depth_j.max(0).values)
+    lims = torch.stack(
+        [torch.stack(points_min_per_depth).min(0).values,
+         torch.stack(points_max_per_depth).max(0).values,]
+    ).T
+    ticks = np.arange(-1, 1, 0.2)
+    
+    # Plot point cloud windows
+    if args.plot_octree_windows:
+        fig = plt.figure(figsize=(12, 4))
+        fig.suptitle(f"Octree Attention Windows", fontsize='x-large')
+        for j, depth_j in enumerate(pyramid_depths):
+            ax = fig.add_subplot(1, 3, j+1, projection='3d')
+            ax.view_init(elev=PLOT_ELEV, azim=PLOT_AZIM)
+            _ = ax.scatter(*points_octree_per_depth[j].T, c=patches_idx_colours_per_depth[j],
+                        alpha=0.7)
+            # _ = ax.scatter(*points_octree_per_depth[0].T.numpy(), c='grey', alpha=0.2)
+            ax.set_title(f'Pyramid level {j+1} (depth {depth_j})')
+            ax.set_xticks(ticks, [])
+            ax.set_yticks(ticks, [])
+            ax.set_zticks(ticks, [])
+            ax.set_xlim(*lims[0])
+            ax.set_ylim(*lims[1])
+            ax.set_zlim(*lims[2])
+            ax.set_aspect('equal', adjustable='box')
+
+    # Plot relay token attn scores within the octree
+    fig = plt.figure(figsize=(12, 4))
+    if args.average_attn_heads:
+        heads_title_part = "heads averaged"
+    else:
+        heads_title_part = "single head"
+    fig.suptitle(
+        f"Relay token attention maps - {heads_title_part} - "
+        +f"block {list(range(num_hotf_blocks))[block_idx]+1}",
+        fontsize='x-large'
+    )
+    vmin = rt_attn_map_i[:, rt_viz_topk_idx].min()
+    vmax = rt_attn_map_i[:, rt_viz_topk_idx].max()
+    axs = []
+    for j, depth_j in enumerate(pyramid_depths):
+        # ax = fig.add_subplot(2, 2, 1+j+1, projection='3d')
+        ax = fig.add_subplot(1, 3, j+1, projection='3d')
+        axs.append(ax)
+        ax.view_init(elev=PLOT_ELEV, azim=PLOT_AZIM)
+        lower_bnd = 0 if j == 0 else rt_boundary_idx_cumsum[j-1]
+        upper_bnd = rt_boundary_idx_cumsum[j]
+        rt_attn_depth_j_topk = rt_attn_map_i[lower_bnd:upper_bnd, rt_viz_topk_idx]
+        points_octree_depth_j = points_octree_per_depth[j]
+        windows_idx_depth_j = windows_idx_per_depth[j]
+        # Exclude the topk token from the regular point visualisation
+        if depth_j == rt_topk_depth:
+            windows_idx_depth_j = windows_idx_depth_j[
+                windows_idx_depth_j != rt_topk_idx_depth_j
+            ]
+            points_octree_depth_j = torch.cat(
+                [points_octree_depth_j[:(rt_topk_idx_depth_j * octree.patch_size)],
+                 points_octree_depth_j[((rt_topk_idx_depth_j+1) * octree.patch_size):]]
+            )
+        rt_attn_depth_j_topk_per_point = rt_attn_depth_j_topk[windows_idx_depth_j]
+        # rt_attn_depth_j_topk_per_point = rt_attn_depth_j_topk[windows_idx_per_depth[j]]  # no exclusion
+        temp = ax.scatter(
+            *points_octree_depth_j.T, c=rt_attn_depth_j_topk_per_point,
+            cmap=CMAP, s=30.0, alpha=0.7, vmin=vmin, vmax=vmax
+        )
+        if depth_j == rt_topk_depth:
+            points_rt_topk_only = points_octree_per_depth[j][
+                rt_topk_idx_depth_j * octree.patch_size
+                : (rt_topk_idx_depth_j+1) * octree.patch_size
+            ]
+            # WARNING: BELOW DOESN'T WORK IF rt_attn_depth_j_topk_per_point EXCLUDES TOPK POINT
+            # rt_attn_topk_only = rt_attn_depth_j_topk_per_point[  # plot topk token colourised by attn score
+            #     rt_topk_idx_depth_j * octree.patch_size
+            #     : (rt_topk_idx_depth_j+1) * octree.patch_size
+            # ]
+            _ = ax.scatter(
+                *points_rt_topk_only.T,
+                # c=[rt_attn_depth_j_topk[rt_topk_idx_depth_j]]*octree.patch_size,
+                # c=rt_attn_topk_only,
+                # vmin=vmin, vmax=vmax
+                # edgecolors='r',
+                c='r',
+                marker='D',
+                linewidths=1.2,
+                # s=80.0,
+                alpha=0.7,
+            )
+        ax.set_title(f'Pyramid level {j+1} (depth {depth_j})')
+        ax.set_xticks(ticks, [])
+        ax.set_yticks(ticks, [])
+        ax.set_zticks(ticks, [])
+        ax.set_xlim(*lims[0])
+        ax.set_ylim(*lims[1])
+        ax.set_zlim(*lims[2])
+        ax.set_aspect('equal', adjustable='box')
+        # if j == len(pyramid_depths) - 1:  # add colorbar to last fig
+        #     cbar = fig.colorbar(temp, ax=axs, orientation='horizontal',
+        #                         fraction=.1,
+        #                         label='Attention Weight')
+        #     cbar.set_ticks([])
+    plt.tight_layout()
+    # # Apparently this works when titght_layout doesnt:
+    # plt.savefig('fig.png',bbox_inches='tight')
+
+    ### OLD VERSION, PLOTTING RELAY TOKENS AS A SINGLE TRIANGLE EACH    
+    # # Plot relay token attn
+    # # vmin = rt_attn_map_i_heads_avg[rt_topk_idx, :].min()
+    # # vmax = rt_attn_map_i_heads_avg[rt_topk_idx, :].max()
+    # vmin = rt_attn_map_i[:, rt_viz_topk_idx].min()
+    # vmax = rt_attn_map_i[:, rt_viz_topk_idx].max()
+    # for j, depth_j in enumerate(pyramid_depths):
+    #     ax = fig.add_subplot(2, 2, 1+j+1, projection='3d')
+    #     lower_bnd = 0 if j == 0 else rt_boundary_idx_cumsum[j-1]
+    #     upper_bnd = rt_boundary_idx_cumsum[j]
+    #     # rt_attn_depth_j_topk = rt_attn_map_i_heads_avg[rt_topk_idx, lower_bnd:upper_bnd]
+    #     rt_attn_depth_j_topk = rt_attn_map_i[lower_bnd:upper_bnd, rt_viz_topk_idx]
+    #     temp = ax.scatter(*rt_centroids[j].T, c=rt_attn_depth_j_topk,
+    #                     marker='^', s=50.0, alpha=0.8,
+    #                     vmin=vmin, vmax=vmax)
+    #     if rt_viz_topk_idx < upper_bnd and rt_viz_topk_idx >= lower_bnd:
+    #         _ = ax.scatter(*rt_centroids[j][rt_topk_idx_depth_j],
+    #                     c=rt_attn_depth_j_topk[rt_topk_idx_depth_j],
+    #                     marker='D', edgecolors='r', linewidths=2.2,
+    #                     s=120.0, alpha=1.0, vmin=vmin, vmax=vmax)
+    #     ax.set_title(f'Relay Token Attention - Pyramid level {j+1}')
+    #     ax.set_xlim(*lims['x'])
+    #     ax.set_ylim(*lims['y'])
+    #     ax.set_zlim(*lims['z'])
+    #     ax.set_aspect('equal', adjustable='box')
+    #     # fig.colorbar(temp, ax=ax, label='Attention score')
+    # plt.tight_layout()
+
+    
 def process_submap(submap, model, device, params: TrainingParams):
     """
     Generate attention map visualisations from submap.
@@ -328,12 +543,9 @@ def process_submap(submap, model, device, params: TrainingParams):
     octree.build_t()
     
     # Compute final idx of relay tokens (minus padding) from each depth
-    rt_boundary_idx = [
-        (octree.batch_num_windows[depth_j].item()
-         - torch.count_nonzero(octree.ct_batch_idx[depth_j]).item())
-        for depth_j in pyramid_depths
-    ]
-    rt_boundary_idx_cumsum = np.cumsum(rt_boundary_idx).tolist()
+    rt_boundary_idx, rt_boundary_idx_cumsum = get_rt_boundary_idx(
+        octree, pyramid_depths, return_cumsum=True
+    )
     print(f"\tRT Boundary idx: {rt_boundary_idx_cumsum}")
 
     # Plot relay token attention maps per block and head
@@ -346,38 +558,15 @@ def process_submap(submap, model, device, params: TrainingParams):
 
     # TODO: Plot relay token attention maps within the point cloud
 
-
     # TODO: Plot finest resolution octree (for comparison), then get RT centroids
     #       for all three depths, and plot these coloured by the attn maps.
     #       May be best to pick the RTs with highest avg attention scores, and
     #       visualise attn relative to them.
-    # Get points from finest octree resolution in pyramid, and colourise by
-    #   attn window index
-    points_octree, points_octree_windows, windows_idx = (
-        get_octree_points_and_windows(octree, pyramid_depths[0], params)
-    )
-    num_windows = len(points_octree_windows)
 
-    # Get relay token centroids
-    rt_centroids = [
-        octree.window_stats[depth_j][:rt_boundary_idx[j],:3]
-        for j, depth_j in enumerate(pyramid_depths)
-    ]
-    
-    # Convert to list of hex colours
-    # TODO: Add small change to colour every iteration, to make distinct windows
-    #       look different
-    if args.octree_window_cmap == 'tab20':
-        windows_idx_cmap = windows_idx % 20  # cap values at 20 for compatibility with tab20 colormap
-        patches_idx_colours = [cm.to_hex(plt.cm.tab20(val)) for val in windows_idx_cmap]
-    elif args.octree_window_cmap == 'tab10':
-        windows_idx_cmap = windows_idx % 10  # cap values at 20 for compatibility with tab20 colormap
-        patches_idx_colours = [cm.to_hex(plt.cm.tab10(val)) for val in windows_idx_cmap]
-    else:
-        raise ValueError(f"Unknown cmap type: {args.octree_window_cmap}")
-
-    # Visualise the first and last transformer blocks
-    for block_idx in [0, -1]:
+    # Visualise the first and last transformer blocks within the octree
+    block_idxs = [-1, (num_hotf_blocks-1)//2, 0] if args.compare_first_last_blocks else [BLOCK_VIZ_IDX]
+    rt_viz_topk_indices = []
+    for block_idx in block_idxs:
         rt_attn_map_i = feats_and_attn_maps[block_idx]['rt_attn']['attn_map'][0]  # H, N, N
         if args.softmax:
             rt_attn_map_i = F.softmax(rt_attn_map_i, dim=-1)
@@ -390,107 +579,59 @@ def process_submap(submap, model, device, params: TrainingParams):
         rt_attn_map_i = remove_rt_attn_padding(rt_attn_map_i, octree)
         
         ### DEBUGGING: Plot avg attn map ###
-        if args.debug:
-            fig = plt.figure()
-            ax = fig.add_subplot(1,1,1)
-            ax.imshow(rt_attn_map_i)
-            ax.set_xticks([0,*rt_boundary_idx_cumsum[:2]], ['d1','d2','d3'])
-            ax.set_yticks([0,*rt_boundary_idx_cumsum[:2]], ['d1','d2','d3'])
-            plt.tight_layout()
+        # if args.debug:
+        #     fig = plt.figure(figsize=(4,4))
+        #     ax = fig.add_subplot(1,1,1)
+        #     ax.imshow(rt_attn_map_i)
+        #     ax.set_xticks([0,*rt_boundary_idx_cumsum[:2]], ['d1','d2','d3'])
+        #     ax.set_yticks([0,*rt_boundary_idx_cumsum[:2]], ['d1','d2','d3'])
+        #     plt.tight_layout()
         ####################################
-        
-        # Get window idx by picking key tokens with highest avg top-k attn score
-        topk_attn_vals = 5
-        rt_attn_topk_scores = rt_attn_map_i.topk(topk_attn_vals, dim=0).values
-        rt_attn_topk_indices = rt_attn_topk_scores.mean(dim=0).sort(descending=True).indices
-        
-        # Try pick highly attended-to tokens that are distant from each other
-        rt_dist_threshold = 0.3  # (-1, 1) point range
-        rt_prev_centroid, rt_prev_depth = None, None
-        rt_viz_topk_indices = []
-        for rt_topk_idx in rt_attn_topk_indices:
-            rt_depth = None
-            rt_dist = torch.inf
-            for j, rt_boundary in enumerate(rt_boundary_idx_cumsum):
-                if rt_topk_idx < rt_boundary:
-                    rt_depth = pyramid_depths[j]
-                    rt_topk_idx_depth_j = rt_topk_idx - rt_boundary_idx_cumsum[j-1] if j > 0 else 0
-                    break
-            rt_centroid = octree.window_stats[rt_depth][rt_topk_idx_depth_j,:3]
-            if rt_prev_centroid is not None:
-                rt_dist = (rt_centroid - rt_prev_centroid).norm()
-            # Filter by distance, or if from different level of pyramid
-            if rt_dist > rt_dist_threshold or rt_depth != rt_prev_depth:
-                rt_viz_topk_indices.append(rt_topk_idx)
-                rt_prev_centroid = rt_centroid
-                rt_prev_depth = rt_depth
-                if len(rt_viz_topk_indices) >= NUM_RT_ATTN_VIZ:
-                    break
+
+        # Check if relay token indices were already selected for the previous block
+        if len(rt_viz_topk_indices) == 0:            
+            # Get window idx by picking key tokens with highest avg top-k attn score
+            topk_attn_vals = 5
+            rt_attn_topk_scores = rt_attn_map_i.topk(topk_attn_vals, dim=0).values
+            rt_attn_topk_indices = rt_attn_topk_scores.mean(dim=0).sort(descending=True).indices
+            
+            # Try pick highly attended-to tokens that are distant from each other
+            rt_dist_threshold = 0.3  # (-1, 1) point range
+            rt_prev_centroid, rt_prev_depth = None, None
+            for rt_topk_idx in rt_attn_topk_indices:
+                rt_depth = None
+                rt_dist = torch.inf
+                # Remove corresponding boundary idx cumsum to correct the idx for certain objects
+                for j, rt_boundary in enumerate(rt_boundary_idx_cumsum):
+                    if rt_topk_idx < rt_boundary:
+                        rt_depth = pyramid_depths[j]
+                        rt_topk_idx_depth_j = rt_topk_idx - (rt_boundary_idx_cumsum[j-1] if j > 0 else 0)
+                        break
+                rt_centroid = octree.window_stats[rt_depth][rt_topk_idx_depth_j,:3]
+                if rt_prev_centroid is not None:
+                    rt_dist = (rt_centroid - rt_prev_centroid).norm()
+                # Filter by distance, or if from different level of pyramid
+                if rt_dist > rt_dist_threshold or rt_depth != rt_prev_depth:
+                    rt_viz_topk_indices.append(rt_topk_idx)
+                    rt_prev_centroid = rt_centroid
+                    rt_prev_depth = rt_depth
+                    if len(rt_viz_topk_indices) >= NUM_RT_ATTN_VIZ:
+                        break
         if len(rt_viz_topk_indices) < NUM_RT_ATTN_VIZ:
             print(f"[WARNING] only {len(rt_viz_topk_indices)}/{NUM_RT_ATTN_VIZ} "
                 + f"relay tokens selected, reduce distance threshold!")
         print(f"\tVisualising top-k tokens: {rt_viz_topk_indices}")
         
-        # Get point cloud boundaries to keep plots consistent
-        lims = {}
-        for i, coord in enumerate(['x','y','z']):
-            lims[coord] = [points_octree[:,i].min(), points_octree[:,i].max()]
-
         # Plot each set of relay tokens
-        for i, rt_topk_idx in enumerate(rt_viz_topk_indices):        
-            # Plot point cloud windows
-            fig = plt.figure(figsize=(10, 8))
-            # if not args.softmax:
-            #     softmax_title_part = "(before softmax)"
-            # else:
-            #     softmax_title_part = "(after softmax)"
-            if args.average_attn_heads:
-                heads_title_part = "heads averaged"
-            else:
-                heads_title_part = "single head"
-            fig.suptitle(
-                f"Relay token attention - {heads_title_part} - block {block_idx}",
-                fontsize='x-large'
+        for i, rt_viz_topk_idx in enumerate(rt_viz_topk_indices):
+            plot_rt_attn_in_octree(
+                rt_attn_map_i=rt_attn_map_i,
+                octree=octree,
+                pyramid_depths=pyramid_depths,
+                block_idx=block_idx,
+                rt_viz_topk_idx=rt_viz_topk_idx,
+                num_hotf_blocks=num_hotf_blocks,
             )
-            ax = fig.add_subplot(2, 2, 1, projection='3d')
-            _ = ax.scatter(*points_octree.T.numpy(), c=patches_idx_colours, alpha=0.8)
-            # _ = ax.scatter(*points_octree.T.numpy(), c='grey', alpha=0.2)
-            ax.set_title(f'Octree Attention Windows - Depth {pyramid_depths[0]}')
-            # ax.set_xlabel('x')
-            # ax.set_ylabel('y')
-            # ax.set_zlabel('z')
-            ax.set_xlim(*lims['x'])
-            ax.set_ylim(*lims['y'])
-            ax.set_zlim(*lims['z'])
-            ax.set_aspect('equal', adjustable='box')
-
-            # Plot relay token attn
-            # vmin = rt_attn_map_i_heads_avg[rt_topk_idx, :].min()
-            # vmax = rt_attn_map_i_heads_avg[rt_topk_idx, :].max()
-            vmin = rt_attn_map_i[:, rt_topk_idx].min()
-            vmax = rt_attn_map_i[:, rt_topk_idx].max()
-            for j, depth_j in enumerate(pyramid_depths):
-                ax = fig.add_subplot(2, 2, 1+j+1, projection='3d')
-                lower_bnd = 0 if j == 0 else rt_boundary_idx_cumsum[j-1]
-                upper_bnd = rt_boundary_idx_cumsum[j]
-                # rt_attn_depth_j_topk = rt_attn_map_i_heads_avg[rt_topk_idx, lower_bnd:upper_bnd]
-                rt_attn_depth_j_topk = rt_attn_map_i[lower_bnd:upper_bnd, rt_topk_idx]
-                temp = ax.scatter(*rt_centroids[j].T, c=rt_attn_depth_j_topk,
-                                marker='^', s=50.0, alpha=0.8,
-                                vmin=vmin, vmax=vmax)
-                if rt_topk_idx < upper_bnd and rt_topk_idx >= lower_bnd:
-                    _ = ax.scatter(*rt_centroids[j][rt_topk_idx_depth_j],
-                                c=rt_attn_depth_j_topk[rt_topk_idx_depth_j],
-                                marker='D', edgecolors='r', linewidths=2.2,
-                                s=120.0, alpha=1.0, vmin=vmin, vmax=vmax)
-                ax.set_title(f'Relay Token Attention - Pyramid level {j+1}')
-                ax.set_xlim(*lims['x'])
-                ax.set_ylim(*lims['y'])
-                ax.set_zlim(*lims['z'])
-                ax.set_aspect('equal', adjustable='box')
-                # fig.colorbar(temp, ax=ax, label='Attention score')
-            plt.tight_layout()
-
 
     return
     
@@ -609,11 +750,15 @@ def process_submap(submap, model, device, params: TrainingParams):
 
 def main(model, device, params: TrainingParams, num_positives: int):
     global SET_IDX, QUERY_IDX, BLOCK_VIZ_IDX, HEAD_VIZ_IDX, NUM_RT_ATTN_VIZ
+    global PLOT_ELEV, PLOT_AZIM, CMAP
     SET_IDX = 0
     QUERY_IDX = 0
     BLOCK_VIZ_IDX = -1
     NUM_RT_ATTN_VIZ = 2
     HEAD_VIZ_IDX = 0
+    PLOT_ELEV = 22
+    PLOT_AZIM = 35
+    CMAP = 'viridis'
     
     model_params = params.model_params
     model.to(device)
@@ -671,6 +816,10 @@ if __name__ == "__main__":
                         help='Colourmap to use for visualising octree attn windows')
     parser.add_argument('--average_attn_heads', action='store_true',
                         help='Average attention scores over all heads (when visualising attn on the point cloud). If disabled, a single attn head is picked instead.')
+    parser.add_argument('--compare_first_last_blocks', action='store_true',
+                        help='Compare the attn scores within the octree from frst and last blocks')
+    parser.add_argument('--plot_octree_windows', action='store_true',
+                        help='Also visualise each set of octree windows alongside attention plots')
     parser.add_argument('--debug', action='store_true',
                         help='Debug mode. Temporarily disables plots I deem annoying while debugging.')
 
