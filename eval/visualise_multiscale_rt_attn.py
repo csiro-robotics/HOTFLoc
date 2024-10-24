@@ -237,7 +237,7 @@ def plot_rt_attn_per_block_head(
     fig, axes = plt.subplots(nrows=num_blocks_viz, ncols=num_heads_viz,
                              figsize=(16,9))
     fig.suptitle(
-        f"Relay token attention {softmax_title_part} - per block and head, "
+        f"Multi-scale relay token attention {softmax_title_part} - per block and head, "
         + f"{octree.num_pyramid_levels} pyramid levels",
         fontsize='x-large',
     )
@@ -378,7 +378,7 @@ def plot_rt_attn_in_octree(
     else:
         heads_title_part = "single head"
     fig.suptitle(
-        f"Relay token attention maps - {heads_title_part} - "
+        f"Multi-scale relay token attention maps - {heads_title_part} - "
         +f"block {list(range(num_hotf_blocks))[block_idx]+1}",
         fontsize='x-large'
     )
