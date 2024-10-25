@@ -32,33 +32,64 @@ np.random.seed(RANDOM_SEED)
 MARKER_SIZES = {'aerial':4, 'ground':8}
 # img_dict = {'QCAT':'maps/qcat.png', 'Samford':'maps/samford.png', 'Robson':'maps/robson.png'}
 
-VAL_SPLIT = 'Karawatha'    # split to use for validation during training
+VAL_SPLITS = ['Karawatha', 'Venman']   # splits to use for validation during training
 BASELINE_SPLITS = ['Karawatha', 'Venman']  # splits in baseline train set
 
 ### POLYGONS (easting, northing)
+## BELOW ARE THE OLD TEST REGIONS FOR QCAT, SAMFORD, ROBSON, BUT NOW THESE ENTIRE
+## SETS ARE BEING USED DURING TEST TIME
+# # For QCAT
+# p1 = Polygon([(491013, 6955331), (491013, 6955353), (491090, 6955353), (491090, 6955294)])
+# # For Samford
+# p2 = Polygon([(487542, 6970331), (487542, 6970464), (487648, 6970464), (487648, 6970331)])
+# p3 = Polygon([(487831, 6970162), (487831, 6970230), (487982, 6970230), (487982, 6970162)])
+# # For Robson
+# p4 = Polygon([(354200,8106640), (354200,8106870), (354210,8106870), (354210,8106640)])
+# # For Beetaloo
+# p5 = Polygon([(365747,8195521), (365747,8195625), (365884,8195625), (365884,8195521)])
+
+## NEW TEST REGIONS WHICH COVER THE ENTIRE SPLITS
 # For QCAT
-p1 = Polygon([(491013, 6955331), (491013, 6955353), (491090, 6955353), (491090, 6955294)])
+p1 = Polygon([(490500, 6955000), (490500, 6956000), (491500, 6956000), (491500, 6955000)])
 # For Samford
-p2 = Polygon([(487542, 6970331), (487542, 6970464), (487648, 6970464), (487648, 6970331)])
-p3 = Polygon([(487831, 6970162), (487831, 6970230), (487982, 6970230), (487982, 6970162)])
+p2 = Polygon([(487000, 6969000), (487000, 6971000), (489000, 6971000), (489000, 6969000)])
 # For Robson
-p4 = Polygon([(354200,8106640), (354200,8106870), (354210,8106870), (354210,8106640)])
+p4 = Polygon([(353000,8106000), (353000,8108000), (355000,8108000), (355000,8106000)])
 # For Beetaloo
-p5 = Polygon([(365747,8195521), (365747,8195625), (365884,8195625), (365884,8195521)])
+p5 = Polygon([(365000,8195000), (365000,8197000), (367000,8197000), (367000,8195000)])
+
 # For Karawatha (same as wild places, but transformed to UTM frame with relative_transform.txt)
-p6 = Polygon([(5.07019178e+05,  6.94265947e+06), (5.07469178e+05,  6.94266009e+06),
-              (5.07469479e+05,  6.94244209e+06), (5.07019479e+05,  6.94244147e+06)])
-p7 = Polygon([(5.06953336e+05,  6.94326937e+06), (5.07094336e+05,  6.94326957e+06),
-              (5.07094605e+05,  6.94307457e+06), (5.06953605e+05,  6.94307438e+06)])
-p8 = Polygon([(5.06655775e+05,  6.94295096e+06), (5.06656139e+05,  6.94268796e+06),
-              (5.06848138e+05,  6.94268823e+06), (5.06847775e+05,  6.94295123e+06)])
-# p6 = Polygon([(-150, 8), (300,8), (300,-210), (-150,-210)])
+# p6 = Polygon([(-150, 8), (300,8), (300,-210), (-150,-210)])  # original frame
 # p7 = Polygon([(-215,618), (-74,618), (-74,423), (-215,423)])
 # p8 = Polygon([(-513,300), (-513,37), (-321,37), (-321,300)])
+# p6 = Polygon([(5.07019178e+05,  6.94265947e+06), (5.07469178e+05,  6.94266009e+06),  # OLD UTM TRANSFORM
+#               (5.07469479e+05,  6.94244209e+06), (5.07019479e+05,  6.94244147e+06)])
+# p7 = Polygon([(5.06953336e+05,  6.94326937e+06), (5.07094336e+05,  6.94326957e+06),
+#               (5.07094605e+05,  6.94307457e+06), (5.06953605e+05,  6.94307438e+06)])
+# p8 = Polygon([(5.06655775e+05,  6.94295096e+06), (5.06656139e+05,  6.94268796e+06),
+#               (5.06848138e+05,  6.94268823e+06), (5.06847775e+05,  6.94295123e+06)])
+p6 = Polygon([(507018.60467,6942659.3756), (507468.60473,6942659.6724),
+              (507468.74853,6942441.6724), (507018.74850,6942441.3756)])
+p7 = Polygon([(506953.20227,6943269.3327), (507094.20227,6943269.4257),
+              (507094.33093,6943074.4257), (506953.33090,6943074.3327)])
+p8 = Polygon([(506655.41198,6942951.1361), (506655.58551,6942688.1361),
+              (506847.58554,6942688.2628), (506847.41204,6942951.2627)])
+p9 = Polygon([(519331.85162354,6943652.20440674), (519331.19000244,6943778.20266724),
+              (519485.18786621,6943779.01129150), (519494.35580444,6943747.05899048),
+              (519607.18621826,6943779.65188599), (519607.84783936,6943653.65362549)])
+p10 = Polygon([(519722.31359863,6943565.25347900), (519722.54461670,6943521.25408936),
+               (519495.54779053,6943520.06213379), (519495.31674194,6943564.06152344)])
+p11 = Polygon([(519737.04788208,6943806.33413696), (519894.04573059,6943807.15850830),
+               (519941.41265869,6943737.40628052), (519940.15832520,6943595.39773560),
+               (519738.16110229,6943594.33709717)])
 
-POLY_DICT = {'QCAT':[p1], 'Samford':[p2, p3], 'Robson':[p4], 'Beetaloo':[p5], 
-             'Karawatha':[p6,p7,p8]}
+POLY_DICT = {'QCAT':[p1], 'Samford':[p2], 'Robson':[p4], 'Beetaloo':[p5], 
+             'Karawatha':[p6,p7,p8], 'Venman':[p9, p10, p11]}
 ###
+
+def get_timestamp_from_file(file):
+    timestamp = str(path.splitext(path.split(file)[-1])[0])
+    return timestamp
 
 def output_to_file(output, filename):
     with open(filename, 'wb') as handle:
@@ -94,34 +125,39 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, v
     file_v1 = filename_base + 'v1.pickle'
     file_v2 = filename_base + 'v2.pickle'
     tree = KDTree(df_centroids[['easting','northing']])
-    ind_nn = tree.query_radius(
+    ind_pos = tree.query_radius(
         df_centroids[['easting','northing']], r=args.pos_thresh
     )
     # store ground indices to remove from test set positives (ONLY EVAL WITH GROUND QUERY, AERIAL DATABASE)
-    ind_ground = np.array([i for i, x in enumerate(df_centroids['file'].to_numpy()) if 'ground' in x])
-    ind_r = tree.query_radius(
+    cloud_files = df_centroids['file'].to_numpy()
+    ind_ground = np.array([i for i, x in enumerate(cloud_files) if 'ground' in x])
+    ind_aerial = np.array([i for i, x in enumerate(cloud_files) if 'aerial' in x])
+    ind_non_neg = tree.query_radius(
         df_centroids[['easting','northing']], r=args.neg_thresh
     )
     ind_df_centroids = df_centroids.index.values.tolist()
     queries_v1 = {}
     queries_v2 = {}
-    num_queries_skipped = { # hardcoded for now but it's just for debugging
-        'Beetaloo':0, 'Karawatha':0, 'QCAT':0, 'Robson':0, 'Samford':0
+    num_queries_skipped = {
+        split:0 for split in POLY_DICT.keys()
     }
-    for anchor_ndx in tqdm(range(len(ind_nn))):
+    count_no_positives = 0
+    for anchor_ndx in tqdm(range(len(ind_pos)), desc='Computing'):
         anchor_pos = np.array(
             df_centroids.iloc[anchor_ndx][['easting', 'northing']], dtype=np.float64
         )
         query = df_centroids.iloc[anchor_ndx]['file']
         split = str.split(query, '/')[0]    # first component is split
         # Extract timestamp from the filename
-        scan_filename = path.split(query)[1]
-        timestamp = str(path.splitext(scan_filename)[0])
+        timestamp = get_timestamp_from_file(query)
         
-        positives = np.setdiff1d(ind_nn[anchor_ndx], [anchor_ndx])
+        positives = np.setdiff1d(ind_pos[anchor_ndx], [anchor_ndx])
+        negatives = np.setdiff1d(ind_df_centroids, ind_non_neg[anchor_ndx])
+        non_negatives = np.sort(ind_non_neg[anchor_ndx])
+        
         # remove queries with no ground positives, or remove all aerial queries if creating test set
         if (test_set and 'aerial' in query) or (
-            args.query_requires_ground 
+            args.query_requires_ground
             and 'aerial' in query
             and not any(
                 ['ground' in file for file in df_centroids.iloc[positives]['file']]
@@ -131,16 +167,27 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, v
             positives = np.array([])
             negatives = np.array([])
             non_negatives = np.array([])
-        else:
-            negatives = np.setdiff1d(ind_df_centroids, ind_r[anchor_ndx])
-            non_negatives = np.sort(ind_r[anchor_ndx])            
-            # remove ground positives/negatives from test set
-            if test_set and 'ground' in query:
+        # remove ground positives/negatives from test set
+        elif test_set and 'ground' in query: 
+            positives = np.setdiff1d(positives, ind_ground)
+            negatives = np.setdiff1d(negatives, ind_ground)
+            non_negatives = np.union1d(non_negatives, ind_ground)
+
+        # remove ground/ground and aerial/aerial positives
+        if args.ground_aerial_positives_only:
+            if 'ground' in query:
                 positives = np.setdiff1d(positives, ind_ground)
                 negatives = np.setdiff1d(negatives, ind_ground)
                 non_negatives = np.union1d(non_negatives, ind_ground)
-            np.random.shuffle(negatives)
+            elif 'aerial' in query:
+                positives = np.setdiff1d(positives, ind_aerial)
+                negatives = np.setdiff1d(negatives, ind_aerial)
+                non_negatives = np.union1d(non_negatives, ind_aerial)
+        np.random.shuffle(negatives)
 
+        if len(positives) == 0:
+            count_no_positives += 1
+        
         if not v2_only:
             queries_v1[anchor_ndx] = {
                 "query":query, "positives":positives.tolist(), 
@@ -152,12 +199,13 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, v
             position=anchor_pos
         )
     
+    print(f"Queries with no positives: {count_no_positives}")
     print(f"Queries skipped per split:")
     num_queries_skipped_total = 0
     for split, num in num_queries_skipped.items():
         print(f"{split}: {num}")
         num_queries_skipped_total += num
-    print(f"Final number of {run_str} queries: {len(queries_v2) - num_queries_skipped_total}/{len(queries_v2)}")
+    print(f"Final number of {run_str} queries: {len(queries_v2) - count_no_positives}/{len(queries_v2)}")
     if not v2_only:
         output_to_file(queries_v1, file_v1)
     output_to_file(queries_v2, file_v2)
@@ -166,7 +214,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, v
 
 def construct_query_and_database_sets(database_trees, database_sets, test_sets, filename_base):
     print("Saving queries and database...")
-    radius = args.radius_max    
+    eval_thresh = args.eval_thresh    
     file_db = filename_base + "_database.pickle"
     file_query = filename_base + "_query.pickle"
     for i in range(len(database_sets)):
@@ -181,7 +229,7 @@ def construct_query_and_database_sets(database_trees, database_sets, test_sets, 
                 if (tree is None): # skip empty tree
                     test_sets[j][key][i] = []
                 else:
-                    index = tree.query_radius(coor, r=radius)
+                    index = tree.query_radius(coor, r=eval_thresh)
                     # indices of the positive matches in database i of each query (key) in test set j
                     test_sets[j][key][i] = index[0].tolist()
 
@@ -267,8 +315,12 @@ def main():
                 if row_split == 'test':
                     test_queries.append(row)                
         
-        test_queries_tree = KDTree(test_queries)
         print('Done')
+        if len(test_queries) == 0:
+            print(f'WARNING: No test queries found for {split}, all will be in training set')
+            test_queries_tree = None
+        else:
+            test_queries_tree = KDTree(test_queries)
         
         # Reset counters
         test_counter = dict.fromkeys(['aerial','ground'], 0)
@@ -314,7 +366,7 @@ def main():
                                             POLY_DICT[split], run_type, 
                                             test_queries_tree)
                 if row_split == 'test':
-                    if split == VAL_SPLIT:  # test queries only consider Karawatha, for consistency with other models (as minkloc3dv2 is the only to validate using the test query tuple)
+                    if split in VAL_SPLITS:  # test queries only consider certain splits, for consistency with other models (as minkloc3dv2 is the only to validate using the test query tuple)
                         df_test.loc[len(df_test)] = row
                     test_dict[len(test_dict.keys())] = {
                         'query':row['file'],
@@ -334,7 +386,7 @@ def main():
                     all_colours[split].append([0,0,1])
                     
                 if run_type == 'aerial':    # all aerial submaps form database
-                    if split == VAL_SPLIT:
+                    if split in VAL_SPLITS:
                         df_test.loc[len(df_test)] = row
                     df_database.loc[len(df_database)] = row
                     database_dict[len(database_dict.keys())] = {
@@ -350,20 +402,25 @@ def main():
         print('Done')
         # save query/db pickles
         filename_base = path.join(save_dir, f"above-under_{split}_evaluation")
-        construct_query_and_database_sets(database_trees, database_sets, test_sets, filename_base)        
-        
+        construct_query_and_database_sets(database_trees, database_sets, test_sets, filename_base)
+
+        len_database_sets = sum([len(database_set) for database_set in database_sets])
+        len_test_sets = sum([len(test_set) for test_set in test_sets])
         print(f'{split} stats:\n'
             f'\tTraining submaps - {train_counter["aerial"] + train_counter["ground"]} '
             f'({train_counter["aerial"]} aerial, {train_counter["ground"]} ground)\n'
             f'\tTest submaps     - {test_counter["aerial"] + test_counter["ground"]} '
             f'({test_counter["aerial"]} aerial, {test_counter["ground"]} ground)\n'
             f'\tBuffer submaps   - {buffer_counter["aerial"] + buffer_counter["ground"]} '
-            f'({buffer_counter["aerial"]} aerial, {buffer_counter["ground"]} ground)')
-
+            f'({buffer_counter["aerial"]} aerial, {buffer_counter["ground"]} ground)\n'
+            f'  Eval ground queries  - {len_test_sets} possible\n'
+            f'  Eval aerial database - {len_database_sets}'
+        )
     print(f"\nTotal number of potential baseline training submaps: "
           f"{len(df_train_baseline['file'])}")
-    print(f"Total number of potential refined training submaps: "
-          f"{len(df_train_refined['file'])}")
+    if args.refined:
+        print(f"Total number of potential refined training submaps: "
+              f"{len(df_train_refined['file'])}")
     print(f"Total number of test query submaps: {len(test_queries)}")
 
     ### Vis if selected ###
@@ -396,14 +453,20 @@ def main():
         plt.tight_layout()        
         plt.show()
 
-    # ground_positives = "_ground-positives-req_" if args.query_requires_ground else "_ground-positives-not-req_"
-    # train_file_baseline_base = path.join(save_dir, f"training_queries_above-under_baseline{ground_positives}")
-    # train_file_refined_base = path.join(save_dir, f"training_queries_above-under_refined{ground_positives}")
-    train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_baseline_")
-    train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_refined_")
+    if args.query_requires_ground:
+        ground_positives = "_ground-positives-required_"
+    elif args.ground_aerial_positives_only:
+        ground_positives = "_ground-aerial-only_"
+    else:
+        ground_positives = "_"
+    train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_baseline{ground_positives}")
+    train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_refined{ground_positives}")
+    # train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_baseline_")
+    # train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_refined_")
     test_file_base = path.join(save_dir, "test_queries_above-under_")
     construct_training_query_dict(df_train_baseline, train_file_baseline_basename, v2_only=v2_only)
-    construct_training_query_dict(df_train_refined, train_file_refined_basename, v2_only=v2_only)
+    if args.refined:
+        construct_training_query_dict(df_train_refined, train_file_refined_basename, v2_only=v2_only)
     construct_training_query_dict(df_test, test_file_base, test_set=True, v2_only=v2_only)
     
 
@@ -415,16 +478,22 @@ if __name__ == '__main__':
                         help='Directory to save training queries to, default is --root')
     parser.add_argument('--splits', nargs = '+', default = [], 
                         help='Splits (min 1) in root folder to process. Processes every folder in root if empty')
-    parser.add_argument('--radius_max', type = float, default = 30, 
-                        help = 'Max radius (m) of submaps')
-    parser.add_argument('--pos_thresh', type = float, default = -1, 
-                        help = 'Threshold (m) for positive matches, default 0.5*radius')
-    parser.add_argument('--neg_thresh', type = float, default = -1, 
-                        help = 'Threshold (m) for negative matches, default 2*radius')
-    parser.add_argument('--buffer_thresh', type = float, default = -1, 
-                        help = 'Threshold (m) from ground positives to keep as buffer zone, default 2*radius')
+    # parser.add_argument('--radius_max', type = float, default = 30, 
+    #                     help = 'Max radius (m) of submaps')
+    parser.add_argument('--eval_thresh', type = float, default = 15,
+                        help = 'Threshold of nearest database submap for choosing eval queries')
+    parser.add_argument('--pos_thresh', type = float, required = True, 
+                        help = 'Threshold (m) for positive training matches, default 0.5*radius')
+    parser.add_argument('--neg_thresh', type = float, required = True, 
+                        help = 'Threshold (m) for negative training matches, default 2*radius')
+    parser.add_argument('--buffer_thresh', type = float, required = True, 
+                        help = 'Threshold (m) from ground positives to keep as buffer zone, default 1*radius')
     parser.add_argument('--query_requires_ground', default = False, action = 'store_true', 
                         help = 'Only save training queries that either are from the ground, or have at least 1 ground positive (to dissuade massive aerial bias)')
+    parser.add_argument('--ground_aerial_positives_only', default = False, action = 'store_true', 
+                        help = 'Only save training queries and positives that contain ground/aerial matches. Removes ground/ground or aerial/aerial positives from training.')
+    parser.add_argument('--refined', default = False, action = 'store_true', 
+                        help = 'Save refined training set (otherwise just baseline is saved)')
     parser.add_argument('--v2_only', default = False, action = 'store_true', 
                         help = 'Only save queries in v2 format (Minkloc3D style)')
     parser.add_argument('--viz', default = False, action = 'store_true', 
@@ -433,12 +502,16 @@ if __name__ == '__main__':
         
     # args.query_requires_ground = True   # Forcing all queries to require ground positives for now
     
-    if args.pos_thresh < 0:
-        args.pos_thresh = 0.5 * args.radius_max
-    if args.neg_thresh < 0:
-        args.neg_thresh = 2 * args.radius_max
-    if args.buffer_thresh < 0:
-        args.buffer_thresh = 2 * args.radius_max
+    # if args.pos_thresh < 0:
+    #     args.pos_thresh = 0.5 * args.eval_thresh
+    # if args.neg_thresh < 0:
+    #     args.neg_thresh = 2 * args.eval_thresh
+    # if args.buffer_thresh < 0:
+    #     args.buffer_thresh = 1 * args.eval_thresh
+    assert not args.refined, "Refined split currently disabled!"
+    if args.query_requires_ground and args.ground_aerial_positives_only:
+        print(f"[WARNING] --ground_aerial_positives_only will supersede --query_requires_ground, thus the latter will have no effect")
+        args.query_requires_ground = False
     
     args.save_dir = args.root if args.save_dir is None else args.save_dir
     
