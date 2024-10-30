@@ -192,13 +192,21 @@ class PyramidAttnPoolWrapper(nn.Module):
     Also allows using GeM instead of token mixer.
     """
     def __init__(self, feature_size: int = 256, output_dim: int = 256,
-                 num_pyramid_levels: int = 3,
+                 channels: List[int] = [256], num_pyramid_levels: int = 3,
                  k_pooled_tokens: List[int] = [74, 36, 18],
                  mlp_ratio: int = 1, aggregator: str = 'mixer',
                  mix_depth: int = 4):
         super().__init__()
         self.feature_size = feature_size
-        self.output_dim = output_dim
+        self.output_dim = output_dim 
+        self.use_projections = True      
+        if len(channels) == 1:
+            channels = channels * num_pyramid_levels
+            self.use_projections = False
+        else:
+            assert len(channels) == num_pyramid_levels, "Incorrect num channels"
+            channels = channels
+        self.channels = channels
         self.num_pyramid_levels = num_pyramid_levels
         assert (isinstance(k_pooled_tokens, Sequence)
                 and len(k_pooled_tokens) == num_pyramid_levels), (
@@ -209,9 +217,20 @@ class PyramidAttnPoolWrapper(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.aggregator = aggregator
         self.attpool = torch.nn.ModuleList([AdaptivePooling(
-            feature_dim=feature_size,            # originally 512
+            feature_dim=channels[j],             # originally 512
             k_pooled_tokens=k_pooled_tokens[j],  # originally 16
         ) for j in range(num_pyramid_levels)])
+        if self.use_projections:
+            self.local_projections = torch.nn.ModuleList([])
+            for j in range(num_pyramid_levels):
+                if channels[j] != feature_size:
+                    self.local_projections.append(torch.nn.Linear(
+                        in_features=channels[j],
+                        out_features=feature_size,
+                    ))
+                else:
+                    self.local_projections.append(torch.nn.Identity())
+        
         if aggregator.lower() == 'mixer':
             # TODO: Currently these values are based on a fixed ratio to ensure
             #       the output is equal to output_dim, but may be worth trying
@@ -256,7 +275,11 @@ class PyramidAttnPoolWrapper(nn.Module):
             attn_mask = self.calc_local_attn_mask(local_tokens, octree, j,
                                                   depth_j)
             # Pool to k tokens
-            token_attn.append(self.attpool[j](local_tokens, attn_mask))
+            token_attn_j = self.attpool[j](local_tokens, attn_mask)
+            if self.use_projections:
+                # Match token dimensions
+                token_attn_j = self.local_projections[j](token_attn_j)
+            token_attn.append(token_attn_j)
         # Merge tokens from all three levels
         token_attn = torch.cat(token_attn, dim=1)  # (B, N1+N2+N3, C)
         # Aggregate tokens into a global descriptor
