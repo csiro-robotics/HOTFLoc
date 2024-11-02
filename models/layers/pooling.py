@@ -1,6 +1,6 @@
 # Pooling methods code based on: https://github.com/filipradenovic/cnnimageretrieval-pytorch
 
-from typing import Dict, List
+from typing import Dict, List, Union
 from collections.abc import Sequence
 import torch
 import torch.nn as nn
@@ -75,7 +75,11 @@ class OctGeM(nn.Module):
         self.eps = eps
         self.f = ocnn.nn.OctreeGlobalPool(nempty=True)
 
-    def forward(self, x: Tensor, octree: Octree, depth: int):
+    def forward(self, x: Union[Tensor, Dict[int, Tensor]],
+                octree: Octree, depth: int):
+        if isinstance(x, dict):
+            # HOTFormerLoc, use finest granularity for pooling (max depth)
+            depth, x = max(x.items())
         # This implicitly applies ReLU on x (clamps negative values)
         temp = x.clamp(min=self.eps).pow(self.p)
         temp = self.f(temp, octree, depth)  # Apply GlobalAvgPooling
