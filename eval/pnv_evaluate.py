@@ -36,13 +36,17 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
     ave_mrr = []
     for database_file, query_file in zip(eval_database_files, eval_query_files):
         # Extract location name from query and database files
-        if 'AboveUnder' in params.dataset_name:
-            location_name = database_file.split('_')[1]
-            temp = query_file.split('_')[1]
+        if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
+            if "pickles/" in database_file:  # CS-WildPlaces
+                location_name = database_file.split('/')[-1].split('_')[1]
+                temp = query_file.split('/')[-1].split('_')[1]
+            else:
+                location_name = database_file.split('_')[1]
+                temp = query_file.split('_')[1]
         else:
             location_name = database_file.split('_')[0]
             temp = query_file.split('_')[0]
-            if "5m-pickles/" in database_file:
+            if "5m-pickles/" in database_file:  # wild-places
                 location_name = location_name.split('/')[-1]
                 temp = temp.split('/')[-1]
         assert location_name == temp, 'Database location: {} does not match query location: {}'.format(database_file,

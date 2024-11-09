@@ -63,7 +63,7 @@ def visualise_embeddings(model, device, num_queries: int, query_min_distance: fl
     query_file = eval_query_files[0]
     
     # Extract location name from query and database files
-    if 'AboveUnder' in params.dataset_name:
+    if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
         location_name = database_file.split('_')[1]
         temp = query_file.split('_')[1]
     else:
