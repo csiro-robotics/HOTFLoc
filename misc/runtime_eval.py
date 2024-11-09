@@ -37,20 +37,27 @@ def get_dummy_input(params: TrainingParams, input_size: int):
 
 if __name__ == "__main__":
     device = torch.device('cuda')
-    input_size = 4096
-    repetitions = 300
+    input_size = 30000
+    repetitions = 100
     configs = {}
     model_configs = {}
     configs['minkloc'] = '../config/config_baseline.txt'
     model_configs['minkloc'] = '../models/minkloc3dv2.txt'
-    configs['octfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    # configs['octfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    configs['octfloc'] = '../config/config_AboveUnder_baseline_octf_depth7_lr5e-4_mesa1_rotation_180deg_mode2.txt'
     model_configs['octfloc'] = '../models/octformer_4stage_best_cfg.txt'
-    configs['octfloc1stage'] = '../config/config_baseline_octf_depth8_lr1e-4_sched80_350.txt'
-    model_configs['octfloc1stage'] = '../models/octformer_1stage_18blocks_2ds_cfg.txt'
-    configs['hotfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
-    model_configs['hotfloc'] = '../models/hotformer_4stage_2-18-2-2_no-ctprop_no-layerscale_cfg.txt'
-    configs['hotfloc_ADaPE'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
-    model_configs['hotfloc_ADaPE'] = '../models/hotformer_4stage_2-18-2-2_ADaPE_no-ctprop_no-layerscale_cfg.txt'
+    # configs['octfloc1stage'] = '../config/config_baseline_octf_depth8_lr1e-4_sched80_350.txt'
+    # model_configs['octfloc1stage'] = '../models/octformer_1stage_18blocks_2ds_cfg.txt'
+    # configs['hotfloc'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    # model_configs['hotfloc'] = '../models/hotformer_4stage_2-18-2-2_no-ctprop_no-layerscale_cfg.txt'
+    # configs['hotfloc_ADaPE'] = '../config/config_baseline_octf_depth9_lr1e-4_sched70_350.txt'
+    # model_configs['hotfloc_ADaPE'] = '../models/hotformer_4stage_2-18-2-2_ADaPE_no-ctprop_no-layerscale_cfg.txt'
+    # configs['hotfloc_pyramid_GeM'] = '../config/config_baseline_octf_depth9_lr5e-4_sched100_180.txt'
+    # model_configs['hotfloc_pyramid_GeM'] = '../models/hotformerloc_3level_10blocks_ADaPE_0.5rtprop_PyramidOctGeM_cfg.txt'
+    # configs['hotfloc_pyramid_AttnPoolMixer'] = '../config/config_baseline_octf_depth9_lr5e-4_sched100_180.txt'
+    configs['hotfloc_pyramid_AttnPoolMixer'] = '../config/config_AboveUnder_baseline_octf_depth7_lr5e-4_mesa1_rotation_180deg_mode2.txt'
+    model_configs['hotfloc_pyramid_AttnPoolMixer'] = '../models/hotformerloc_3level_10blocks_ADaPE_0.5rtprop_PyramidAttnPoolMixer_k74-36-18_cfg.txt'
+
     for model_type in configs.keys():
         print(f"EVALUATING {model_configs[model_type]} RUNTIME...")
         params = TrainingParams(configs[model_type], model_configs[model_type])
@@ -66,7 +73,8 @@ if __name__ == "__main__":
         )
         print(pre_process_timer.timeit(repetitions))
         
-        # INIT LOGGERS AND INPUT        
+        # INIT LOGGERS AND INPUT
+        # TODO: GET A REAL POINT CLOUD SINCE RANDOM ONES PRODUCE DENSER OCTREES
         input = get_dummy_input(params, input_size)
         input = {e: input[e].to(device) for e in input}
         starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
@@ -99,3 +107,6 @@ if __name__ == "__main__":
         #     with record_function("model_inference"):
         #         model(input)
         # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+
+        print(f"gpu used {torch.cuda.max_memory_allocated(device=None)} memory")
+        torch.cuda.reset_peak_memory_stats(device=None)
