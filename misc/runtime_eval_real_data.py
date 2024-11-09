@@ -176,10 +176,8 @@ if __name__ == "__main__":
     for model_type in configs.keys():        
         print(f"EVALUATING {model_configs[model_type]} RUNTIME...")
         params = TrainingParams(configs[model_type], model_configs[model_type])
-        print(f"max mem allocated {torch.cuda.max_memory_allocated(device=None) / (1024 ** 2):.2f} MB memory")
         model = model_factory(params.model_params).to(device)
         model.eval()
-        print(f"max mem allocated {torch.cuda.max_memory_allocated(device=None) / (1024 ** 2):.2f} MB memory")
         
         # Get queries and database for desired split
         # if query_sets is None:
