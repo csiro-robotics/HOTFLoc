@@ -68,7 +68,7 @@ class OctreeT(Octree):
         self.use_ADaPE = self.ADaPE_mode is not None
         if self.ADaPE_mode == "cov":
             self.cov_idx = torch.triu_indices(3, 3, device=self.device)
-        assert self.start_depth > 1, "Octree not deep enough for model depth"
+        assert self.start_depth >= 1, "Octree not deep enough for model depth"
 
         self.block_num = patch_size * dilation
         self.nnum_t = self.nnum_nempty if nempty else self.nnum
