@@ -1,6 +1,6 @@
 torch
 torchvision
-pytorch-metric-learning
+pytorch-metric-learning==1.1.2
 numpy
 pandas
 scipy
