@@ -67,24 +67,25 @@ class RTAttention(torch.nn.Module):
         qkv = self.qkv(rt).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
 
-        #### EFFICIENT IMPLEMENTATION
-        attn_mask = attn_mask.to(q.dtype).unsqueeze(1)
-        rt = F.scaled_dot_product_attention(
-            query=q, key=k, value=v, attn_mask=attn_mask,
-        ).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
-        ####
+        if torch.__version__ >= torch.torch_version.TorchVersion(2.0):
+            #### EFFICIENT IMPLEMENTATION
+            attn_mask = attn_mask.to(q.dtype).unsqueeze(1)
+            rt = F.scaled_dot_product_attention(
+                query=q, key=k, value=v, attn_mask=attn_mask,
+            ).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+            ####
+        else:
+            #### ORIGINAL IMPLEMENTATION ####
+            q = q * self.scale
 
-        #### ORIGINAL IMPLEMENTATION ####
-        # q = q * self.scale
-
-        # # attn
-        # attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
-        # # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
-        # attn = attn + attn_mask.unsqueeze(1)
-        # attn = self.softmax(attn)
-        # attn = self.attn_drop(attn)
-        # rt = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
-        ####
+            # attn
+            attn = q @ k.transpose(-2, -1)        # (B, H, K, K)
+            # attn = self.apply_rpe(attn, rel_pos)  # TODO: implement RPE
+            attn = attn + attn_mask.unsqueeze(1)
+            attn = self.softmax(attn)
+            attn = self.attn_drop(attn)
+            rt = (attn @ v).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
+            ####
         
         # ffn
         rt = self.proj(rt)
