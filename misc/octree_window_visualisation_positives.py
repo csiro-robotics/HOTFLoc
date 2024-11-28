@@ -27,7 +27,6 @@ from misc.utils import rescale_octree_points, set_seed
 
 BIN_PCL_LOADER = PNVPointCloudLoader()
 PCD_PCL_LOADER = AboveUnderPointCloudLoader()
-SKIP_INCREMENT = 100
 
 def load_pcl(cloud_path: str) -> np.ndarray:
     if os.path.splitext(cloud_path)[-1] == ".bin":
@@ -68,7 +67,7 @@ def process_pcl(cloud: np.ndarray) -> OctreeT:
 
 def plot_octree_windows(octree: OctreeT, cloud_path: str, cloud_position: Tuple[float]):
     # Initialise figure
-    fig = plt.figure(figsize=(9,7))
+    fig = plt.figure(figsize=(10,4))
     fig_title = f"{cloud_path.split('/')[-1]} - coords ({cloud_position[0]:.2f}, {cloud_position[1]:.2f}) - {args.coordinates} coords"
     fig.suptitle(fig_title)
     # Iterate through octree depths
@@ -107,23 +106,29 @@ def plot_octree_windows(octree: OctreeT, cloud_path: str, cloud_position: Tuple[
             raise ValueError(f"Unknown cmap type: {args.cmap}")
         
         # Plot the point cloud, using patches_idx for colours
-        if idx > 3:
-            print("[WARNING]: Plot limited to 4 depths currently! Skipping..")
+        if idx > 2:
+            print("[WARNING]: Plot limited to 3 depths currently! Skipping..")
             break
-        ax = fig.add_subplot(2, 2, idx+1, projection='3d')
+        ax = fig.add_subplot(1, 3, idx+1, projection='3d')
+        ax.view_init(elev=args.plot_elev, azim=args.plot_azim)
         temp = ax.scatter(*points_octree.T.numpy(), c=patches_idx_colours)
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_zlabel('z')
+        # ax.set_xlabel('x')
+        # ax.set_ylabel('y')
+        # ax.set_zlabel('z')
         ax.set_aspect('equal', adjustable='box')
-        ax.set_title(f"depth {depth} - {num_windows} windows")
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_zticklabels([])
+        # ax.set_title(f"depth {depth} - {num_windows} windows")
+        # ax.set_title(f"Pyramid level {idx+1} - {num_windows} windows")
+        ax.set_title(f"Pyramid level {idx+1} (depth {depth})")
     return None
 
 def main():
     with open(args.training_tuples_path, 'rb') as f:
         train_tuples = pickle.load(f)
 
-    for i in tqdm(range(0, len(train_tuples), SKIP_INCREMENT)):
+    for i in tqdm(range(0, len(train_tuples), args.skip_step)):
         # Select anchor and positive
         anchor_path = os.path.join(args.dataset_root,
                                    train_tuples[i].rel_scan_filepath)
@@ -178,6 +183,9 @@ if __name__ == "__main__":
     parser.add_argument('--patch_size', type = int, default=32, help="size of octree windows (# points per window)")
     parser.add_argument('--dilation', type = int, default=1, help="dilation value of octree windows")
     parser.add_argument('--cmap', type = str, default='tab20', choices=['tab10', 'tab20'], help="cmap to use")
+    parser.add_argument('--skip_step', type = int, default=100, help="step size for iterating through all submaps in folder")
+    parser.add_argument('--plot_elev', type = float, default=22, help="plot initial elevation (deg)")
+    parser.add_argument('--plot_azim', type = float, default=-35, help="plot initial azimuth angle (deg)")
     args = parser.parse_args()
     assert os.path.isdir(args.dataset_root), 'Invalid directory'
     assert os.path.isfile(args.training_tuples_path), 'Invalid path'

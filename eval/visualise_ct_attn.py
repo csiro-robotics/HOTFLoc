@@ -28,6 +28,19 @@ from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
+SMALL_SIZE = 14
+MEDIUM_SIZE = 16
+BIG_SIZE = 18
+BIGGER_SIZE = 22
+
+plt.rc('font', size=MEDIUM_SIZE)          # controls default text sizes
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+plt.rc('axes', titlesize=MEDIUM_SIZE)  # fontsize of the axes title
+
 def load_eval_sets(params):
     eval_database_files, eval_query_files = get_query_database_splits(params)
     assert len(eval_database_files) == len(eval_query_files)
@@ -112,6 +125,8 @@ def get_octree_points_and_windows(query_octree: OctreeT, depth: int, params: Tra
 def main(model, device, params: TrainingParams):
     SET_IDX = 0
     QUERY_IDX = 0
+    # SET_IDX = 2
+    # QUERY_IDX = 1000
     BLOCK_IDX = -2  # last block will be dilated, so take second to last
     
     model_params = params.model_params
@@ -226,43 +241,43 @@ def main(model, device, params: TrainingParams):
             ax.set_ylabel('q', rotation=0)
         plt.tight_layout()
 
-        ##### ALSO PLOT RPE: ####
-        # Get rpe maps for depth
-        local_attn_rpe = feats_and_attn_maps[depth][BLOCK_IDX]['local_attn']['rpe'] # N, H, CT+K, CT+K
-        num_heads = local_attn_rpe.size(1)
-        # Avg over heads
-        local_attn_rpe = torch.mean(local_attn_rpe, 1)
-        # Plot point cloud in grey, then plot attn windows
-        fig = plt.figure(figsize=(18, 9))
-        fig.suptitle(f"RPE of local window - heads averaged, stage {i+1} (depth {depth})",
-                     fontsize='x-large')
-        for j, window_idx in enumerate(range(0, num_windows, max(num_windows//4, 1))):
-            window_mask = windows_idx == window_idx
-            points_octree_plot = points_octree[~window_mask]
-            window_points = points_octree_windows[window_idx].T.numpy()
-            window_rpe_scores = local_attn_rpe[window_idx, 0, 1:].numpy() # idx 0 is CT, if using CTs
-            window_rpe_min = local_attn_rpe[window_idx].min()
-            window_rpe_max = local_attn_rpe[window_idx].max()
-            ax = fig.add_subplot(2, 4, 2*j+1, projection='3d')
-            _ = ax.scatter(*points_octree_plot.T.numpy(), c='grey', alpha=0.2)
-            # local rpe, highlight the first point and show attention for it
-            temp = ax.scatter(*window_points[:, 1:], c=window_rpe_scores, vmin=window_rpe_min, vmax=window_rpe_max, alpha=0.7)
-            _ = ax.scatter(*window_points[:, 0], c='red', marker='D', alpha=1.0)
-            ax.set_title(f"RPE w.r.t first token (red)")
-            ax.set_aspect('equal', adjustable='box')
+        # ##### ALSO PLOT RPE: ####
+        # # Get rpe maps for depth
+        # local_attn_rpe = feats_and_attn_maps[depth][BLOCK_IDX]['local_attn']['rpe'] # N, H, CT+K, CT+K
+        # num_heads = local_attn_rpe.size(1)
+        # # Avg over heads
+        # local_attn_rpe = torch.mean(local_attn_rpe, 1)
+        # # Plot point cloud in grey, then plot attn windows
+        # fig = plt.figure(figsize=(18, 9))
+        # fig.suptitle(f"RPE of local window - heads averaged, stage {i+1} (depth {depth})",
+        #              fontsize='x-large')
+        # for j, window_idx in enumerate(range(0, num_windows, max(num_windows//4, 1))):
+        #     window_mask = windows_idx == window_idx
+        #     points_octree_plot = points_octree[~window_mask]
+        #     window_points = points_octree_windows[window_idx].T.numpy()
+        #     window_rpe_scores = local_attn_rpe[window_idx, 0, 1:].numpy() # idx 0 is CT, if using CTs
+        #     window_rpe_min = local_attn_rpe[window_idx].min()
+        #     window_rpe_max = local_attn_rpe[window_idx].max()
+        #     ax = fig.add_subplot(2, 4, 2*j+1, projection='3d')
+        #     _ = ax.scatter(*points_octree_plot.T.numpy(), c='grey', alpha=0.2)
+        #     # local rpe, highlight the first point and show attention for it
+        #     temp = ax.scatter(*window_points[:, 1:], c=window_rpe_scores, vmin=window_rpe_min, vmax=window_rpe_max, alpha=0.7)
+        #     _ = ax.scatter(*window_points[:, 0], c='red', marker='D', alpha=1.0)
+        #     ax.set_title(f"RPE w.r.t first token (red)")
+        #     ax.set_aspect('equal', adjustable='box')
 
-            # Plot local attn map
-            ax = fig.add_subplot(2, 4, 2*j+1+1)
-            temp = ax.imshow(local_attn_rpe[window_idx].numpy())
-            fig.colorbar(temp, ax=ax, label='RPE weighting')
-            ax.set_title(f"RPE of local window")
-            ax.axes.get_xaxis().set_ticks([])
-            ax.axes.get_yaxis().set_ticks([])
-            ax.set_xlabel('k')
-            ax.set_ylabel('q', rotation=0)
-        plt.tight_layout()
+        #     # Plot local attn map
+        #     ax = fig.add_subplot(2, 4, 2*j+1+1)
+        #     temp = ax.imshow(local_attn_rpe[window_idx].numpy())
+        #     fig.colorbar(temp, ax=ax, label='RPE weighting')
+        #     ax.set_title(f"RPE of local window")
+        #     ax.axes.get_xaxis().set_ticks([])
+        #     ax.axes.get_yaxis().set_ticks([])
+        #     ax.set_xlabel('k')
+        #     ax.set_ylabel('q', rotation=0)
+        # plt.tight_layout()
 
-        #########################
+        # #########################
                 
         # if ct_attn_map is not None:
         #     # Plot ct global attn maps
@@ -282,6 +297,7 @@ def main(model, device, params: TrainingParams):
         ## VISUALISE ALL ATTN HEADS
 
         ## VISUALISE ATTN HEADS FOR 4 BLOCKS IN STAGE 2
+        ROW_LABEL_PAD = 5  # in pts
         if i == 1 or len(feats_and_attn_maps.keys()) == 1:
             # TODO: Get attn maps for each block
             fig = plt.figure(figsize=(12, 10))
@@ -301,11 +317,21 @@ def main(model, device, params: TrainingParams):
                     ax = fig.add_subplot(4, 4, j*4+k+1)
                     temp = ax.imshow(block_head_local_attn_map[window_idx].numpy())
                     # fig.colorbar(temp, ax=ax, label='Attention score')
-                    ax.set_title(f"Block {block_idx+1}")
+                    if j == 0:
+                        ax.set_title(f"Head {head_idx+1}")
+                    # ax.set_title(f"Block {block_idx+1}")
                     ax.axes.get_xaxis().set_ticks([])
                     ax.axes.get_yaxis().set_ticks([])
-                    ax.set_xlabel('k')
-                    ax.set_ylabel('q', rotation=0)
+                    # ax.set_xlabel('k')
+                    # ax.set_ylabel('q', rotation=0)
+                    if k == 0:
+                        ax.annotate(
+                            f"Block {int(np.ceil((block_idx+1)/18*10))}", xy=(0, 0.5),
+                            xytext=(-ax.yaxis.labelpad - ROW_LABEL_PAD, 0),
+                            xycoords=ax.yaxis.label, textcoords='offset points',
+                            ha='right', va='center',
+                            # size='large', ha='right', va='center',
+                    )
             plt.tight_layout()
 
             # Also plot RPE per head
@@ -321,11 +347,22 @@ def main(model, device, params: TrainingParams):
                     ax = fig.add_subplot(4, 4, j*4+k+1)
                     temp = ax.imshow(block_head_local_attn_rpe[window_idx].numpy())
                     # fig.colorbar(temp, ax=ax, label='RPE Weighting')
-                    ax.set_title(f"Block {block_idx+1}")
+                    if j == 0:
+                        ax.set_title(f"Head {head_idx+1}")
+                    # ax.set_title(f"Block {block_idx+1}")
                     ax.axes.get_xaxis().set_ticks([])
                     ax.axes.get_yaxis().set_ticks([])
-                    ax.set_xlabel('k')
-                    ax.set_ylabel('q', rotation=0)
+                    # ax.set_xlabel('k')
+                    # ax.set_ylabel('q', rotation=0)
+                    if k == 0:
+                        ax.annotate(
+                            # f"Block {block_idx+1}", xy=(0, 0.5),
+                            f"Block {int(np.ceil((block_idx+1)/18*10))}", xy=(0, 0.5),
+                            xytext=(-ax.yaxis.labelpad - ROW_LABEL_PAD, 0),
+                            xycoords=ax.yaxis.label, textcoords='offset points',
+                            ha='right', va='center',
+                            # size='large', ha='right', va='center',
+                    )
                     
             plt.tight_layout()
 

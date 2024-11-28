@@ -25,7 +25,7 @@ def main():
     binPointCloudLoader = PNVPointCloudLoader()
     pcdPointCloudLoader = AboveUnderPointCloudLoader()
     # Get every 20th valid point cloud file
-    clouds = sorted(glob(f"{args.clouds_path}/*.pcd") + glob(f"{args.clouds_path}/*.bin"))[::20]
+    clouds = sorted(glob(f"{args.clouds_path}/*.pcd") + glob(f"{args.clouds_path}/*.bin"))[::args.skip_step]
     assert len(clouds) > 0, "No valid point cloud files found"
     
     for cloud_path in tqdm(clouds, total=len(clouds)):
@@ -53,7 +53,7 @@ def main():
             nempty=True, max_depth=octree.depth, start_depth=octree.full_depth,
         )
         # Initialise figure        
-        fig = plt.figure(figsize=(11,9))
+        fig = plt.figure(figsize=(11,4))
         fig.suptitle(f"{cloud_path.split('/')[-1]}")
         # Iterate through octree depths
         for idx, depth in enumerate(range(args.max_depth, args.min_depth-1, -1)):
@@ -87,16 +87,21 @@ def main():
                 raise ValueError(f"Unknown cmap type: {args.cmap}")
             
             # Plot the point cloud, using patches_idx for colours
-            if idx > 3:
-                print("[WARNING]: Plot limited to 4 depths currently! Skipping..")
+            if idx > 2:
+                print("[WARNING]: Plot limited to 3 depths currently! Skipping..")
                 break
-            ax = fig.add_subplot(2, 2, idx+1, projection='3d')
+            ax = fig.add_subplot(1, 3, idx+1, projection='3d')
+            ax.view_init(elev=args.plot_elev, azim=args.plot_azim)
             temp = ax.scatter(*points_octree.T.numpy(), c=patches_idx_colours)
-            ax.set_xlabel('x')
-            ax.set_ylabel('y')
-            ax.set_zlabel('z')
+            # ax.set_xlabel('x')
+            # ax.set_ylabel('y')
+            # ax.set_zlabel('z')
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            ax.set_zticklabels([])
             ax.set_aspect('equal', adjustable='box')
-            ax.set_title(f"depth {depth} - {num_windows} windows")
+            # ax.set_title(f"depth {depth} - {num_windows} windows")
+            ax.set_title(f"Pyramid level {idx+1} - {num_windows} windows")
             
         plt.tight_layout()
         plt.show()
@@ -114,6 +119,9 @@ if __name__ == "__main__":
     parser.add_argument('--patch_size', type = int, default=32, help="size of octree windows (# points per window)")
     parser.add_argument('--dilation', type = int, default=1, help="dilation value of octree windows")
     parser.add_argument('--cmap', type = str, default='tab20', choices=['tab10', 'tab20'], help="cmap to use")
+    parser.add_argument('--skip_step', type = int, default=20, help="step size for iterating through all submaps in folder")
+    parser.add_argument('--plot_elev', type = float, default=22, help="plot initial elevation (deg)")
+    parser.add_argument('--plot_azim', type = float, default=-35, help="plot initial azimuth angle (deg)")
     args = parser.parse_args()
     assert os.path.isdir(args.clouds_path), 'Invalid directory'
     assert args.max_depth >= 2, 'Octree depth must be >= 2'

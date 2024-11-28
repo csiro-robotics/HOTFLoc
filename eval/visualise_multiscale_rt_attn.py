@@ -32,6 +32,19 @@ from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
+SMALL_SIZE = 14
+MEDIUM_SIZE = 16
+BIG_SIZE = 18
+BIGGER_SIZE = 22
+
+plt.rc('font', size=MEDIUM_SIZE)          # controls default text sizes
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIG_SIZE)  # fontsize of the figure title
+plt.rc('axes', titlesize=BIG_SIZE)  # fontsize of the axes title
+
 def submap_distance(q1, q2) -> float:
     """
     Returns the distance between two submaps based on easting and northing
@@ -235,9 +248,10 @@ def plot_rt_attn_per_block_head(
     # fig = plt.figure(figsize=(14, 9))
     ROW_LABEL_PAD = 5  # in pts
     fig, axes = plt.subplots(nrows=num_blocks_viz, ncols=num_heads_viz,
-                             figsize=(16,9))
+                             figsize=(10,9))
     fig.suptitle(
-        f"Multi-scale relay token attention {softmax_title_part} - per block and head, "
+        # f"Multi-scale relay token attention {softmax_title_part} - per block and head, "
+        f"RTSA attention {softmax_title_part}, "
         + f"{octree.num_pyramid_levels} pyramid levels",
         fontsize='x-large',
     )
@@ -268,11 +282,94 @@ def plot_rt_attn_per_block_head(
             # MATPLOTLIB VERSION:
             # temp = axes[i,j].imshow(rt_attn_map_head_i, vmin=vmin)
             temp = ax.imshow(rt_attn_map_head_i)
-            fig.colorbar(temp, ax=ax, label=None)
+            # fig.colorbar(temp, ax=ax, label=None)  # ENABLE COLORBAR
             if i == 0:
                 ax.set_title(f"Head {head_idx+1}")
-            ax.set_xticks([0,*rt_boundary_idx[:2]], ['d1','d2','d3'])
-            ax.set_yticks([0,*rt_boundary_idx[:2]], ['d1','d2','d3'])
+            if i == len(block_indices_viz) - 1:
+                ax.set_xlabel('Level')
+            # ax.set_xticks([], [])
+            # ax.set_yticks([], [])
+            # ax.set_xticks([0,*rt_boundary_idx[:2]], ['l=1','l=2','l=3'])
+            # ax.set_yticks([0,*rt_boundary_idx[:2]], ['l=1','l=2','l=3'])
+            ax.set_xticks([0,*rt_boundary_idx[:2]], [1, 2, 3])
+            ax.set_yticks([0,*rt_boundary_idx[:2]], [1, 2, 3])
+            if j == 0:
+                ax.set_ylabel('Level', rotation=90)
+                ax.annotate(
+                    f"Block {block_idx+1}", xy=(0, 0.5),
+                    xytext=(-ax.yaxis.labelpad - ROW_LABEL_PAD, 0),
+                    xycoords=ax.yaxis.label, textcoords='offset points',
+                    size=BIG_SIZE, ha='right', va='center',
+            )
+        fig.tight_layout()
+        
+def plot_hosa_attn_per_block_head(
+    feats_and_attn_maps: List[Dict],
+    octree: OctreeT,
+    num_blocks_viz: int = 4,
+    num_heads_viz: int = 6
+):
+    """
+    Plot attention maps of H-OSA for multiple blocks and heads.
+    TODO: Visualise multiple depths
+    """
+    LEVEL = 1  # specify the pyramid level to extract visualise local attention from
+    WINDOW_IDX = 0  # specify the attn window to visualise
+    num_hotf_blocks = len(feats_and_attn_maps)
+    feats_and_attn_maps_block_i = feats_and_attn_maps[BLOCK_VIZ_IDX]
+    pyramid_depths = list(feats_and_attn_maps_block_i['local_attn'].keys())
+    
+    depth = pyramid_depths[LEVEL-1]
+    B, H, N, _ = feats_and_attn_maps_block_i['local_attn'][depth]['attn_map'].shape
+    if not args.softmax:
+        softmax_title_part = "maps (before softmax)"
+    else:
+        softmax_title_part = "maps (after softmax)"
+    block_indices_viz = np.linspace(
+        0, num_hotf_blocks-1, num_blocks_viz, dtype=np.int32,
+    )
+    head_indices_viz = np.linspace(
+        0, H-1, num_heads_viz, dtype=np.int32
+    )
+    # fig = plt.figure(figsize=(14, 9))
+    ROW_LABEL_PAD = 5  # in pts
+    fig, axes = plt.subplots(nrows=num_blocks_viz, ncols=num_heads_viz,
+                             figsize=(10,9))
+    fig.suptitle(
+        # f"H-OSA attention {softmax_title_part} - per block and head - level {LEVEL}",
+        f"H-OSA attention {softmax_title_part} - level {LEVEL}",
+        fontsize='x-large',
+    )
+    for i, block_idx in enumerate(block_indices_viz):
+        if i >= num_blocks_viz:
+            break
+        hosa_attn_map_i = feats_and_attn_maps[block_idx]['local_attn'][depth]['attn_map'] # B, H, N, N
+        if args.softmax:
+            hosa_attn_map_i = F.softmax(hosa_attn_map_i, dim=-1)
+        # Loop through heads
+        for j, head_idx in enumerate(head_indices_viz):
+            if j >= num_heads_viz:
+                break
+            ax = axes[i,j]
+            # ax = fig.add_subplot(num_blocks_viz, num_heads_viz,
+            #                      index=i*num_blocks_viz + j+1)
+            if args.hosa_viz_mode == 'heads':
+                hosa_attn_map_head_i = hosa_attn_map_i[WINDOW_IDX, head_idx]
+                title_str = 'Head'
+            elif args.hosa_viz_mode == 'windows':
+                hosa_attn_map_head_i = hosa_attn_map_i[head_idx].mean(0) # note that the first dim is not head idx, but I was too lazy to change the variable names to accomodate these two modes
+                title_str = 'Window'
+            # # Filter out mask tokens from attention map visualisation
+            # hosa_attn_map_head_i = remove_rt_attn_padding(hosa_attn_map_head_i, octree)
+
+            # MATPLOTLIB VERSION:
+            # temp = axes[i,j].imshow(rt_attn_map_head_i, vmin=vmin)
+            temp = ax.imshow(hosa_attn_map_head_i)
+            # fig.colorbar(temp, ax=ax, label=None)  # ENABLE COLORBAR
+            if i == 0:
+                ax.set_title(f"{title_str} {head_idx+1}")
+            ax.set_xticks([], [])
+            ax.set_yticks([], [])
             # ax.set_xlabel('k')
             # ax.set_ylabel('q', rotation=0)
             if j == 0:
@@ -280,7 +377,7 @@ def plot_rt_attn_per_block_head(
                     f"Block {block_idx+1}", xy=(0, 0.5),
                     xytext=(-ax.yaxis.labelpad - ROW_LABEL_PAD, 0),
                     xycoords=ax.yaxis.label, textcoords='offset points',
-                    size='large', ha='right', va='center',
+                    size=BIG_SIZE, ha='right', va='center',
             )
         fig.tight_layout()
 
@@ -520,12 +617,12 @@ def process_submap(submap, model, device, params: TrainingParams):
 
     # feats_and_attn_maps_i = feats_and_attn_maps[BLOCK_IDX]
     
-    # Print similarity of relay tokens (row-wise cosine sim)
+    # Print similarity of relay tokens (row-wise cosine sim, box plots)
     relay_tokens_i = feats_and_attn_maps_block_i['rt_feats_pre_local']
     local_feats_i = feats_and_attn_maps_block_i['local_feats']
-    if not args.debug:
-        print_token_similarity(relay_tokens_i, token_type='Relay')
-        print_token_similarity(local_feats_i, token_type='Local')
+    # if not args.debug:  # BOX PLOTS
+    #     print_token_similarity(relay_tokens_i, token_type='Relay')
+    #     print_token_similarity(local_feats_i, token_type='Local')
     pyramid_depths = list(relay_tokens_i.keys())
     
     # Build window octree
@@ -549,11 +646,14 @@ def process_submap(submap, model, device, params: TrainingParams):
     print(f"\tRT Boundary idx: {rt_boundary_idx_cumsum}")
 
     # Plot relay token attention maps per block and head
-    num_blocks_viz, num_heads_viz = 4, 6
+    # num_blocks_viz, num_heads_viz = 4, 4
     #!!!!!!!!!!!!! NOTE: UNCOMMENT THIS ONCE FINISHED DEBUGGING FOLLOWING BLOCKS !!!!!!!!!!!!!#
     if not args.debug:
         plot_rt_attn_per_block_head(
-            feats_and_attn_maps, octree, num_blocks_viz, num_heads_viz,
+            feats_and_attn_maps, octree, NUM_BLOCKS_VIZ, NUM_HEADS_VIZ,
+        )
+        plot_hosa_attn_per_block_head(
+            feats_and_attn_maps, octree, NUM_BLOCKS_VIZ, NUM_HEADS_VIZ,
         )
 
     # TODO: Plot relay token attention maps within the point cloud
@@ -750,14 +850,20 @@ def process_submap(submap, model, device, params: TrainingParams):
 
 def main(model, device, params: TrainingParams, num_positives: int):
     global SET_IDX, QUERY_IDX, BLOCK_VIZ_IDX, HEAD_VIZ_IDX, NUM_RT_ATTN_VIZ
-    global PLOT_ELEV, PLOT_AZIM, CMAP
-    SET_IDX = 0
+    global NUM_BLOCKS_VIZ, NUM_HEADS_VIZ, PLOT_ELEV, PLOT_AZIM, CMAP
+    # SET_IDX = 0
+    SET_IDX = 1
     QUERY_IDX = 0
+    # QUERY_IDX = 10
     BLOCK_VIZ_IDX = -1
-    NUM_RT_ATTN_VIZ = 2
+    NUM_RT_ATTN_VIZ = 1
+    # local & rt attn viz
+    NUM_BLOCKS_VIZ = 4
+    NUM_HEADS_VIZ = 4
     HEAD_VIZ_IDX = 0
     PLOT_ELEV = 22
     PLOT_AZIM = 35
+    # PLOT_AZIM = -35
     CMAP = 'viridis'
     
     model_params = params.model_params
@@ -816,6 +922,8 @@ if __name__ == "__main__":
                         help='Colourmap to use for visualising octree attn windows')
     parser.add_argument('--average_attn_heads', action='store_true',
                         help='Average attention scores over all heads (when visualising attn on the point cloud). If disabled, a single attn head is picked instead.')
+    parser.add_argument('--hosa_viz_mode', type=str, default='heads', choices=['heads', 'windows'],
+                        help='Whether to visualise a single hosa window over different heads, or multiple hosa windows with averaged heads')
     parser.add_argument('--compare_first_last_blocks', action='store_true',
                         help='Compare the attn scores within the octree from frst and last blocks')
     parser.add_argument('--plot_octree_windows', action='store_true',
