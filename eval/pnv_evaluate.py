@@ -24,7 +24,8 @@ from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
-def evaluate(model, device, params: TrainingParams, log: bool = False, show_progress: bool = False):
+def evaluate(model, device, params: TrainingParams, log: bool = False,
+             model_name: str = 'model', show_progress: bool = False):
     # Run evaluation on all eval datasets
     eval_database_files, eval_query_files = get_query_database_splits(params)
 
@@ -60,7 +61,8 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
         with open(p, 'rb') as f:
             query_sets = pickle.load(f)
 
-        temp = evaluate_dataset(model, device, params, database_sets, query_sets, log=log, show_progress=show_progress)
+        temp = evaluate_dataset(model, device, params, database_sets, query_sets,
+                                log=log, model_name=model_name, show_progress=show_progress)
         stats[location_name] = temp
         ave_one_percent_recall.append(temp['ave_one_percent_recall'])
         ave_recall.append(temp['ave_recall'])
@@ -73,7 +75,8 @@ def evaluate(model, device, params: TrainingParams, log: bool = False, show_prog
     return stats
 
 
-def evaluate_dataset(model, device, params: TrainingParams, database_sets, query_sets, log: bool = False,
+def evaluate_dataset(model, device, params: TrainingParams, database_sets, query_sets,
+                     log: bool = False, model_name: str = 'model', 
                      show_progress: bool = False):
     # Run evaluation on a single dataset
     recall = np.zeros(25)
@@ -98,7 +101,8 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
                 continue
             pair_recall, pair_opr, pair_mrr = get_recall(i, j, database_embeddings,
                                                          query_embeddings, query_sets,
-                                                         database_sets, log=log)
+                                                         database_sets, log=log,
+                                                         model_name=model_name)
             recall += np.array(pair_recall)
             count += 1
             one_percent_recall.append(pair_opr)
@@ -197,7 +201,8 @@ def compute_embedding(model, batch):
     return embedding
 
 
-def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets, log=False):
+def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
+               log=False, model_name: str = 'model'):
     # Original PointNetVLAD code
     database_output = database_vectors[m]
     queries_output = query_vectors[n]
@@ -226,9 +231,9 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
         distances, indices = database_nbrs.query(np.array([queries_output[i]]), k=num_neighbors)
 
         if log:
-            # Log false positives (returned as the first element) for Oxford dataset
+            # Log false positives (returned as the first element)
             # Check if there's a false positive returned as the first element
-            if query_details['query'][:6] == 'oxford' and indices[0][0] not in true_neighbors:
+            if indices[0][0] not in true_neighbors:
                 fp_ndx = indices[0][0]
                 fp = database_sets[m][fp_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
                 fp_emb_dist = distances[0, 0]  # Distance in embedding space
@@ -244,8 +249,9 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
                         tp_world_dist = np.sqrt((query_details['northing'] - tp['northing']) ** 2 +
                                                 (query_details['easting'] - tp['easting']) ** 2)
                         break
-
-                with open("log_fp.txt", "a") as f:
+                            
+                out_fp_file_name = f"{model_name}_log_fp.txt"
+                with open(out_fp_file_name, "a") as f:
                     s = "{}, {}, {:0.2f}, {:0.2f}".format(query_details['query'], fp['query'], fp_emb_dist, fp_world_dist)
                     if tp is None:
                         s += ', 0, 0, 0\n'
@@ -253,21 +259,20 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
                         s += ', {}, {:0.2f}, {:0.2f}\n'.format(tp['query'], tp_emb_dist, tp_world_dist)
                     f.write(s)
 
-            if query_details['query'][:6] == 'oxford':
-                # Save details of 5 best matches for later visualization for 1% of queries
-                s = f"{query_details['query']}, {query_details['northing']}, {query_details['easting']}"
-                for k in range(min(len(indices[0]), 5)):
-                    is_match = indices[0][k] in true_neighbors
-                    e_ndx = indices[0][k]
-                    e = database_sets[m][e_ndx]     # Database element: {'query': path, 'northing': , 'easting': }
-                    e_emb_dist = distances[0][k]
-                    world_dist = np.sqrt((query_details['northing'] - e['northing']) ** 2 +
-                                         (query_details['easting'] - e['easting']) ** 2)
-                    s += f", {e['query']}, {e_emb_dist:0.2f}, , {world_dist:0.2f}, {1 if is_match else 0}, "
-                s += '\n'
-                out_file_name = "log_search_results.txt"
-                with open(out_file_name, "a") as f:
-                    f.write(s)
+            # Save details of 5 best matches for later visualization for 1% of queries
+            s = f"{query_details['query']}, {query_details['northing']}, {query_details['easting']}"
+            for k in range(min(len(indices[0]), 5)):
+                is_match = indices[0][k] in true_neighbors
+                e_ndx = indices[0][k]
+                e = database_sets[m][e_ndx]     # Database element: {'query': path, 'northing': , 'easting': }
+                e_emb_dist = distances[0][k]
+                world_dist = np.sqrt((query_details['northing'] - e['northing']) ** 2 +
+                                        (query_details['easting'] - e['easting']) ** 2)
+                s += f", {e['query']}, {e_emb_dist:0.2f}, , {world_dist:0.2f}, {1 if is_match else 0}, "
+            s += '\n'
+            out_top5_file_name = f"{model_name}_log_search_results.txt"
+            with open(out_top5_file_name, "a") as f:
+                f.write(s)
 
         for j in range(len(indices[0])):
             if indices[0][j] in true_neighbors:
@@ -326,7 +331,7 @@ if __name__ == "__main__":
     parser.set_defaults(debug=False)
     parser.add_argument('--visualize', dest='visualize', action='store_true')
     parser.set_defaults(visualize=False)
-    parser.add_argument('--log', dest='log', action='store_true')
+    parser.add_argument('--log', dest='log', action='store_true', help="Log false positives and top-5 retrievals")
     parser.set_defaults(log=False)
 
     args = parser.parse_args()
@@ -360,15 +365,16 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(args.weights, map_location=device))
 
     model.to(device)
-
-    stats = evaluate(model, device, params, args.log, show_progress=True)
-    print_eval_stats(stats)
-
+    
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
     config_name = os.path.split(params.params_path)[1]
     model_name = os.path.split(args.weights)[1]
     model_name = os.path.splitext(model_name)[0]
     prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
+
+    stats = evaluate(model, device, params, args.log, model_name, show_progress=True)
+    print_eval_stats(stats)
+
     pnv_write_eval_stats(f"pnv_{params.dataset_name}_results.txt", prefix, stats)
 
