@@ -18,6 +18,7 @@ timm
 pyyaml
 matplotlib
 thop
+submitit
 wandb
 wandb-osh
 open3d

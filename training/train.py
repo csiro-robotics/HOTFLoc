@@ -4,7 +4,7 @@
 import argparse
 import torch
 
-from training.trainer import do_train
+from training.trainer import NetworkTrainer
 from misc.utils import TrainingParams
 
 
@@ -28,4 +28,5 @@ if __name__ == '__main__':
     if args.debug:
         torch.autograd.set_detect_anomaly(True)
 
-    do_train(params)
+    training_callable = NetworkTrainer()
+    training_callable(params)
