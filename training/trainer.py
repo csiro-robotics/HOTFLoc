@@ -44,7 +44,7 @@ class NetworkTrainer:
         self.resume = False
         self.start_epoch = 1
         self.best_avg_AR_1 = 0.0
-        self.checkpoint_extension = '_submitit_ckpt.pth'
+        self.checkpoint_extension = '_latest_ckpt.pth'
         
     def __call__(
         self,
@@ -109,16 +109,27 @@ class NetworkTrainer:
         # Begin train loop
         self.do_train()
 
-    def checkpoint(self, *args: tp.Any, **kwargs: tp.Any) -> submitit.helpers.DelayedSubmission:
+    def __submitit_checkpoint__(self, *args: tp.Any, **kwargs: tp.Any) -> submitit.helpers.DelayedSubmission:
         """
         This function is called asynchronously by submitit when a job is timed
         out. Dumps the current model state to disk and returns a
         DelayedSubmission to resubmit the job.
         """
-        # Save checkpoint of training state
         checkpoint_path = self.model_pathname + self.checkpoint_extension
         print(f'Training interupted at epoch {self.curr_epoch}. '
               f'Saving ckpt to {checkpoint_path} and resubmitting.')
+        if not os.path.exists(checkpoint_path):
+            self.save_checkpoint(checkpoint_path)
+        training_callable = NetworkTrainer()
+        delayed_submission = submitit.helpers.DelayedSubmission(
+            training_callable,
+            self.params,
+            checkpoint_path=checkpoint_path,
+        )
+        return delayed_submission
+
+    def save_checkpoint(self, checkpoint_path: str):
+        # Save checkpoint of training state (as opposed to just model weights)
         state = {
             'epoch': self.curr_epoch,
             'wandb_id': self.wandb_id,
@@ -131,14 +142,6 @@ class NetworkTrainer:
         if self.model_ema is not None:
             state['model_ema_state_dict'] = self.model_ema.state_dict()
         torch.save(state, checkpoint_path)
-
-        training_callable = NetworkTrainer()
-        delayed_submission = submitit.helpers.DelayedSubmission(
-            training_callable,
-            self.params,
-            checkpoint_path=checkpoint_path,
-        )
-        return delayed_submission
 
     def init_model_optim_sched(self):
         """
@@ -507,6 +510,8 @@ class NetworkTrainer:
                 self.scheduler.step()
             
             if not self.params.debug:
+                checkpoint_path = self.model_pathname + self.checkpoint_extension
+                self.save_checkpoint(checkpoint_path)
                 if self.params.save_freq > 0 and epoch % self.params.save_freq == 0:
                     epoch_pathname = f"{self.model_pathname}_e{epoch}.pth"
                     print(f"Saving weights: {epoch_pathname}")
