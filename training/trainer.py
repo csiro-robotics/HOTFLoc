@@ -109,7 +109,7 @@ class NetworkTrainer:
         # Begin train loop
         self.do_train()
 
-    def __submitit_checkpoint__(self, *args: tp.Any, **kwargs: tp.Any) -> submitit.helpers.DelayedSubmission:
+    def checkpoint(self, *args: tp.Any, **kwargs: tp.Any) -> submitit.helpers.DelayedSubmission:
         """
         This function is called asynchronously by submitit when a job is timed
         out. Dumps the current model state to disk and returns a
@@ -423,7 +423,8 @@ class NetworkTrainer:
         else:
             phases = ['train']
 
-        for epoch in tqdm.tqdm(range(self.start_epoch, self.params.epochs + 1)):
+        for epoch in tqdm.tqdm(range(self.start_epoch, self.params.epochs + 1),
+                               initial=self.start_epoch-1, total=self.params.epochs):
             self.curr_epoch = epoch
             metrics = {'train': {}, 'val': {}, 'test': {}}      # Metrics for wandb reporting
             if epoch / self.params.epochs > self.params.mesa_start_ratio:
