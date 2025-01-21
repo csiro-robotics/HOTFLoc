@@ -2,6 +2,7 @@
 
 import numpy as np
 from typing import List, Sequence
+import time
 import torch
 from torch.utils.data import DataLoader
 import MinkowskiEngine as ME
@@ -111,6 +112,9 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
     # octree: if True, loads octree in batch instead of sparse tensor
     def collate_fn(data_list):
+        if params.debug:
+            tic = time.time()
+
         # Constructs a batch object
         clouds = [e[0] for e in data_list]
         labels = [e[1] for e in data_list]
@@ -124,11 +128,10 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
             clouds = clouds_merged.split(lens)
 
         # Compute positives and negatives mask
-        # dataset.queries[label]['positives'] is bitarray
-        positives_mask = [[in_sorted_array(e, dataset.queries[label].positives) for e in labels] for label in labels]
-        negatives_mask = [[not in_sorted_array(e, dataset.queries[label].non_negatives) for e in labels] for label in labels]
+        positives_mask = np.asarray([in_sorted_array_vectorised(labels, dataset.get_positives(label)) for label in labels])
+        negatives_mask = np.asarray([in_sorted_array_vectorised(labels, dataset.get_non_negatives(label)) for label in labels])
         positives_mask = torch.tensor(positives_mask)
-        negatives_mask = torch.tensor(negatives_mask)
+        negatives_mask = torch.tensor(negatives_mask).logical_not()
 
         # Generate batches in correct format for MinkLoc/OctFormer
         if params.batch_split_size is None or params.batch_split_size == 0:
@@ -140,6 +143,10 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
                 temp = clouds[i:i + params.batch_split_size]
                 minibatch = create_batch(temp, quantizer, params)
                 batch.append(minibatch)
+
+        if params.debug:
+            toc = time.time()
+            print(f"[INFO] Collating batch done ({toc-tic:.2f}s) for {dataset.query_filepath}", flush=True)
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
@@ -207,9 +214,76 @@ def filter_query_elements(query_set: List[EvaluationTuple], map_set: List[Evalua
 
 
 def in_sorted_array(e: int, array: np.ndarray) -> bool:
+    """DEPRECATED
+    ---
+    Much slower than vectorised version
+    """
     pos = np.searchsorted(array, e)
     if pos == len(array) or pos == -1:
         return False
     else:
         return array[pos] == e
 
+
+def in_sorted_array_vectorised(query_array : np.ndarray,
+                               sorted_array: np.ndarray) -> List[bool]:
+    """Check if each element of `query_array` is in `sorted_array`.
+
+    Parameters
+    ----------
+    query_array (np.ndarray): Array of integers to check.
+    sorted_array (np.ndarray): Sorted array of integers.
+
+    Returns
+    --------
+    np.ndarray: Boolean array where each element indicates if the corresponding
+                element in `query_array` is in `sorted_array`.
+    """
+    # Find indices where elements of query_array would fit in sorted_array
+    indices = np.searchsorted(sorted_array, query_array)
+    
+    # Clip indices to stay within bounds of sorted_array
+    indices = np.clip(indices, 0, len(sorted_array) - 1)
+    
+    # Check if the elements of query_array match the elements in sorted_array
+    # at the computed indices
+    return sorted_array[indices] == query_array
+
+
+############### CODE FOR TESTING in_sorted_array ###############
+# def run_in_sorted_array(labels, array):
+#     # temp for debugging
+#     l = []
+#     for e in labels:
+#         l.append(in_sorted_array(e, array))
+
+#     return l
+
+# if __name__ == "__main__":
+#     from timeit import timeit
+#     sorted_array = np.arange(0,2048,16)
+#     values = np.random.randint(0, 2048, size=2048)
+
+#     out1 = run_in_sorted_array(values, sorted_array)
+#     print(torch.tensor(out1))
+#     out2 = in_sorted_array_vectorised(values, sorted_array)
+#     print(torch.tensor(out2))
+#     print(all(out1 == out2))
+
+#     assert(all(out1 == out2)), "Vectorised func output != standard func output!"
+    
+#     print("Timing...")
+    
+#     time_searchsorted = timeit(
+#         stmt="run_in_sorted_array(values, sorted_array)",
+#         setup="from __main__ import run_in_sorted_array, sorted_array, values",
+#         number=1000,  # Number of repetitions
+#     )
+#     print(f"Standard searchsorted: {time_searchsorted:.6f} seconds")
+    
+#     time_custom_searchsorted = timeit(
+#         stmt="in_sorted_array_vectorised(values, sorted_array)",
+#         setup="from __main__ import in_sorted_array_vectorised, sorted_array, values",
+#         number=1000,  # Number of repetitions
+#     )
+#     print(f"Vectorised searchsorted: {time_custom_searchsorted:.6f} seconds")
