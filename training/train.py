@@ -18,6 +18,8 @@ if __name__ == '__main__':
                         help='Resume from the given checkpoint. Ensure config and model_config matches the supplied checkpoint.')
     parser.add_argument('--debug', dest='debug', action='store_true')
     parser.set_defaults(debug=False)
+    parser.add_argument('--verbose', dest='verbose', action='store_true')
+    parser.set_defaults(verbose=False)
 
     args = parser.parse_args()
     print('Training config path: {}'.format(args.config))
@@ -25,8 +27,10 @@ if __name__ == '__main__':
     if args.resume_from is not None:
         print('Resuming from checkpoint path: {}'.format(args.resume_from))
     print('Debug mode: {}'.format(args.debug))
+    print('Verbose mode: {}'.format(args.verbose))
     
-    params = TrainingParams(args.config, args.model_config, debug=args.debug)
+    params = TrainingParams(args.config, args.model_config,
+                            debug=args.debug, verbose=args.verbose)
     # params.print()
 
     if args.debug:

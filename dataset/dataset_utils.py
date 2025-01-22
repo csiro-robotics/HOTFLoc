@@ -112,7 +112,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
     # octree: if True, loads octree in batch instead of sparse tensor
     def collate_fn(data_list):
-        if params.debug:
+        if params.verbose:
             tic = time.time()
 
         # Constructs a batch object
@@ -144,9 +144,9 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
                 minibatch = create_batch(temp, quantizer, params)
                 batch.append(minibatch)
 
-        if params.debug:
+        if params.verbose:
             toc = time.time()
-            print(f"[INFO] Collating batch done ({toc-tic:.2f}s) for {dataset.query_filepath}", flush=True)
+            print(f"[INFO] Collating batch done in {toc-tic:.2f}s for {dataset.query_filepath}", flush=True)
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors

@@ -130,6 +130,8 @@ class NetworkTrainer:
 
     def save_checkpoint(self, checkpoint_path: str):
         # Save checkpoint of training state (as opposed to just model weights)
+        if self.params.verbose:
+            print(f"[INFO] Saving checkpoint to {checkpoint_path}", flush=True)
         state = {
             'epoch': self.curr_epoch,
             'wandb_id': self.wandb_id,
@@ -265,6 +267,10 @@ class NetworkTrainer:
         assert phase in ['train', 'val']
 
         batch, positives_mask, negatives_mask = next(global_iter)
+
+        if self.params.verbose:
+            print("[INFO] Batch loaded, begin forward pass", flush=True)
+
         batch = {e: batch[e].to(self.device, non_blocking=True) for e in batch}
 
         if phase == 'train':
@@ -311,6 +317,9 @@ class NetworkTrainer:
 
         assert phase in ['train', 'val']
         batch, positives_mask, negatives_mask = next(global_iter)
+        
+        if self.params.verbose:
+            print("[INFO] Batch loaded, begin forward pass", flush=True)
 
         if phase == 'train':
             self.model.train()
@@ -433,6 +442,8 @@ class NetworkTrainer:
                 mesa = 0.0
             
             for phase in phases:
+                if self.params.verbose:
+                    print(f"[INFO] Begin {phase} phase", flush=True)
                 running_stats = []  # running stats for the current epoch and phase
                 count_batches = 0
                 epoch_embeddings = None
@@ -448,6 +459,10 @@ class NetworkTrainer:
                     batch_stats = {}
                     if self.params.debug and count_batches > 2:
                         break
+                    
+                    if self.params.verbose:
+                        print(f"[INFO] Processing {phase} batch: {count_batches}",
+                            flush=True)
 
                     try:
                         temp_stats, temp_embeddings = train_step_fn(global_iter, phase, loss_fn, self.params.num_embeddings_logged, mesa)
@@ -519,6 +534,8 @@ class NetworkTrainer:
                     torch.save(self.model.state_dict(), epoch_pathname)
 
             if self.params.eval_freq > 0 and epoch % self.params.eval_freq == 0:
+                if self.params.verbose:
+                    print("[INFO] Begin evaluation", flush=True)
                 eval_stats = evaluate(self.model, self.device, self.params, log=False)
                 print_eval_stats(eval_stats)
                 metrics['test'] = self.log_eval_stats(eval_stats)
