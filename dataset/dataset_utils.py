@@ -239,6 +239,9 @@ def in_sorted_array_vectorised(query_array : np.ndarray,
     np.ndarray: Boolean array where each element indicates if the corresponding
                 element in `query_array` is in `sorted_array`.
     """
+    query_array = np.asarray(query_array)
+    sorted_array = np.asarray(sorted_array)
+    
     # Return immediately if no elems in either array
     if len(sorted_array) == 0 or len(query_array) == 0:
         return np.full(query_array.shape, False, bool)
