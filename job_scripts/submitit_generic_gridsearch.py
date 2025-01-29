@@ -75,7 +75,8 @@ if __name__ == "__main__":
 
     base_params = TrainingParams(args.config, args.model_config,
                                  debug=args.debug, verbose=args.verbose)
-
+    base_params.hyperparam_search = True
+    
     hyperparam_grid = get_hyperparam_grid(base_params, args.gridsearch_config)
     
     # Configure executor
