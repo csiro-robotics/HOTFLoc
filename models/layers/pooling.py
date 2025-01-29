@@ -206,10 +206,11 @@ class PyramidAttnPoolWrapper(nn.Module):
         self.use_projections = True      
         if len(channels) == 1:
             channels = channels * num_pyramid_levels
-            self.use_projections = False
+            # NOTE: Commented out below line to allow arbitrary channel sizes
+            #       to be used with any global descriptor size.
+            # self.use_projections = False
         else:
             assert len(channels) == num_pyramid_levels, "Incorrect num channels"
-            channels = channels
         self.channels = channels
         self.num_pyramid_levels = num_pyramid_levels
         assert (isinstance(k_pooled_tokens, Sequence)
