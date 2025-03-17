@@ -43,8 +43,9 @@ class NetworkTrainer:
         self.wandb_id = None
         self.resume = False
         self.start_epoch = 1
+        self.curr_epoch = 1
         self.best_avg_AR_1 = 0.0
-        self.checkpoint_extension = '_latest_ckpt.pth'
+        self.checkpoint_extension = '_latest.ckpt'
         
     def __call__(
         self,
@@ -79,15 +80,19 @@ class NetworkTrainer:
         if self.resume:
             self.model_pathname = checkpoint_path.split(self.checkpoint_extension)[0]
             state = torch.load(checkpoint_path)
-            self.start_epoch = state['epoch']
-            self.wandb_id = state['wandb_id']
-            self.best_avg_AR_1 = state['best_avg_AR_1']
-            self.model.load_state_dict(state['model_state_dict'])
-            self.optimizer.load_state_dict(state['optim_state_dict'])
-            if self.scheduler is not None:
-                self.scheduler.load_state_dict(state['sched_state_dict'])
-            if self.model_ema is not None:
-                self.model_ema.load_state_dict(state['model_ema_state_dict'])
+            try:
+                self.start_epoch = state['epoch']
+                self.curr_epoch = self.start_epoch
+                self.wandb_id = state['wandb_id']
+                self.best_avg_AR_1 = state['best_avg_AR_1']
+                self.model.load_state_dict(state['model_state_dict'])
+                self.optimizer.load_state_dict(state['optim_state_dict'])
+                if self.scheduler is not None:
+                    self.scheduler.load_state_dict(state['sched_state_dict'])
+                if self.model_ema is not None:
+                    self.model_ema.load_state_dict(state['model_ema_state_dict'])
+            except KeyError:
+                print("Invalid checkpoint file provided. Only files ending in '.ckpt' are valid for resuming training.")
             print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
         else:
             # Create model class
@@ -130,8 +135,7 @@ class NetworkTrainer:
 
     def save_checkpoint(self, checkpoint_path: str):
         # Save checkpoint of training state (as opposed to just model weights)
-        if self.params.verbose:
-            print(f"[INFO] Saving checkpoint to {checkpoint_path}", flush=True)
+        print(f"[INFO] Saving checkpoint to {checkpoint_path}", flush=True)
         state = {
             'epoch': self.curr_epoch,
             'wandb_id': self.wandb_id,
@@ -434,7 +438,6 @@ class NetworkTrainer:
 
         for epoch in tqdm.tqdm(range(self.start_epoch, self.params.epochs + 1),
                                initial=self.start_epoch-1, total=self.params.epochs):
-            self.curr_epoch = epoch
             metrics = {'train': {}, 'val': {}, 'test': {}}      # Metrics for wandb reporting
             if epoch / self.params.epochs > self.params.mesa_start_ratio:
                 mesa = self.params.mesa
@@ -522,6 +525,7 @@ class NetworkTrainer:
                 #     metrics['embeddings'] = wandb.Table(dataframe=embeddings_dataframe)
 
             # ******* FINALIZE THE EPOCH *******
+            self.curr_epoch += 1  # increment the epoch counter here to ensure next ckpt saves with correct epoch count
             if self.scheduler is not None:
                 self.scheduler.step()
             
@@ -529,14 +533,14 @@ class NetworkTrainer:
                 checkpoint_path = self.model_pathname + self.checkpoint_extension
                 self.save_checkpoint(checkpoint_path)
                 if self.params.save_freq > 0 and epoch % self.params.save_freq == 0:
-                    epoch_pathname = f"{self.model_pathname}_e{epoch}.pth"
-                    print(f"Saving weights: {epoch_pathname}")
-                    torch.save(self.model.state_dict(), epoch_pathname)
+                    epoch_pathname = f"{self.model_pathname}_e{epoch}.ckpt"
+                    self.save_checkpoint(epoch_pathname)
 
             if self.params.eval_freq > 0 and epoch % self.params.eval_freq == 0:
                 if self.params.verbose:
                     print("[INFO] Begin evaluation", flush=True)
-                eval_stats = evaluate(self.model, self.device, self.params, log=False)
+                eval_stats = evaluate(self.model, self.device, self.params,
+                                      log=False, show_progress=self.params.verbose)
                 print_eval_stats(eval_stats)
                 metrics['test'] = self.log_eval_stats(eval_stats)
                 # store best AR@1 on all test sets
@@ -545,9 +549,8 @@ class NetworkTrainer:
                     print(f"New best avg AR@1 at Epoch {epoch}: {self.best_avg_AR_1:.2f} -> {avg_AR_1:.2f}")
                     self.best_avg_AR_1 = avg_AR_1
                     if not self.params.debug:
-                        best_model_pathname = f"{self.model_pathname}_best.pth"
-                        print(f"Saving weights: {best_model_pathname}")
-                        torch.save(self.model.state_dict(), best_model_pathname)
+                        best_model_pathname = f"{self.model_pathname}_best.ckpt"
+                        self.save_checkpoint(best_model_pathname)
 
             if not self.params.debug:
                 wandb.log(metrics)
@@ -565,13 +568,13 @@ class NetworkTrainer:
 
         # Save final model weights
         if not self.params.debug:
-            final_model_path = self.model_pathname + '_final.pth'
-            print(f"Saving weights: {final_model_path}")
-            torch.save(self.model.state_dict(), final_model_path)
+            final_model_path = self.model_pathname + '_final.ckpt'
+            self.save_checkpoint(final_model_path)
 
         # Evaluate the final
         # PointNetVLAD datasets evaluation protocol
-        stats = evaluate(self.model, self.device, self.params, log=False)
+        stats = evaluate(self.model, self.device, self.params, log=False,
+                         show_progress=self.params.verbose)
         print_eval_stats(stats)
 
         print('.')
