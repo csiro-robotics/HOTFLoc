@@ -95,7 +95,7 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     for data_set in tqdm.tqdm(query_sets, disable=not show_progress, desc='Computing query embeddings'):
         query_embeddings.append(get_latent_vectors(model, data_set, device, params))
 
-    for i in range(len(query_sets)):
+    for i in range(len(database_sets)):
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue

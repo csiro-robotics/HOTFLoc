@@ -97,16 +97,18 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     for data_set in tqdm.tqdm(query_sets, disable=not show_progress, desc='Computing query embeddings'):
         query_embeddings.append(get_latent_vectors(model, data_set, device, params))
 
-    for i in range(len(query_sets)):
+    for i in range(len(database_sets)):
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue
-            split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
+            if 'Campus3D' in params.dataset_name:
+                split_name = os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0] + f'_idx{i}'
+            else:
+                split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
             pair_recall, pair_opr, pair_mrr = get_recall(i, j, database_embeddings,
                                                          query_embeddings, query_sets,
                                                          database_sets, log=log,
-                                                         model_name=model_name,
-                                                         split_name=split_name)
+                                                         model_name=model_name)
             recall += np.array(pair_recall)
             count += 1
             one_percent_recall.append(pair_opr)
