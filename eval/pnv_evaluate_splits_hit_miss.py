@@ -102,6 +102,9 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue
             if 'Campus3D' in params.dataset_name:
+                # For Campus3D, we report on the aerial-only database, which is idx 1
+                if i != 1:
+                    continue
                 split_name = os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0] + f'_idx{i}'
             else:
                 split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]

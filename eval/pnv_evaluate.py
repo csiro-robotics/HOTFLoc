@@ -99,6 +99,10 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue
+            if 'Campus3D' in params.dataset_name:
+                # For Campus3D, we report on the aerial-only database, which is idx 1
+                if i != 1:
+                    continue
             pair_recall, pair_opr, pair_mrr = get_recall(i, j, database_embeddings,
                                                          query_embeddings, query_sets,
                                                          database_sets, log=log,
