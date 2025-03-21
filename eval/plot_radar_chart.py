@@ -133,14 +133,23 @@ def scale_array(arr: np.ndarray, new_min, new_max, old_min=None, old_max=None):
 
 def main():
 
-    # Results stored as [CSWP (Unseen), CSWP (Baseline), WP, Oxford, US, RA, BD, CSC3D]
-    hotformerloc_ar1 = np.asarray([61.2, 59.8, 74.8, 96.4, 92.3, 89.2, 90.4, 80.9])
-    crossloc_ar1 =     np.asarray([10.3,  9.8,  0.0, 94.4, 82.5, 78.9, 80.5, 74.1])
-    minkloc3dv2_ar1 =  np.asarray([49.7, 54.3, 71.8, 96.3, 90.9, 86.5, 86.3, 67.1])
+    # # Results stored as [CSWP (Unseen), CSWP (Baseline), WP, Oxford, US, RA, BD, CSC3D]
+    # hotformerloc_ar1 = np.asarray([61.2, 59.8, 74.8, 96.4, 92.3, 89.2, 90.4, 80.9])
+    # crossloc_ar1 =     np.asarray([10.3,  9.8,  0.0, 94.4, 82.5, 78.9, 80.5, 74.1])
+    # minkloc3dv2_ar1 =  np.asarray([49.7, 54.3, 71.8, 96.3, 90.9, 86.5, 86.3, 67.1])
+    # logg3dnet_ar1 =    np.asarray([25.0, 29.4, 77.3,  0.0,  0.0,  0.0,  0.0,  0.0])  # epoch 3, 4 gpu, voxel 0.5, dim 32, 9 negs
+    # transloc3d_ar1 =   np.asarray([ 0.0,  0.0, 48.2, 95.0, 88.0, 82.0, 82.3, 58.2])
+    # pptnet_ar1 =       np.asarray([ 0.0,  0.0,  0.0, 93.5, 90.1, 84.1, 84.6,  0.0])
+    # pnvlad_ar1 =       np.asarray([ 0.0,  0.0,  0.0, 62.8, 63.2, 56.1, 57.2, 35.6])
+
+    # Results stored as [CSWP (Unseen), CSWP (Baseline), WP, Oxford, US, RA, BD, CSC3D] (WITH CAMPUS3D AERIAL-ONLY RESULTS)
+    hotformerloc_ar1 = np.asarray([61.2, 59.8, 74.8, 96.4, 92.3, 89.2, 90.4, 80.4])
+    crossloc_ar1 =     np.asarray([10.3,  9.8,  0.0, 94.4, 82.5, 78.9, 80.5, 70.7])
+    minkloc3dv2_ar1 =  np.asarray([49.7, 54.3, 71.8, 96.3, 90.9, 86.5, 86.3, 52.5])
     logg3dnet_ar1 =    np.asarray([25.0, 29.4, 77.3,  0.0,  0.0,  0.0,  0.0,  0.0])  # epoch 3, 4 gpu, voxel 0.5, dim 32, 9 negs
-    transloc3d_ar1 =   np.asarray([ 0.0,  0.0, 48.2, 95.0, 88.0, 82.0, 82.3, 58.2])
+    transloc3d_ar1 =   np.asarray([ 0.0,  0.0, 48.2, 95.0, 88.0, 82.0, 82.3, 43.0])
     pptnet_ar1 =       np.asarray([ 0.0,  0.0,  0.0, 93.5, 90.1, 84.1, 84.6,  0.0])
-    pnvlad_ar1 =       np.asarray([ 0.0,  0.0,  0.0, 62.8, 63.2, 56.1, 57.2, 35.6])
+    pnvlad_ar1 =       np.asarray([ 0.0,  0.0,  0.0, 62.8, 63.2, 56.1, 57.2, 19.1])
     
     results_ar1 = {
         # "PNVLAD" : pnvlad_ar1,
@@ -151,12 +160,13 @@ def main():
         # "LoGG3D-Net" : logg3dnet_ar1.copy(),
         "HOTFormerLoc" : hotformerloc_ar1.copy(),
     }
-    dataset_names = ['In-house\n(Unseen)', 'In-house\n(Baseline)', 'Wild-Places\n[24]',
-                     'Oxford\nRobotcar [31]', 'University\nSector [44]', 'Residential\nArea [44]',
-                     'Business\nDistrict [44]', 'CS-Campus3D\n[11]']
+    dataset_names = ['CS-Wild-Places\n(Unseen)', 'CS-Wild-Places\n(Baseline)', 'Wild-Places\n[26]',
+                     'Oxford\nRobotcar [33]', 'University\nSector [48]', 'Residential\nArea [48]',
+                     'Business\nDistrict [48]', 'CS-Campus3D\n[13]']
     # dataset_min = [5, 5, 47, 34-4, 61-4, 61-4, 54-4, 55-4] # w/ PNVLAD
     # dataset_min = [4.5, 5, 38, 80, 68, 68, 68, 48]  # standard
-    dataset_min = [0, 0, 38, 83, 72, 72, 68, 48]  # standard (10% below min)
+    # dataset_min = [0, 0, 38, 83, 72, 72, 68, 48]  # standard (10% below min)
+    dataset_min = [0, 0, 38, 83, 72, 72, 68, 30]  # standard (10% below min) - campus3d aerial-only
     # dataset_min = [4.5, 5, 38, 80, 68, 68, 68, 35]  # campus3d scale reduced
     # dataset_min = [0]*len(dataset_names) 
     # dataset_min = [40]*len(dataset_names)
