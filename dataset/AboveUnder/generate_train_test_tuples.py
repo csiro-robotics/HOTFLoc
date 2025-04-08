@@ -32,31 +32,23 @@ np.random.seed(RANDOM_SEED)
 MARKER_SIZES = {'aerial':4, 'ground':8}
 # img_dict = {'QCAT':'maps/qcat.png', 'Samford':'maps/samford.png', 'Robson':'maps/robson.png'}
 
+# VAL_SPLITS = ['Karawatha']   # splits to use for validation during training
+# BASELINE_SPLITS = ['Karawatha']  # splits in baseline train set
 VAL_SPLITS = ['Karawatha', 'Venman']   # splits to use for validation during training
 BASELINE_SPLITS = ['Karawatha', 'Venman']  # splits in baseline train set
 
 ### POLYGONS (easting, northing)
 ## BELOW ARE THE OLD TEST REGIONS FOR QCAT, SAMFORD, ROBSON, BUT NOW THESE ENTIRE
 ## SETS ARE BEING USED DURING TEST TIME
-# # For QCAT
+# For QCAT
 # p1 = Polygon([(491013, 6955331), (491013, 6955353), (491090, 6955353), (491090, 6955294)])
-# # For Samford
+# For Samford
 # p2 = Polygon([(487542, 6970331), (487542, 6970464), (487648, 6970464), (487648, 6970331)])
 # p3 = Polygon([(487831, 6970162), (487831, 6970230), (487982, 6970230), (487982, 6970162)])
-# # For Robson
-# p4 = Polygon([(354200,8106640), (354200,8106870), (354210,8106870), (354210,8106640)])
-# # For Beetaloo
-# p5 = Polygon([(365747,8195521), (365747,8195625), (365884,8195625), (365884,8195521)])
-
-## NEW TEST REGIONS WHICH COVER THE ENTIRE SPLITS
-# For QCAT
-p1 = Polygon([(490500, 6955000), (490500, 6956000), (491500, 6956000), (491500, 6955000)])
-# For Samford
-p2 = Polygon([(487000, 6969000), (487000, 6971000), (489000, 6971000), (489000, 6969000)])
 # For Robson
-p4 = Polygon([(353000,8106000), (353000,8108000), (355000,8108000), (355000,8106000)])
+# p4 = Polygon([(354200,8106640), (354200,8106870), (354210,8106870), (354210,8106640)])
 # For Beetaloo
-p5 = Polygon([(365000,8195000), (365000,8197000), (367000,8197000), (367000,8195000)])
+# p5 = Polygon([(365747,8195521), (365747,8195625), (365884,8195625), (365884,8195521)])
 
 # For Karawatha (same as wild places, but transformed to UTM frame with relative_transform.txt)
 # p6 = Polygon([(-150, 8), (300,8), (300,-210), (-150,-210)])  # original frame
@@ -68,12 +60,26 @@ p5 = Polygon([(365000,8195000), (365000,8197000), (367000,8197000), (367000,8195
 #               (5.07094605e+05,  6.94307457e+06), (5.06953605e+05,  6.94307438e+06)])
 # p8 = Polygon([(5.06655775e+05,  6.94295096e+06), (5.06656139e+05,  6.94268796e+06),
 #               (5.06848138e+05,  6.94268823e+06), (5.06847775e+05,  6.94295123e+06)])
+
+## NEW TEST REGIONS WHICH COVER THE ENTIRE SPLITS
+# For QCAT
+p1 = Polygon([(490500, 6955000), (490500, 6956000), (491500, 6956000), (491500, 6955000)])
+# For Samford
+p2 = Polygon([(487000, 6969000), (487000, 6971000), (489000, 6971000), (489000, 6969000)])
+# For Robson
+p4 = Polygon([(353000,8106000), (353000,8108000), (355000,8108000), (355000,8106000)])
+# For Beetaloo
+p5 = Polygon([(365000,8195000), (365000,8197000), (367000,8197000), (367000,8195000)])
+
+# NEW UTM TRANSFORM
+# Karawatha
 p6 = Polygon([(507018.60467,6942659.3756), (507468.60473,6942659.6724),
               (507468.74853,6942441.6724), (507018.74850,6942441.3756)])
 p7 = Polygon([(506953.20227,6943269.3327), (507094.20227,6943269.4257),
               (507094.33093,6943074.4257), (506953.33090,6943074.3327)])
 p8 = Polygon([(506655.41198,6942951.1361), (506655.58551,6942688.1361),
               (506847.58554,6942688.2628), (506847.41204,6942951.2627)])
+# Venman
 p9 = Polygon([(519331.85162354,6943652.20440674), (519331.19000244,6943778.20266724),
               (519485.18786621,6943779.01129150), (519494.35580444,6943747.05899048),
               (519607.18621826,6943779.65188599), (519607.84783936,6943653.65362549)])
@@ -83,8 +89,10 @@ p11 = Polygon([(519737.04788208,6943806.33413696), (519894.04573059,6943807.1585
                (519941.41265869,6943737.40628052), (519940.15832520,6943595.39773560),
                (519738.16110229,6943594.33709717)])
 
+# POLY_DICT = {'QCAT':[p1], 'Samford':[p2,p3], 'Robson':[p4], 'Beetaloo':[p5], 
+#              'Karawatha':[p6,p7,p8]}  # OLD SPLITS
 POLY_DICT = {'QCAT':[p1], 'Samford':[p2], 'Robson':[p4], 'Beetaloo':[p5], 
-             'Karawatha':[p6,p7,p8], 'Venman':[p9, p10, p11]}
+             'Karawatha':[p6,p7,p8], 'Venman':[p9, p10, p11]}  # NEW SPLITS
 ###
 
 def get_timestamp_from_file(file):
@@ -200,7 +208,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, v
         )
     
     print(f"Queries with no positives: {count_no_positives}")
-    print(f"Queries skipped per split:")
+    print("Queries skipped per split:")
     num_queries_skipped_total = 0
     for split, num in num_queries_skipped.items():
         print(f"{split}: {num}")
@@ -332,7 +340,7 @@ def main():
         test_sets = []
 
         # Gather submaps from each folder in split        
-        print(f'Processing submaps... ', end='')
+        print('Processing submaps... ', end='')
         for folder in folders:
             df_database = pd.DataFrame(columns=['file','easting','northing'])
             database_dict = {}
@@ -424,7 +432,7 @@ def main():
     print(f"Total number of test query submaps: {len(test_queries)}")
 
     ### Vis if selected ###
-    if args.viz == True:
+    if args.viz is True:
         all_coords_plot = {k:np.array(v) for k, v in all_coords.items()}
         split_mean = {}
         for split, split_coords in all_coords_plot.items():
@@ -459,8 +467,8 @@ def main():
         ground_positives = "_ground-aerial-only_"
     else:
         ground_positives = "_"
-    train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_baseline{ground_positives}")
-    train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_refined{ground_positives}")
+    train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_pos{args.pos_thresh:.0f}m_baseline{ground_positives}")
+    train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_pos{args.pos_thresh:.0f}m_refined{ground_positives}")
     # train_file_baseline_basename = path.join(save_dir, f"training_queries_above-under_baseline_")
     # train_file_refined_basename = path.join(save_dir, f"training_queries_above-under_refined_")
     test_file_base = path.join(save_dir, "test_queries_above-under_")
@@ -510,7 +518,7 @@ if __name__ == '__main__':
     #     args.buffer_thresh = 1 * args.eval_thresh
     assert not args.refined, "Refined split currently disabled!"
     if args.query_requires_ground and args.ground_aerial_positives_only:
-        print(f"[WARNING] --ground_aerial_positives_only will supersede --query_requires_ground, thus the latter will have no effect")
+        print("[WARNING] --ground_aerial_positives_only will supersede --query_requires_ground, thus the latter will have no effect")
         args.query_requires_ground = False
     
     args.save_dir = args.root if args.save_dir is None else args.save_dir
