@@ -168,9 +168,11 @@ if __name__ == "__main__":
     # model_configs['hotfloc_Oxford'] = '../models/hotformerloc_best_oxford_cfg.txt'
     # configs['hotfloc_campus3d'] = '../config/config_Campus3D_octf_no-norm_depth7_lr5e-4_sched250_350_rotation_180deg_mode2.txt'
     # model_configs['hotfloc_campus3d'] = '../models/hotformerloc_best_CS-Campus3D_cfg.txt'
-    configs['hotfloc_cswildplaces'] = '../config/config_CS-WildPlaces_rmground_thresh30m_stdnorm_octf_depth7_lr8e-4_sched50_mesa1.txt'
+    configs['hotfloc_cswildplaces'] = '../config/config_hotformerloc_cs-wild-places.txt'
     model_configs['hotfloc_cswildplaces'] = '../models/hotformerloc_best_CS-Wild-Places_cfg.txt'
 
+    # configs['hotfloc_cswildplaces_tiny'] = '../config/config_hotformerloc_cs-wild-places.txt'
+    # model_configs['hotfloc_cswildplaces_tiny'] = '../models/hotformerloc-tiny_cfg.txt'
     query_sets, database_sets = None, None
     
     for model_type in configs.keys():        
