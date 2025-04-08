@@ -69,7 +69,7 @@ class PoolingWrapper(nn.Module):
         elif self.pool_method == 'PyramidAttnPoolMixer':
             # Pyramid attentional pooling with token mixing MLP - local features
             self.pooling = PyramidAttnPoolWrapper(
-                feature_size=in_dim, output_dim=output_dim,
+                feature_size=in_dim, output_dim=output_dim, channels=channels,
                 num_pyramid_levels=num_pyramid_levels,
                 k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
             )

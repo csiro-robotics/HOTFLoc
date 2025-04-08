@@ -12,15 +12,45 @@ def get_query_database_splits(params):
             # 'above-under_Beetaloo_evaluation_database.pickle',
             'above-under_Karawatha_evaluation_database.pickle',
             'above-under_QCAT_evaluation_database.pickle', 
-            # 'above-under_Robson_evaluation_database.pickle', 
-            'above-under_Samford_evaluation_database.pickle'
+            'above-under_Samford_evaluation_database.pickle',
+            'above-under_Robson_evaluation_database.pickle', 
         ]
         eval_query_files = [
             # 'above-under_Beetaloo_evaluation_query.pickle',
             'above-under_Karawatha_evaluation_query.pickle',
             'above-under_QCAT_evaluation_query.pickle', 
-            # 'above-under_Robson_evaluation_query.pickle', 
-            'above-under_Samford_evaluation_query.pickle'
+            'above-under_Samford_evaluation_query.pickle',
+            'above-under_Robson_evaluation_query.pickle', 
+        ]
+    elif 'CS_WildPlaces_thresh30m' in params.dataset_name:
+        eval_database_files = [
+            '30m_pickles/above-under_Karawatha_evaluation_database.pickle',
+            '30m_pickles/above-under_Venman_evaluation_database.pickle',
+            '30m_pickles/above-under_QCAT_evaluation_database.pickle', 
+            '30m_pickles/above-under_Samford_evaluation_database.pickle',
+            # '30m_pickles/above-under_Robson_evaluation_database.pickle',
+        ]
+        eval_query_files = [
+            '30m_pickles/above-under_Karawatha_evaluation_query.pickle',
+            '30m_pickles/above-under_Venman_evaluation_query.pickle',
+            '30m_pickles/above-under_QCAT_evaluation_query.pickle', 
+            '30m_pickles/above-under_Samford_evaluation_query.pickle',
+            # '30m_pickles/above-under_Robson_evaluation_query.pickle',
+        ]
+    elif 'CS_WildPlaces' in params.dataset_name:
+        eval_database_files = [
+            'above-under_Karawatha_evaluation_database.pickle',
+            'above-under_Venman_evaluation_database.pickle',
+            'above-under_QCAT_evaluation_database.pickle', 
+            'above-under_Samford_evaluation_database.pickle',
+            # 'above-under_Robson_evaluation_database.pickle',
+        ]
+        eval_query_files = [
+            'above-under_Karawatha_evaluation_query.pickle',
+            'above-under_Venman_evaluation_query.pickle',
+            'above-under_QCAT_evaluation_query.pickle', 
+            'above-under_Samford_evaluation_query.pickle',
+            # 'above-under_Robson_evaluation_query.pickle',
         ]
     elif 'WildPlaces_5m_pos' in params.dataset_name:
         eval_database_files = [

@@ -19,6 +19,8 @@ class AdaptivePooling(nn.Module):
         super().__init__()
         self.k_pooled_tokens = k_pooled_tokens
         self.query = nn.Parameter(torch.randn(k_pooled_tokens, feature_dim))
+        self.scale = feature_dim ** -0.5
+        self.softmax = torch.nn.Softmax(dim=-1)
 
     def forward(self, x, attn_mask = None, return_weights=False):
         """
@@ -28,13 +30,22 @@ class AdaptivePooling(nn.Module):
         Returns:
             Output tensor of shape (batch_size, k_pooled_tokens, feature_dim)
         """
+        B, _, C = x.shape
         query = self.query.unsqueeze(0).repeat(x.shape[0],1,1)
         if attn_mask is not None:
             attn_mask = attn_mask.to(query.dtype)
-
-        out = F.scaled_dot_product_attention(
-            query=query, key=x, value=x, attn_mask=attn_mask
-        )
+        
+        if torch.__version__ >= torch.torch_version.TorchVersion(2.0):
+            out = F.scaled_dot_product_attention(
+                query=query, key=x, value=x, attn_mask=attn_mask
+            )
+        else:
+            query = query * self.scale
+            # attn
+            attn = query @ x.transpose(-2, -1)        # (B, H, N, N)
+            attn = attn + attn_mask
+            attn = self.softmax(attn)
+            out = (attn @ x)  # (B, K, C)
         
         if return_weights:
             attn_scores = torch.einsum('ij,bkj->bik', self.query, x)

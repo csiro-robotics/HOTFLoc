@@ -122,6 +122,7 @@ class ModelParams:
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.k_pooled_tokens = params.get('k_pooled_tokens', '64')  # number of tokens to pool to when using attentional pooling
+                self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
                 if self.k_pooled_tokens.isdigit():
                     self.k_pooled_tokens = int(self.k_pooled_tokens)
                 else:
@@ -152,7 +153,8 @@ class TrainingParams:
     """
     Parameters for model training
     """
-    def __init__(self, params_path: str, model_params_path: str, debug: bool = False):
+    def __init__(self, params_path: str, model_params_path: str,
+                 debug: bool = False, verbose: bool = False):
         """
         Configuration files
         :param path: Training configuration file
@@ -164,6 +166,7 @@ class TrainingParams:
         self.params_path = params_path
         self.model_params_path = model_params_path
         self.debug = debug
+        self.verbose = verbose
 
         config = configparser.ConfigParser()
 

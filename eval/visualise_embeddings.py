@@ -63,7 +63,7 @@ def visualise_embeddings(model, device, num_queries: int, query_min_distance: fl
     query_file = eval_query_files[0]
     
     # Extract location name from query and database files
-    if 'AboveUnder' in params.dataset_name:
+    if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
         location_name = database_file.split('_')[1]
         temp = query_file.split('_')[1]
     else:
@@ -240,7 +240,11 @@ if __name__ == "__main__":
     if args.weights is not None:
         assert os.path.exists(args.weights), 'Cannot open network weights: {}'.format(args.weights)
         print('Loading weights: {}'.format(args.weights))
-        model.load_state_dict(torch.load(args.weights, map_location=device))
+        if os.path.splitext(args.weights)[1] == '.ckpt':
+            state = torch.load(args.weights)
+            model.load_state_dict(state['model_state_dict'])
+        else:  # .pt or .pth
+            model.load_state_dict(torch.load(args.weights, map_location=device))
 
     model.to(device)
 
