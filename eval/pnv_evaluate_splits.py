@@ -36,7 +36,7 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
     ave_mrr = []
     for database_file, query_file in zip(eval_database_files, eval_query_files):
         # Extract location name from query and database files
-        if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
+        if 'AboveUnder' in params.dataset_name or 'CSWildPlaces' in params.dataset_name:
             if "pickles/" in database_file:  # CS-WildPlaces
                 location_name = database_file.split('/')[-1].split('_')[1]
                 temp = query_file.split('/')[-1].split('_')[1]
@@ -101,7 +101,7 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
                 continue
-            if 'Campus3D' in params.dataset_name:
+            if 'CSCampus3D' in params.dataset_name:
                 # For Campus3D, we report on the aerial-only database, which is idx 1
                 if i != 1:
                     continue
@@ -153,7 +153,7 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams):
     #     embeddings = np.random.rand(len(set), 256)
     #     return embeddings
 
-    if params.dataset_name in ['Oxford','Campus3D']:
+    if params.dataset_name in ['Oxford','CSCampus3D']:
         pc_loader = PNVPointCloudLoader()
     elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()

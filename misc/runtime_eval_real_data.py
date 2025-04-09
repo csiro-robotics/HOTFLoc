@@ -53,7 +53,7 @@ def load_eval_sets(params):
     query_file = eval_query_files[0]
     
     # Extract location name from query and database files
-    if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
+    if 'AboveUnder' in params.dataset_name or 'CSWildPlaces' in params.dataset_name:
         if "pickles/" in database_file:  # CS-WildPlaces
             location_name = database_file.split('/')[-1].split('_')[1]
             temp = query_file.split('/')[-1].split('_')[1]
@@ -96,7 +96,7 @@ def collate_batch(data, params: TrainingParams):
 def load_preprocess_submap(submap, params, preprocess = True):
     """Load submap, and pre-process into appropriate format."""
     # Get correct point cloud loader
-    if params.dataset_name in ['Oxford','Campus3D']:
+    if params.dataset_name in ['Oxford','CSCampus3D']:
         pc_loader = PNVPointCloudLoader()
     elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()

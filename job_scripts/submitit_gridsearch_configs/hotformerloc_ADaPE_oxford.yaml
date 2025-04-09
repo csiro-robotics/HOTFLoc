@@ -1,0 +1,9 @@
+# Gridsearch params
+lr: [0.0001]
+octree_depth: [9]
+model_params:
+    model: [HOTFormerLoc-ADaPE-Sweep]
+    patch_size: [32]
+    num_pyramid_levels: [3]
+    pooling: [PyramidOctGeMgc]
+    ADaPE_mode: [null, cov]

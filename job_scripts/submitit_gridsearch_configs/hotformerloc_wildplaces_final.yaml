@@ -1,0 +1,10 @@
+# Gridsearch params
+lr: [0.0005, 0.001]
+octree_depth: [7]
+model_params:
+    model: [HOTFormerLoc-WildPlaces-Sweep]
+    patch_size: [48, 64]
+    num_pyramid_levels: [3]
+    pooling: [PyramidAttnPoolMixer]
+    k_pooled_tokens: [[74, 36, 18]]
+    coordinates: [cylindrical]

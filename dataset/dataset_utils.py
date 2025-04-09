@@ -15,19 +15,19 @@ from dataset.augmentation import TrainSetTransform
 from dataset.pointnetvlad.pnv_train import PNVTrainingDataset
 from dataset.pointnetvlad.pnv_train import TrainTransform as PNVTrainTransform
 from dataset.pointnetvlad.pnv_train import ValTransform as PNVValTransform
-from dataset.AboveUnder.AboveUnder_train import AboveUnderTrainingDataset
-from dataset.AboveUnder.AboveUnder_train import TrainTransform as AboveUnderTrainTransform
-from dataset.AboveUnder.AboveUnder_train import ValTransform as AboveUnderValTransform
+from dataset.CSWildPlaces.CSWildPlaces_train import CSWildPlacesTrainingDataset
+from dataset.CSWildPlaces.CSWildPlaces_train import TrainTransform as CSWildPlacesTrainTransform
+from dataset.CSWildPlaces.CSWildPlaces_train import ValTransform as CSWildPlacesValTransform
 from dataset.samplers import BatchSampler
 from misc.utils import TrainingParams
 from dataset.base_datasets import PointCloudLoader
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
-from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
+from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
 
 
 def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
-    if 'AboveUnder' in dataset_type or 'WildPlaces' in dataset_type:
-        return AboveUnderPointCloudLoader
+    if 'CSWildPlaces' in dataset_type or 'WildPlaces' in dataset_type:
+        return CSWildPlacesPointCloudLoader
     else:
         return PNVPointCloudLoader()
 
@@ -37,24 +37,24 @@ def make_datasets(params: TrainingParams, validation: bool = True):
     datasets = {}
     train_set_transform = TrainSetTransform(params.set_aug_mode, random_rot_theta=params.random_rot_theta)
 
-    # PoinNetVLAD datasets (RobotCar and Inhouse)
-    # PNV datasets have their own transform
-    if 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
-        train_transform = AboveUnderTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
-                                                   scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
-                                                   zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta)
-        datasets['train'] = AboveUnderTrainingDataset(params.dataset_folder, params.train_file,
-                                                      transform=train_transform, set_transform=train_set_transform,
-                                                      load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                      full_depth=params.full_depth, coordinates=params.model_params.coordinates)
-        if validation:
-            val_transform = AboveUnderValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-                                                   unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean)
-            datasets['val'] = AboveUnderTrainingDataset(params.dataset_folder, params.val_file,
-                                                        transform=val_transform,
+    if 'CSWildPlaces' in params.dataset_name or 'WildPlaces' in params.dataset_name:
+        train_transform = CSWildPlacesTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
+                                                     scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
+                                                     zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta)
+        datasets['train'] = CSWildPlacesTrainingDataset(params.dataset_folder, params.train_file,
+                                                        transform=train_transform, set_transform=train_set_transform,
                                                         load_octree=params.load_octree, octree_depth=params.octree_depth,
                                                         full_depth=params.full_depth, coordinates=params.model_params.coordinates)
-    else:
+        if validation:
+            val_transform = CSWildPlacesValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+                                                     unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean)
+            datasets['val'] = CSWildPlacesTrainingDataset(params.dataset_folder, params.val_file,
+                                                          transform=val_transform,
+                                                          load_octree=params.load_octree, octree_depth=params.octree_depth,
+                                                          full_depth=params.full_depth, coordinates=params.model_params.coordinates)
+    # PoinNetVLAD datasets (RobotCar and Inhouse)
+    # PNV datasets have their own transform
+    else:  # used for Oxford and CS-Campus3D
         train_transform = PNVTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
                                             scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
                                             zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta)
