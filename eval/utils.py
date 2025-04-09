@@ -55,7 +55,7 @@ def get_query_database_splits(params):
         ]
     elif params.dataset_name == 'CSCampus3D':
         eval_database_files = ['umd_evaluation_database.pickle']
-        eval_query_files = ['umd_evaluation_query_PNVLAD_format.pickle']
+        eval_query_files = ['umd_evaluation_query_v2.pickle']
     else:
         raise NotImplementedError(f'Dataset {params.dataset_name} has no splits implemented')
     return eval_database_files, eval_query_files
