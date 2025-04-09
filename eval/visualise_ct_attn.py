@@ -50,7 +50,7 @@ def load_eval_sets(params):
     query_file = eval_query_files[0]
     
     # Extract location name from query and database files
-    if 'AboveUnder' in params.dataset_name:
+    if 'AboveUnder' in params.dataset_name or 'CSWildPlaces' in params.dataset_name:
         location_name = database_file.split('_')[1]
         temp = query_file.split('_')[1]
     else:
@@ -134,7 +134,7 @@ def main(model, device, params: TrainingParams):
     model.eval()  # Eval mode
 
     # Get correct point cloud loader
-    if params.dataset_name in ['Oxford','Campus3D']:
+    if params.dataset_name in ['Oxford','CSCampus3D']:
         pc_loader = PNVPointCloudLoader()
     elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()
