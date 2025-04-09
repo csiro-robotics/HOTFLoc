@@ -1,0 +1,9 @@
+# Gridsearch params
+lr: [0.0003, 0.0008]
+octree_depth: [7]
+model_params:
+    model: [HOTFormerLoc-PyramidAttnPoolMixer-Sweep]
+    patch_size: [32, 64]
+    num_pyramid_levels: [3]
+    pooling: [PyramidAttnPoolMixer]
+    k_pooled_tokens: [[74, 36, 18], [148, 72, 36], [296, 144, 72]]

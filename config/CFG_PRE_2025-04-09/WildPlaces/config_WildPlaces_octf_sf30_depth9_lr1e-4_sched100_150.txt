@@ -1,0 +1,29 @@
+[DEFAULT]
+dataset_folder = /scratch3/gri317/datasets/wild_places/data
+
+[TRAIN]
+num_workers = 1
+batch_size = 1024
+batch_split_size = 64
+val_batch_size = 64
+save_freq = 10
+eval_freq = 5
+
+lr = 1e-4
+epochs = 200
+warmup_epochs = 5
+scheduler_milestones = 100, 150
+aug_mode = 1
+set_aug_mode = 1
+normalize_points = True
+scale_factor = 30
+octree_depth = 9
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+
+dataset_name = WildPlaces
+skip_same_run = True
+train_file = training_wild-places.pickle
+validation = False

@@ -1,0 +1,8 @@
+# Gridsearch params
+lr: [0.0001]
+octree_depth: [8,9,10]
+model_params:
+    model: [HOTFormerLoc-Localpool-Sweep]
+    patch_size: [24, 32, 48]
+    num_pyramid_levels: [2, 3]
+    pooling: [PyramidOctGeMgc]

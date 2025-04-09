@@ -63,7 +63,7 @@ def visualise_embeddings(model, device, num_queries: int, query_min_distance: fl
     query_file = eval_query_files[0]
     
     # Extract location name from query and database files
-    if 'AboveUnder' in params.dataset_name or 'CS_WildPlaces' in params.dataset_name:
+    if 'AboveUnder' in params.dataset_name or 'CSWildPlaces' in params.dataset_name:
         location_name = database_file.split('_')[1]
         temp = query_file.split('_')[1]
     else:
@@ -151,7 +151,7 @@ def collate_batch(data, device, params: TrainingParams):
     return batch
 
 def get_latent_vectors(model, data_list: list[str], device, params: TrainingParams) -> np.ndarray:
-    if params.dataset_name in ['Oxford','Campus3D']:
+    if params.dataset_name in ['Oxford','CSCampus3D']:
         pc_loader = PNVPointCloudLoader()
     elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
         pc_loader = AboveUnderPointCloudLoader()
