@@ -208,7 +208,14 @@ class NetworkTrainer:
         return stats
 
     def print_global_stats(self, phase, stats):
-        s = f"{phase}  loss: {stats['loss']:.4f}   embedding norm: {stats['avg_embedding_norm']:.3f}  "
+        s = f"{phase}  total loss: {stats['loss_total']:.4f}   PR loss: {stats['loss']:.4f}   "
+        if 'loss_mesa' in stats:
+            s += f"MESA loss: {stats['loss_mesa']:.4f}   "
+        if 'local_qkv_std_loss' in stats:
+            s += f"local qkv std loss: {stats['local_qkv_std_loss']:.4f}   "
+        if 'rt_qkv_std_loss' in stats:
+            s += f"rt qkv std loss: {stats['rt_qkv_std_loss']:.4f}   "
+        s += f"embedding norm: {stats['avg_embedding_norm']:.3f}   "
         if 'num_triplets' in stats:
             s += f"Triplets (all/active): {stats['num_triplets']:.1f}/{stats['num_non_zero_triplets']:.1f}  " \
                 f"Mean dist (pos/neg): {stats['mean_pos_pair_dist']:.3f}/{stats['mean_neg_pair_dist']:.3f}   "
@@ -267,7 +274,7 @@ class NetworkTrainer:
             eval_stats[database_name]['MRR'] = stats[database_name]['ave_mrr']
         return eval_stats
 
-    def training_step(self, global_iter, phase, loss_fn, num_embeddings_logged, mesa=0.0):
+    def training_step(self, global_iter, phase, loss_fn, qkv_std_loss_fn, num_embeddings_logged, mesa=0.0):
         assert phase in ['train', 'val']
 
         batch, positives_mask, negatives_mask = next(global_iter)
@@ -299,8 +306,18 @@ class NetworkTrainer:
                     with torch.no_grad():
                         ema_output = self.model_ema.module(batch)['global'].detach()
                     kd = kdloss(embeddings, ema_output)
-                    loss += mesa * kd
-                    
+                    mesa_loss = mesa * kd
+                    loss += mesa_loss
+                    stats['loss_mesa'] = mesa_loss.item()
+
+                # Compute qkv std regularisation loss
+                if qkv_std_loss_fn is not None:
+                    qkv_std_loss, temp_stats = qkv_std_loss_fn(y)
+                    temp_stats = self.tensors_to_numbers(temp_stats)
+                    stats.update(temp_stats)
+                    loss += qkv_std_loss
+
+                stats['loss_total'] = loss.item()
                 loss.backward()
                 self.optimizer.step()
                 
@@ -312,7 +329,7 @@ class NetworkTrainer:
         return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
 
 
-    def multistaged_training_step(self, global_iter, phase, loss_fn, num_embeddings_logged, mesa=0.0):
+    def multistaged_training_step(self, global_iter, phase, loss_fn, qkv_std_loss_fn, num_embeddings_logged, mesa=0.0):
         # Training step using multistaged backpropagation algorithm as per:
         # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
         # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
@@ -359,7 +376,16 @@ class NetworkTrainer:
             # Compute MESA loss
             if mesa > 0.0:
                 kd = kdloss(embeddings, embeddings_ema)
-                loss += mesa * kd
+                mesa_loss = mesa * kd
+                loss += mesa_loss
+                stats['loss_mesa'] = mesa_loss.item()
+            # Compute qkv std regularisation loss
+            if qkv_std_loss_fn is not None:
+                qkv_std_loss, temp_stats = qkv_std_loss_fn(y)
+                temp_stats = self.tensors_to_numbers(temp_stats)
+                stats.update(temp_stats)
+                loss += qkv_std_loss
+            stats['loss_total'] = loss.item()
             if phase == 'train':
                 loss.backward()
                 embeddings_grad = embeddings.grad
@@ -399,7 +425,7 @@ class NetworkTrainer:
         # set up dataloaders
         dataloaders = make_dataloaders(self.params, validation=self.params.validation)
 
-        loss_fn = make_losses(self.params)
+        loss_fn, qkv_std_loss_fn = make_losses(self.params)
 
         if self.params.batch_split_size is None or self.params.batch_split_size == 0:
             train_step_fn = self.training_step
@@ -468,7 +494,10 @@ class NetworkTrainer:
                             flush=True)
 
                     try:
-                        temp_stats, temp_embeddings = train_step_fn(global_iter, phase, loss_fn, self.params.num_embeddings_logged, mesa)
+                        temp_stats, temp_embeddings = train_step_fn(
+                            global_iter, phase, loss_fn, qkv_std_loss_fn,
+                            self.params.num_embeddings_logged, mesa
+                        )
                         batch_stats['global'] = temp_stats
 
                     except StopIteration:
@@ -504,6 +533,7 @@ class NetworkTrainer:
 
                 # Log metrics for wandb
                 metrics[phase]['loss1'] = epoch_stats['global']['loss']
+                metrics[phase]['loss_total'] = epoch_stats['global']['loss_total']
                 if 'num_non_zero_triplets' in epoch_stats['global']:
                     metrics[phase]['active_triplets1'] = epoch_stats['global']['num_non_zero_triplets']
 
@@ -515,10 +545,19 @@ class NetworkTrainer:
 
                 if 'ap' in epoch_stats['global']:
                     metrics[phase]['AP'] = epoch_stats['global']['ap']
+                    
+                if 'loss_mesa' in epoch_stats['global']:
+                    metrics[phase]['loss_mesa'] = epoch_stats['global']['loss_mesa']
+                    
+                if 'local_qkv_std_loss' in epoch_stats['global']:
+                    metrics[phase]['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
+                    
+                if 'rt_qkv_std_loss' in epoch_stats['global']:
+                    metrics[phase]['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
 
                 if epoch_stage_gradient_magnitudes is not None:
                     metrics[phase]['avg_stage_grad_mags'] = epoch_stage_gradient_magnitudes
-                    
+
                 # TODO: currently broken, need to debug why wandb isn't logging correctly
                 # if epoch_embeddings is not None:
                 #     embeddings_dataframe = pd.DataFrame(epoch_embeddings, columns=[f'D{i}' for i in range(256)])

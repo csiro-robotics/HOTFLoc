@@ -43,6 +43,7 @@ class OctFormerLoc(torch.nn.Module):
         if hasattr(self.pooling, 'stats'):
             self.stats.update(self.pooling.stats)
 
+        # x is (batch_size, output_dim) tensor
         #x = x.flatten(1)
         assert x.dim() == 2, f'Expected 2-dimensional tensor (batch_size,output_dim). Got {x.dim()} dimensions.'
         assert x.shape[1] == self.pooling.output_dim, f'Output tensor has: {x.shape[1]} channels. ' \
@@ -51,11 +52,19 @@ class OctFormerLoc(torch.nn.Module):
         if self.normalize_embeddings:
             x = F.normalize(x, dim=1)
 
-        # x is (batch_size, output_dim) tensor
-        if self.return_feats_and_attn_maps:
-            return {'global': x, 'feats_and_attn_maps': feats_and_attn_maps}
-        return {'global': x}
+        # Separate `qkv_std` from `feats_and_attn_maps`
+        local_qkv_std = []
+        ct_qkv_std = []
+        for dict_i in feats_and_attn_maps:
+            if 'local_qkv_std' in dict_i.keys():
+                local_qkv_std.append(dict_i.pop('local_qkv_std'))
+            if 'ct_qkv_std' in dict_i.keys():
+                ct_qkv_std.append(dict_i.pop('ct_qkv_std'))
 
+        if self.return_feats_and_attn_maps:
+            return {'global': x, 'local_qkv_std': local_qkv_std, 'ct_qkv_std': ct_qkv_std,
+                    'feats_and_attn_maps': feats_and_attn_maps}
+        return {'global': x, 'local_qkv_std': local_qkv_std, 'ct_qkv_std': ct_qkv_std}
 
     def print_info(self):
         print('Model class: OctFormer')

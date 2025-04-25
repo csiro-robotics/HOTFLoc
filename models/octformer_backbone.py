@@ -52,7 +52,7 @@ class OctreeAttention(torch.nn.Module):
         self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
 
     def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
-        attn_dict = None
+        attn_dict = {}
         H = self.num_heads
         K = self.patch_size
         C = self.dim
@@ -70,7 +70,12 @@ class OctreeAttention(torch.nn.Module):
                 mask = octree.patch_mask[depth]
 
         # qkv
-        qkv = self.qkv(data).reshape(-1, K+G, 3, H, C // H).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(data)
+        # log qkv std loss over batch dim (hinge loss on std)
+        qkv_std = qkv.view(-1, C*3).std(dim=0)
+        # qkv_std_loss = torch.mean(F.relu(1 - qkv_std))
+
+        qkv = qkv.reshape(-1, K+G, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (N, H, K+G, C')
         q = q * self.scale
 
@@ -90,6 +95,7 @@ class OctreeAttention(torch.nn.Module):
         if self.return_attn_maps:
             attn_dict = {'attn_map': attn_map, 'q': q, 'k': k, 'v': v,
                          'rpe': rpe}
+        attn_dict.update({'qkv_std': qkv_std})
         return data, attn_dict
 
     def apply_rpe(self, attn, rel_pos):
@@ -150,7 +156,11 @@ class CTAttention(torch.nn.Module):
         ct_mask = octree.ct_mask[depth]
 
         # qkv
-        qkv = self.qkv(ct).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(ct)
+        # log qkv std loss over batch dim (hinge loss on std)
+        qkv_std = qkv.view(-1, C*3).std(dim=0)
+
+        qkv = qkv.reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
         q = q * self.scale
 
@@ -171,6 +181,7 @@ class CTAttention(torch.nn.Module):
         ct = self.proj_drop(ct)
 
         attn_dict = {'attn_map': ct_attn_map, 'q': q, 'k': k}
+        attn_dict.update({'qkv_std': qkv_std})
         return ct, attn_dict
 
     def apply_rpe(self, attn, rel_pos):
@@ -277,6 +288,7 @@ class OctFormerBlock(torch.nn.Module):
             # if self.use_ADaPE:
             #     ct = ct + self.ct_adape(octree, depth)
             ct_attn_out, ct_attn_dict = self.ct_attention(self.ct_norm1(ct), octree, depth)
+            feats_and_attn_maps['ct_qkv_std'] = ct_attn_dict.pop('qkv_std')
             if self.return_feats_and_attn_maps:
                 ct_attn_dict = {k: v.detach().cpu() for k, v in ct_attn_dict.items()}
                 feats_and_attn_maps['ct_attn'] = ct_attn_dict
@@ -287,6 +299,7 @@ class OctFormerBlock(torch.nn.Module):
             # Concatenate carrier tokens with window tokens
             data = torch.cat((ct.unsqueeze(1), data), dim=1)
         attn_out, attn_dict = self.attention(self.norm1(data), octree, depth)
+        feats_and_attn_maps['local_qkv_std'] = attn_dict.pop('qkv_std')
         if self.return_feats_and_attn_maps:
             attn_dict = {k: v.detach().cpu() for k, v in attn_dict.items()}
             feats_and_attn_maps['local_attn'] = attn_dict
@@ -320,10 +333,7 @@ class OctFormerBlock(torch.nn.Module):
             data = data + self.ct_gamma_propagate*ct_upsampled
             if self.return_feats_and_attn_maps:
                 feats_and_attn_maps['local_ctprop_feats'] = data.detach().cpu()
-        # Return feat and attn map from last block
-        if self.return_feats_and_attn_maps:
-            return data, ct, feats_and_attn_maps
-        return data, ct, None
+        return data, ct, feats_and_attn_maps
 
 
 class TokenInitialiser(torch.nn.Module):

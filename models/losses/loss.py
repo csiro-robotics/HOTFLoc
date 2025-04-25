@@ -1,9 +1,10 @@
 # Warsaw University of Technology
 
+import torch
+import torch.nn.functional as F
 from pytorch_metric_learning import losses, reducers
 from pytorch_metric_learning.distances import LpDistance
 from misc.utils import TrainingParams
-from models.losses.loss_utils import *
 from models.losses.truncated_smoothap import TruncatedSmoothAP
 
 
@@ -20,8 +21,16 @@ def make_losses(params: TrainingParams):
     else:
         print('Unknown loss: {}'.format(params.loss))
         raise NotImplementedError
+    if params.local_qkv_std_coeff > 0 or params.rt_qkv_std_coeff > 0:
+        qkv_std_loss_fn = QKV_STD_Loss(
+            local_qkv_std_coeff=params.local_qkv_std_coeff,
+            rt_qkv_std_coeff=params.rt_qkv_std_coeff,
+            target_std=params.target_std
+        )
+    else:
+        qkv_std_loss_fn = None
 
-    return loss_fn
+    return loss_fn, qkv_std_loss_fn
 
 
 class HardTripletMinerWithMasks:
@@ -133,6 +142,64 @@ class BatchHardContrastiveLossWithMasks:
                  }
 
         return loss, stats
+
+
+class QKV_STD_Loss:
+    """
+    Compute the standard deviation regularisation loss across the batch
+    dimension of QKV projections. Expected input is the output from the
+    HOTFormerLoc model.
+    """
+    def __init__(self, local_qkv_std_coeff=0, rt_qkv_std_coeff=0, target_std=1.0):
+        assert local_qkv_std_coeff > 0 or rt_qkv_std_coeff > 0, (
+            "Must specify loss coefficient for either local or relay token layers"
+        )
+        assert target_std >= 0, "Target std must be positive"
+        self.local_qkv_std_coeff = local_qkv_std_coeff
+        self.rt_qkv_std_coeff = rt_qkv_std_coeff
+        self.target_std = target_std
+        self.invalid_model_error = "Invalid model, currently only HOTFormerLoc supports QKV STD loss"
+
+    def __call__(self, model_out: dict) -> torch.Tensor:
+        local_qkv_std_loss_list = []  # store loss per layer to average it correctly later 
+        rt_qkv_std_loss_list = []
+        local_qkv_std_loss = 0
+        rt_qkv_std_loss = 0
+        stats = {'local_qkv_std': {}}
+        # Calculate loss separately for local layers and relay token layers
+        if self.local_qkv_std_coeff > 0:
+            assert 'octf_qkv_std' in model_out and 'hosa_qkv_std' in model_out, self.invalid_model_error
+            # Compute average qkv std loss per depth, since channel size can change between stages
+            for idx, octf_stage_qkv_std in enumerate(model_out['octf_qkv_std'].values()):
+                octf_qkv_std_temp = torch.stack(octf_stage_qkv_std)
+                stats['local_qkv_std'][idx] = torch.mean(octf_qkv_std_temp).item()
+                local_qkv_std_loss_list.extend(self.row_wise_std_loss(octf_qkv_std_temp))
+            for idx, hosa_stage_qkv_std in enumerate(model_out['hosa_qkv_std'].values()):
+                hosa_qkv_std_temp = torch.stack(hosa_stage_qkv_std)
+                stats['local_qkv_std'][len(model_out['octf_qkv_std']) + idx] = (
+                    torch.mean(hosa_qkv_std_temp).item()
+                )
+                local_qkv_std_loss_list.extend(self.row_wise_std_loss(hosa_qkv_std_temp))
+            local_qkv_std_loss = self.local_qkv_std_coeff * torch.mean(torch.stack(local_qkv_std_loss_list))
+            stats['local_qkv_std_loss'] = local_qkv_std_loss.item()
+        if self.rt_qkv_std_coeff > 0:
+            assert 'rt_qkv_std' in model_out, self.invalid_model_error
+            rt_qkv_std_temp = torch.stack(model_out['rt_qkv_std'])
+            stats['rt_qkv_std'] = torch.mean(rt_qkv_std_temp).item()
+            rt_qkv_std_loss_list.extend(self.row_wise_std_loss(rt_qkv_std_temp))
+            rt_qkv_std_loss = self.rt_qkv_std_coeff * torch.mean(torch.stack(rt_qkv_std_loss_list))
+            stats['rt_qkv_std_loss'] = rt_qkv_std_loss.item()
+        loss = local_qkv_std_loss + rt_qkv_std_loss
+        return loss, stats
+
+    def row_wise_std_loss(self, std: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the row-wise standard deviation regularisation loss. Takes a
+        (N,d) tensor and returns an (N,) tensor with mean loss for each row.
+        """
+        if not std.ndim == 2:
+            raise ValueError("Invalid tensor, expects tensor shape (N,d)")
+        return torch.mean(F.relu(self.target_std - std), dim=-1)
 
 
 def kdloss(y, teacher_scores):

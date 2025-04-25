@@ -235,6 +235,11 @@ class TrainingParams:
             self.tau1 = params.getfloat('tau1', 0.01)
             self.margin = params.getfloat('margin', None)    # Margin used in loss function
 
+        # QKV standard deviation loss (set coeffs > 0 to enable)
+        self.local_qkv_std_coeff = params.getfloat('local_qkv_std_coeff', 0)
+        self.rt_qkv_std_coeff = params.getfloat('rt_qkv_std_coeff', 0)
+        self.target_std = params.getfloat('target_std', 1.0)  # target standard deviation for qkv projections
+
         # Similarity measure: based on cosine similarity or Euclidean distance
         self.similarity = params.get('similarity', 'euclidean')
         assert self.similarity in ['cosine', 'euclidean']

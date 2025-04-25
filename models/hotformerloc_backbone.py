@@ -56,7 +56,7 @@ class RTAttention(torch.nn.Module):
         # self.rpe = RPE(patch_size, num_heads) if use_rpe else None
 
     def forward(self, relay_tokens: Tensor, octree: OctreeT):
-        attn_dict = None
+        attn_dict = {}
         B = octree.batch_size
         H = self.num_heads
         C = self.dim
@@ -66,7 +66,12 @@ class RTAttention(torch.nn.Module):
         attn_mask = octree.rt_attn_mask
 
         # qkv
-        qkv = self.qkv(rt).reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(rt)
+        # log qkv std loss over batch dim (hinge loss on std)
+        qkv_std = qkv.view(-1, C*3).std(dim=0)
+        # qkv_std_loss = torch.mean(F.relu(1 - qkv_std))
+
+        qkv = qkv.reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
 
         if torch.__version__ >= torch.torch_version.TorchVersion(2.0):
@@ -95,6 +100,7 @@ class RTAttention(torch.nn.Module):
         
         if self.return_attn_maps:
             attn_dict = {'attn_map': attn_map, 'q': q_temp, 'k': k, 'v': v}
+        attn_dict.update({'qkv_std': qkv_std})
 
         # ffn
         rt = self.proj(rt)
@@ -569,11 +575,11 @@ class HOTFormerStage(torch.nn.Module):
     def forward(self, data: Tensor, octree: OctreeT, depth: int):
         self.pyramid_depths = [(depth - j)
                                for j in range(self.num_pyramid_levels)]
-        feats_and_attn_maps_per_block = None
+        feats_and_attn_maps_per_block = [{'local_qkv_std': {}} for _ in range(self.num_blocks)]
         if self.return_feats_and_attn_maps:
-            feats_and_attn_maps_per_block = [
+            [feats_and_attn_maps_per_block[i].update(
                 {'local_attn': {}, 'local_feats': {}, 'rt_feats_post_local': {}}
-            for _ in range(self.num_blocks)]
+            ) for i in range(self.num_blocks)]
         # Initialise local features + relay token dicts
         local_feat_dict, relay_token_dict = self.init_pyramid_feats(data,
                                                                     octree)
@@ -597,6 +603,11 @@ class HOTFormerStage(torch.nn.Module):
                     relay_token_dict, relay_token_attn_dict = self.rtsa_blocks[i](
                         relay_token_dict, octree,
                     )
+
+                # Log qkv std (removed from dict so gradients are not detached in next step)
+                feats_and_attn_maps_per_block[i].update({
+                    'rt_qkv_std': relay_token_attn_dict.pop('qkv_std')
+                })
                 
                 # Log feats and attn maps
                 if self.return_feats_and_attn_maps:
@@ -636,6 +647,11 @@ class HOTFormerStage(torch.nn.Module):
                         )
                     )
 
+                # Log qkv std (removed from dict so gradients are not detached in next step)
+                feats_and_attn_maps_per_block[i]['local_qkv_std'].update({
+                    depth_j: local_attn_dict_depth_j.pop('qkv_std')
+                })
+                
                 # Log feats and attn maps
                 if self.return_feats_and_attn_maps:
                     feats_and_attn_maps_per_block[i]['local_attn'].update({
@@ -739,16 +755,19 @@ class HOTFormerBase(torch.nn.Module):
                          num_pyramid_levels=self.num_pyramid_levels,
                          num_octf_levels=self.num_octf_levels)
         octree.build_t()
+        octf_feats_and_attn_maps = {}  # Store feats and attn maps per octf stage
         for i in range(self.num_octf_levels):
-            data, _ = self.octf_stage[i](data, octree, depth)
+            data, octf_feats_and_attn_maps_i = self.octf_stage[i](data, octree, depth)
+            octf_feats_and_attn_maps[depth] = octf_feats_and_attn_maps_i
             data = self.downsample[i](data, octree, depth)
             depth = depth - 1
 
         # Compute Hierarchical Octree Attention with multi-scale Relay Tokens
-        local_feat_dict, relay_token_dict, feats_and_attn_maps = (
+        local_feat_dict, relay_token_dict, hotf_feats_and_attn_maps = (
             self.hotf_stage(data, octree, depth)
         )
-
+        feats_and_attn_maps = {'octformer': octf_feats_and_attn_maps,
+                               'hotformer': hotf_feats_and_attn_maps}
         return local_feat_dict, relay_token_dict, octree, feats_and_attn_maps
 
 
