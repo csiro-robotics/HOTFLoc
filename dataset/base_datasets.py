@@ -55,8 +55,14 @@ class TrainingDataset(Dataset):
         self.load_octree = load_octree
         self.octree_depth = octree_depth
         self.full_depth = full_depth
-        
-        self.queries: Dict[int, TrainingTuple] = pickle.load(open(self.query_filepath, 'rb'))
+
+        # NOTE: Virga env requires 'datasets' module stored as 'dataset' to avoid
+        # conflict. Below will check if a pickle was saved with the wrong module,
+        # and load TrainingTuple from the correct path for this environment.
+        try: 
+            self.queries: Dict[int, TrainingTuple] = pickle.load(open(self.query_filepath, 'rb'))
+        except ModuleNotFoundError:
+            self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, 'rb')).load()
         print('{} queries in the dataset'.format(len(self)))
 
         # pc_loader must be set in the inheriting class
@@ -174,3 +180,25 @@ class PointCloudLoader:
     def read_pc(self, file_pathname: str) -> np.ndarray:
         # Reads the point cloud without pre-processing
         raise NotImplementedError("read_pc must be overloaded in an inheriting class")
+
+
+class CustomUnpickler(pickle.Unpickler):
+    """
+    Custom unpickler class to handle training pickles that were created in the
+    live repo of HOTFormerLoc. This repo is the dev repo, and due to the Virga
+    environment setup to get MinkowskiEngine working alongside HOTFormerLoc, the
+    'datasets' module had to be renamed to 'dataset' to avoid conflict with a
+    pip module called 'datasets' in the system python package. Yes there is
+    probably a more elegant solution to prevent this, but this class offers a
+    quick and dirty solution for my dev branch.
+    """
+    def find_class(self, module, name):
+        old_module = "datasets.base_datasets"
+        class_name = "TrainingTuple"
+        # In the below line, you can ignore the module and only check the name
+        # if you're sure there is only one implementation of the class you're
+        # replacing.
+        if module == old_module and name == class_name:
+            # Redirect to the correct TrainingTuple class
+            return TrainingTuple
+        return super().find_class(module, name)
