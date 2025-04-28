@@ -59,10 +59,7 @@ class TrainingDataset(Dataset):
         # NOTE: Virga env requires 'datasets' module stored as 'dataset' to avoid
         # conflict. Below will check if a pickle was saved with the wrong module,
         # and load TrainingTuple from the correct path for this environment.
-        try: 
-            self.queries: Dict[int, TrainingTuple] = pickle.load(open(self.query_filepath, 'rb'))
-        except ModuleNotFoundError:
-            self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, 'rb')).load()
+        self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, 'rb')).load()
         print('{} queries in the dataset'.format(len(self)))
 
         # pc_loader must be set in the inheriting class
