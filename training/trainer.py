@@ -532,29 +532,7 @@ class NetworkTrainer:
                 self.print_stats(phase, epoch_stats)
 
                 # Log metrics for wandb
-                metrics[phase]['loss1'] = epoch_stats['global']['loss']
-                metrics[phase]['loss_total'] = epoch_stats['global']['loss_total']
-                if 'num_non_zero_triplets' in epoch_stats['global']:
-                    metrics[phase]['active_triplets1'] = epoch_stats['global']['num_non_zero_triplets']
-
-                if 'positive_ranking' in epoch_stats['global']:
-                    metrics[phase]['positive_ranking'] = epoch_stats['global']['positive_ranking']
-
-                if 'recall' in epoch_stats['global']:
-                    metrics[phase]['recall@1'] = epoch_stats['global']['recall'][1]
-
-                if 'ap' in epoch_stats['global']:
-                    metrics[phase]['AP'] = epoch_stats['global']['ap']
-                    
-                if 'loss_mesa' in epoch_stats['global']:
-                    metrics[phase]['loss_mesa'] = epoch_stats['global']['loss_mesa']
-                    
-                if 'local_qkv_std_loss' in epoch_stats['global']:
-                    metrics[phase]['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
-                    
-                if 'rt_qkv_std_loss' in epoch_stats['global']:
-                    metrics[phase]['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
-
+                metrics[phase].update(self.get_wandb_metrics(epoch_stats))
                 if epoch_stage_gradient_magnitudes is not None:
                     metrics[phase]['avg_stage_grad_mags'] = epoch_stage_gradient_magnitudes
 
@@ -630,3 +608,27 @@ class NetworkTrainer:
 
         # Return optimization value (to minimize)
         return (1 - self.best_avg_AR_1/100.0)
+
+    def get_wandb_metrics(self, epoch_stats):
+        metrics = {}
+        metrics['loss1'] = epoch_stats['global']['loss']
+        metrics['loss_total'] = epoch_stats['global']['loss_total']
+        if 'num_non_zero_triplets' in epoch_stats['global']:
+            metrics['active_triplets1'] = epoch_stats['global']['num_non_zero_triplets']
+        if 'positive_ranking' in epoch_stats['global']:
+            metrics['positive_ranking'] = epoch_stats['global']['positive_ranking']
+        if 'recall' in epoch_stats['global']:
+            metrics['recall@1'] = epoch_stats['global']['recall'][1]
+        if 'ap' in epoch_stats['global']:
+            metrics['AP'] = epoch_stats['global']['ap']
+        if 'loss_mesa' in epoch_stats['global']:
+            metrics['loss_mesa'] = epoch_stats['global']['loss_mesa']
+        if 'local_qkv_std_loss' in epoch_stats['global']:
+            metrics['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
+        if 'local_qkv_std' in epoch_stats['global']:
+            metrics['local_qkv_std'] = epoch_stats['global']['local_qkv_std']
+        if 'rt_qkv_std_loss' in epoch_stats['global']:
+            metrics['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
+        if 'rt_qkv_std' in epoch_stats['global']:
+            metrics['rt_qkv_std'] = epoch_stats['global']['rt_qkv_std']
+        return metrics
