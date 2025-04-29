@@ -238,7 +238,22 @@ class TrainingParams:
         # QKV standard deviation loss (set coeffs > 0 to enable)
         self.local_qkv_std_coeff = params.getfloat('local_qkv_std_coeff', 0)
         self.rt_qkv_std_coeff = params.getfloat('rt_qkv_std_coeff', 0)
-        self.target_std = params.getfloat('target_std', 1.0)  # target standard deviation for qkv projections
+        self.qkv_target_std = params.getfloat('qkv_target_std', 1.0)  # target standard deviation for qkv projections
+
+        # QKV weight norm loss, penalises weight collapse in QKV layers
+        self.qkv_weight_norm_coeff = params.getfloat('qkv_weight_norm_coeff', 0)
+        self.qkv_target_norm = params.getfloat('qkv_target_norm', 1.0)
+
+        # Ensure only one QKV loss is chosen
+        assert not ((self.local_qkv_std_coeff > 0 or self.rt_qkv_std_coeff > 0)
+                    and self.qkv_weight_norm_coeff > 0), \
+                        'Select either QKV std loss or QKV weight norm loss, not both'
+
+        # Prevent QKV loss from running with multistage backprop, as it is currently not implemented correctly
+        assert not ((self.local_qkv_std_coeff > 0 or self.rt_qkv_std_coeff > 0
+                    or self.qkv_weight_norm_coeff > 0)
+                    and self.batch_split_size not in [None, 0]), \
+                        'QKV losses not compatible with multistage backprop (see L385 of trainer.py)'
 
         # Similarity measure: based on cosine similarity or Euclidean distance
         self.similarity = params.get('similarity', 'euclidean')

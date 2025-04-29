@@ -5,7 +5,7 @@ dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.80m
 [TRAIN]
 num_workers = 2
 batch_size = 64
-batch_split_size = 8
+#batch_split_size = 8
 val_batch_size = 128
 save_freq = 10
 eval_freq = 5
@@ -27,7 +27,7 @@ mesa = 1.0
 mesa_start_ratio = 0.15
 local_qkv_std_coeff = 1.0
 rt_qkv_std_coeff = 1.0
-target_std = 1.0
+qkv_target_std = 1.0
 
 dataset_name = CSWildPlaces
 skip_same_run = True

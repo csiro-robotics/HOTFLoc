@@ -3,9 +3,8 @@
 dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.80m_rmground_normalised/
 
 [TRAIN]
-num_workers = 2
-batch_size = 1024
-batch_split_size = 128
+num_workers = 3
+batch_size = 256
 val_batch_size = 128
 save_freq = 10
 eval_freq = 5
@@ -25,9 +24,8 @@ tau1 = 0.01
 positives_per_query = 4
 mesa = 1.0
 mesa_start_ratio = 0.15
-local_qkv_std_coeff = 0.1
-rt_qkv_std_coeff = 0.1
-target_std = 1.0
+qkv_weight_norm_coeff = 0.1
+qkv_target_norm = 3.0
 
 dataset_name = CSWildPlaces
 skip_same_run = True

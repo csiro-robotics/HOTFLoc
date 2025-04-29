@@ -215,6 +215,8 @@ class NetworkTrainer:
             s += f"local qkv std loss: {stats['local_qkv_std_loss']:.4f}   "
         if 'rt_qkv_std_loss' in stats:
             s += f"rt qkv std loss: {stats['rt_qkv_std_loss']:.4f}   "
+        if 'qkv_weight_norm_loss' in stats:
+            s += f"qkv weight norm loss: {stats['qkv_weight_norm_loss']:.4f}   "
         s += f"embedding norm: {stats['avg_embedding_norm']:.3f}   "
         if 'num_triplets' in stats:
             s += f"Triplets (all/active): {stats['num_triplets']:.1f}/{stats['num_non_zero_triplets']:.1f}  " \
@@ -274,7 +276,7 @@ class NetworkTrainer:
             eval_stats[database_name]['MRR'] = stats[database_name]['ave_mrr']
         return eval_stats
 
-    def training_step(self, global_iter, phase, loss_fn, qkv_std_loss_fn, num_embeddings_logged, mesa=0.0):
+    def training_step(self, global_iter, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
         assert phase in ['train', 'val']
 
         batch, positives_mask, negatives_mask = next(global_iter)
@@ -311,11 +313,11 @@ class NetworkTrainer:
                     stats['loss_mesa'] = mesa_loss.item()
 
                 # Compute qkv std regularisation loss
-                if qkv_std_loss_fn is not None:
-                    qkv_std_loss, temp_stats = qkv_std_loss_fn(y)
+                if qkv_loss_fn is not None:
+                    qkv_loss, temp_stats = qkv_loss_fn(y, self.model)
                     temp_stats = self.tensors_to_numbers(temp_stats)
                     stats.update(temp_stats)
-                    loss += qkv_std_loss
+                    loss += qkv_loss
 
                 stats['loss_total'] = loss.item()
                 loss.backward()
@@ -329,13 +331,14 @@ class NetworkTrainer:
         return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
 
 
-    def multistaged_training_step(self, global_iter, phase, loss_fn, qkv_std_loss_fn, num_embeddings_logged, mesa=0.0):
+    def multistaged_training_step(self, global_iter, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
         # Training step using multistaged backpropagation algorithm as per:
         # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
         # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
         # Make sure mini-batches in step 1 and step 3 are the same (so that BatchNorm produces the same results)
         # See some exemplary implementation here: https://gist.github.com/ByungSun12/ad964a08eba6a7d103dab8588c9a3774
-
+        if qkv_loss_fn is not None:
+            raise NotImplementedError('QKV Losses not implemented for multistage backprop, set `batch_split_size` to 0')
         assert phase in ['train', 'val']
         batch, positives_mask, negatives_mask = next(global_iter)
         
@@ -355,7 +358,7 @@ class NetworkTrainer:
             for minibatch in batch:
                 minibatch = {e: minibatch[e].to(self.device, non_blocking=True) for e in minibatch}
                 y = self.model(minibatch)
-                embeddings_l.append(y['global'])            
+                embeddings_l.append(y['global'])
                 # Compute MESA embeddings
                 if mesa > 0.0:
                     ema_output = self.model_ema.module(minibatch)['global'].detach()
@@ -379,12 +382,15 @@ class NetworkTrainer:
                 mesa_loss = mesa * kd
                 loss += mesa_loss
                 stats['loss_mesa'] = mesa_loss.item()
-            # Compute qkv std regularisation loss
-            if qkv_std_loss_fn is not None:
-                qkv_std_loss, temp_stats = qkv_std_loss_fn(y)
-                temp_stats = self.tensors_to_numbers(temp_stats)
-                stats.update(temp_stats)
-                loss += qkv_std_loss
+            # Compute qkv loss
+            # NOTE: qkv loss is currently broken for multistage backprop. In
+            #       stage 3, .backward() needs to be called w.r.t the gradient
+            #       of all qkv_std values from all layers.
+            # if qkv_loss_fn is not None:
+            #     qkv_loss, temp_stats = qkv_loss_fn(y, self.model)
+            #     temp_stats = self.tensors_to_numbers(temp_stats)
+            #     stats.update(temp_stats)
+            #     loss += qkv_loss
             stats['loss_total'] = loss.item()
             if phase == 'train':
                 loss.backward()
@@ -425,7 +431,7 @@ class NetworkTrainer:
         # set up dataloaders
         dataloaders = make_dataloaders(self.params, validation=self.params.validation)
 
-        loss_fn, qkv_std_loss_fn = make_losses(self.params)
+        loss_fn, qkv_loss_fn = make_losses(self.params)
 
         if self.params.batch_split_size is None or self.params.batch_split_size == 0:
             train_step_fn = self.training_step
@@ -495,7 +501,7 @@ class NetworkTrainer:
 
                     try:
                         temp_stats, temp_embeddings = train_step_fn(
-                            global_iter, phase, loss_fn, qkv_std_loss_fn,
+                            global_iter, phase, loss_fn, qkv_loss_fn,
                             self.params.num_embeddings_logged, mesa
                         )
                         batch_stats['global'] = temp_stats
@@ -631,4 +637,8 @@ class NetworkTrainer:
             metrics['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
         if 'rt_qkv_std' in epoch_stats['global']:
             metrics['rt_qkv_std'] = epoch_stats['global']['rt_qkv_std']
+        if 'qkv_weight_norm_loss' in epoch_stats['global']:
+            metrics['qkv_weight_norm_loss'] = epoch_stats['global']['qkv_weight_norm_loss']
+        if 'qkv_weight_norm' in epoch_stats['global']:
+            metrics['qkv_weight_norm'] = epoch_stats['global']['qkv_weight_norm']
         return metrics

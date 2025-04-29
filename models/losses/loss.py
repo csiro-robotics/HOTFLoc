@@ -1,5 +1,6 @@
 # Warsaw University of Technology
 
+from abc import ABC, abstractmethod
 import torch
 import torch.nn.functional as F
 from pytorch_metric_learning import losses, reducers
@@ -21,16 +22,23 @@ def make_losses(params: TrainingParams):
     else:
         print('Unknown loss: {}'.format(params.loss))
         raise NotImplementedError
+
+    # Loss applied to QKV projections to prevent collapse to zero
     if params.local_qkv_std_coeff > 0 or params.rt_qkv_std_coeff > 0:
-        qkv_std_loss_fn = QKV_STD_Loss(
+        qkv_loss_fn = QKV_STD_Loss(
             local_qkv_std_coeff=params.local_qkv_std_coeff,
             rt_qkv_std_coeff=params.rt_qkv_std_coeff,
-            target_std=params.target_std
+            qkv_target_std=params.qkv_target_std
+        )
+    elif params.qkv_weight_norm_coeff > 0:
+        qkv_loss_fn = QKV_Weight_Norm_Loss(
+            qkv_weight_norm_coeff=params.qkv_weight_norm_coeff,
+            qkv_target_norm=params.qkv_target_norm,
         )
     else:
-        qkv_std_loss_fn = None
+        qkv_loss_fn = None
 
-    return loss_fn, qkv_std_loss_fn
+    return loss_fn, qkv_loss_fn
 
 
 class HardTripletMinerWithMasks:
@@ -144,23 +152,64 @@ class BatchHardContrastiveLossWithMasks:
         return loss, stats
 
 
-class QKV_STD_Loss:
+class QKV_Base_Loss(ABC):
+    """
+    Base class for QKV losses. Supports losses that operate on model outputs
+    or the model itself.
+    """
+    def __init__(self):
+        super().__init__()
+        self._input_type = None
+        self._valid_input_types = ['model_out', 'model']  # Model output or model itself
+    
+    @property
+    def input_type(self) -> str:
+        return self._input_type
+    
+    @input_type.setter
+    def input_type(self, value: str):
+        if value not in self._valid_input_types:
+            raise ValueError(f'Invalid input type, must be one of {self._valid_input_types}')
+        self._input_type = str.lower(value)
+
+    def __call__(self, model_out: dict, model: torch.nn.Module):
+        if self.input_type == 'model_out':
+            return self._model_output_forward(model_out)
+        elif self.input_type == 'model':
+            return self._model_forward(model)
+        else:
+            raise NotImplementedError()
+
+    @abstractmethod
+    def _model_output_forward(self, model_out: dict):
+        """Define a forward function that expects model outputs as input"""
+        pass
+
+    @abstractmethod
+    def _model_forward(self, model: torch.nn.Module):
+        """Define a forward function that expects model itself as input"""
+        pass
+
+
+class QKV_STD_Loss(QKV_Base_Loss):
     """
     Compute the standard deviation regularisation loss across the batch
     dimension of QKV projections. Expected input is the output from the
     HOTFormerLoc model.
     """
-    def __init__(self, local_qkv_std_coeff=0, rt_qkv_std_coeff=0, target_std=1.0):
+    def __init__(self, local_qkv_std_coeff=0, rt_qkv_std_coeff=0, qkv_target_std=1.0):
+        super().__init__()
         assert local_qkv_std_coeff > 0 or rt_qkv_std_coeff > 0, (
             "Must specify loss coefficient for either local or relay token layers"
         )
-        assert target_std >= 0, "Target std must be positive"
+        assert qkv_target_std >= 0, "Target std must be positive"
+        self.input_type = 'model_out'
         self.local_qkv_std_coeff = local_qkv_std_coeff
         self.rt_qkv_std_coeff = rt_qkv_std_coeff
-        self.target_std = target_std
-        self.invalid_model_error = "Invalid model, currently only HOTFormerLoc supports QKV STD loss"
+        self.qkv_target_std = qkv_target_std
+        self._invalid_model_error = "Invalid model, currently only HOTFormerLoc supports QKV STD loss"
 
-    def __call__(self, model_out: dict) -> torch.Tensor:
+    def _model_output_forward(self, model_out: dict) -> tuple[torch.Tensor, dict]:
         local_qkv_std_loss_list = []  # store loss per layer to average it correctly later 
         rt_qkv_std_loss_list = []
         local_qkv_std_loss = 0
@@ -168,7 +217,7 @@ class QKV_STD_Loss:
         stats = {'local_qkv_std': {}}
         # Calculate loss separately for local layers and relay token layers
         if self.local_qkv_std_coeff > 0:
-            assert 'octf_qkv_std' in model_out and 'hosa_qkv_std' in model_out, self.invalid_model_error
+            assert 'octf_qkv_std' in model_out and 'hosa_qkv_std' in model_out, self._invalid_model_error
             # Compute average qkv std loss per depth, since channel size can change between stages
             for idx, octf_stage_qkv_std in enumerate(model_out['octf_qkv_std'].values()):
                 octf_qkv_std_temp = torch.stack(octf_stage_qkv_std)
@@ -183,7 +232,7 @@ class QKV_STD_Loss:
             local_qkv_std_loss = self.local_qkv_std_coeff * torch.mean(torch.stack(local_qkv_std_loss_list))
             stats['local_qkv_std_loss'] = local_qkv_std_loss.item()
         if self.rt_qkv_std_coeff > 0:
-            assert 'rt_qkv_std' in model_out, self.invalid_model_error
+            assert 'rt_qkv_std' in model_out, self._invalid_model_error
             rt_qkv_std_temp = torch.stack(model_out['rt_qkv_std'])
             stats['rt_qkv_std'] = torch.mean(rt_qkv_std_temp).item()
             rt_qkv_std_loss_list.extend(self.row_wise_std_loss(rt_qkv_std_temp))
@@ -192,6 +241,9 @@ class QKV_STD_Loss:
         loss = local_qkv_std_loss + rt_qkv_std_loss
         return loss, stats
 
+    def _model_forward(self):
+        pass
+
     def row_wise_std_loss(self, std: torch.Tensor) -> torch.Tensor:
         """
         Computes the row-wise standard deviation regularisation loss. Takes a
@@ -199,7 +251,44 @@ class QKV_STD_Loss:
         """
         if not std.ndim == 2:
             raise ValueError("Invalid tensor, expects tensor shape (N,d)")
-        return torch.mean(F.relu(self.target_std - std), dim=-1)
+        return torch.mean(F.relu(self.qkv_target_std - std), dim=-1)
+
+
+class QKV_Weight_Norm_Loss(QKV_Base_Loss):
+    """
+    Loss applied to norm of QKV projection weights, penalising weight collapse
+    to zero.
+    """
+    def __init__(self, qkv_weight_norm_coeff=0, qkv_target_norm=1.0):
+        super().__init__()
+        assert qkv_weight_norm_coeff > 0, "Must specify valid loss coefficient"
+        assert qkv_target_norm > 0, "Must specify valid target norm"
+        self.input_type = 'model'
+        self.qkv_weight_norm_coeff = qkv_weight_norm_coeff 
+        self.qkv_target_norm = qkv_target_norm
+        self._invalid_model_error = "Invalid model, currently only OctFormer and HOTFormerLoc support QKV Weight Norm loss"
+
+    def _model_forward(self, model: torch.nn.Module) -> tuple[torch.Tensor, dict]:
+        weight_norm_list = []
+        for name, layer in model.named_modules():
+            if 'qkv' in str.lower(name) and isinstance(layer, torch.nn.Linear):
+                weight_norm_list.append(layer.weight.norm(p='fro'))
+        # NOTE: Initial weight norm is ~ >= 6, trained norm is < 0.15
+        weight_norms = torch.stack(weight_norm_list)
+        loss = self.shifted_log_weight_norm_loss(weight_norms)
+        loss *= self.qkv_weight_norm_coeff
+        stats = {'qkv_weight_norm_loss': loss.item(),
+                 'qkv_weight_norm': torch.mean(weight_norms).item()}
+        return loss, stats
+
+    def _model_output_forward(self):
+        pass
+
+    def shifted_log_weight_norm_loss(self, weight_norms, epsilon=1e-8):
+        """Penalises weight norm falling below qkv_target_norm."""
+        penalty = -torch.log(weight_norms / self.qkv_target_norm + epsilon)
+        penalty = F.relu(penalty)
+        return torch.mean(penalty)
 
 
 def kdloss(y, teacher_scores):
