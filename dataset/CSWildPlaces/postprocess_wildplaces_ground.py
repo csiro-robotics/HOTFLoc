@@ -284,8 +284,9 @@ if __name__ == "__main__":
                         help = 'Print extra info')
     args = parser.parse_args()
     print(args)
-    assert (args.remove_ground or args.downsample or args.normalise), \
-        "Select a post-processing option, otherwise nothing is being done!"
+    if not (args.remove_ground or args.downsample or args.normalise):
+        print("WARNING: No post-processing options selected, so output submaps "
+              "will only be cropped to `radius_max`.")
     if not args.downsample or args.downsample_type == 'voxel':
         args.downsample_target = None
     else:
