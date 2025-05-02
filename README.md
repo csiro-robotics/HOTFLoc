@@ -1,218 +1,244 @@
-# Hierarchical Octree Transformer
+# HOTFormerLoc: Hierarchical Octree Transformer for Versatile Lidar Place Recognition Across Ground and Aerial Views
 
-Created using the codebase for the paper:
-### Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training
+### What's new ###
+* [2025-03-26] Training and evaluation code released. CS-Wild-Places dataset released.
 
-by Jacek Komorowski
+## Description
+This is the official repository for the paper:
 
-and
-### OctFormer: Octree-based Transformers for 3D Point Clouds
+**HOTFormerLoc: Hierarchical Octree Transformer for Versatile Lidar Place Recognition Across Ground and Aerial Views**, CVPR 2025 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*\
+[[**Website**](https://csiro-robotics.github.io/HOTFormerLoc)] <!-- [[**Paper**](https://cvpr.thecvf.com)] --> [[**arXiv**](https://arxiv.org/abs/2503.08140)] <!-- [[**Video**](https://youtube.com)] --> [[**CS-Wild-Places Dataset**](https://data.csiro.au/collection/csiro:64896)] [[**CS-Wild-Places README**](https://github.com/csiro-robotics/HOTFormerLoc/blob/main/media/CS_Wild_Places_README.pdf)]
 
-by Peng-Shuai Wang.
+![Network Architecture](media/hotformerloc_architecture.png)
+*HOTFormerLoc Architecture*
 
-README is currently a copy of MinkLoc3Dv2 README, but will be progressively updated in the future.
+We present **HOTFormerLoc**, a novel and versatile **H**ierarchical **O**ctree-based **T**rans**Former** for large-scale 3D place recognition. We propose an octree-based multi-scale attention mechanism that captures spatial and semantic features across granularities, making it suitable for both ground-to-ground and ground-to-aerial scenarios across urban and forest environments.
 
-## Environment Setup
-On HPC, do the following:
+<!-- <img src="media/radar_plot.svg" alt="Hero Figure" width="50%" height="auto" style="float: right;"> -->
+
+In addition, we introduce our novel dataset: [**CS-Wild-Places**](https://data.csiro.au/collection/csiro:64896), a 3D cross-source dataset featuring point cloud data from aerial and ground lidar scans captured in four dense forests. Point clouds in CS-Wild-Places contain representational gaps and distinctive attributes such as varying point densities and noise patterns, making it a challenging benchmark for cross-view localisation in the wild.
+
+![CS-Wild-Places](media/CSWildPlaces_overview.png)
+*CS-Wild-Places dataset. (Top row) birds eye view of aerial global maps from all four forests. 
+(Bottom row) sample ground and aerial submap from each forest.*
+
+Our results demonstrate that HOTFormerLoc achieves a top-1 average recall improvement of 5.5% – 11.5% on the CS-Wild-Places benchmark. Furthermore, it consistently outperforms SOTA 3D place recognition methods, with an average performance gain of 4.9% on well established urban and forest datasets. 
+
+<!-- ![Hero Figure](media/radar_plot.svg) -->
+<img src="media/radar_plot.svg" alt="Hero Figure" width="50%" height="auto" style="display: block; margin: auto;">
+
+### Citation
+If you find this work useful, please consider citing:
 ```
-module load python pytorch open3d
-virtualenv --system-site-packages <env_path>
-source <env_path>/bin/activate
+@InProceedings{HOTFormerLoc,
+	author    = {Griffiths, Ethan and Haghighat, Maryam and Denman, Simon and Fookes, Clinton and Ramezani, Milad},
+	title     = {{HOTFormerLoc}: {Hierarchical Octree Transformer} for {Versatile Lidar Place Recognition Across Ground} and {Aerial Views}},
+	booktitle = {2025 {IEEE}/{CVF Conference} on {Computer Vision} and {Pattern Recognition} ({CVPR})},
+	year      = {2025},
+	month     = {June},
+}
+```
+<!-- month     = {todo},
+pages     = {todo} -->
+
+## Environment and Dependencies
+Code was tested using Python 3.11 with PyTorch 2.1.1 and CUDA 12.1 on a Linux system. We use conda to manage dependencies (although we recommend [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) for a much faster install).
+
+### Installation
+```
+# Note: replace 'mamba' with 'conda' if using a vanilla conda install
+mamba create -n hotformerloc python=3.11 -c conda-forge
+mamba activate hotformerloc
+mamba install 'numpy<2.0' -c conda-forge
+mamba install pytorch==2.1.1 torchvision==0.16.1 pytorch-cuda=12.1 -c pytorch -c nvidia -c conda-forge
 pip install -r requirements.txt
 pip install libs/dwconv
 ```
 
-## Training
-To train the network, follow the general layout of any training job script in `job_scripts`. This will usually involve the following commands:
-```
-export PYTHONPATH=$PYTHONPATH:'<path/to/repo>'
-cd training/
-python train.py \
-	--config '../config/config_file.txt'
-	--model_config '../models/octformer_cfg_file.txt' 
-```
-Change these config files to your liking. Each config option is described in `/misc/utils.py` in the `ModelParams` and `TrainingParams` classes. The current best OctFormer performance of AR@1 = 96.1% on Oxford is obtained with the config file `config_baseline_octf_depth8_lr1e-4_sched100_350.txt`, and model config file `octformer_5stage_18blocks_middle_cfg.txt`.
-
-Note that the Octree depth for OctFormer should be configured on a per-dataset basis, and point clouds **must** either be pre-processed to [-1,1] range, or normalised to this range using `normalize_points=True` config option. You can work out the leaf node size with $\frac{w}{2^d}$, where w is the width of the largest point cloud, and d is the octree depth. 
-
-
-# Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training
-## MinkLoc3Dv2 is an improved version of our earlier point cloud descriptor MinkLoc3D. MinkLoc3Dv2 outperforms SOTA on standard benchmarks (as per February 2022).  
-
-Paper: [Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training](https://ieeexplore.ieee.org/document/9956458)
-26th International Conference on Pattern Recognition (ICPR 2022)
-[arXiv](https://arxiv.org/pdf/2203.00972v1.pdf) 
-
-[Jacek Komorowski](mailto:jacek.komorowski@pw.edu.pl)
-Warsaw University of Technology
-
-### What's new ###
-* [2022-02-01] Evaluation code and trained model of MinkLoc3Dv2 is released. 
-* [2022-04-07] Training code released. 
-
-### Our other projects ###
-* MinkLoc3D: Point Cloud Based Large-Scale Place Recognition (WACV 2021): [MinkLoc3D](https://github.com/jac99/MinkLoc3D)
-* MinkLoc++: Lidar and Monocular Image Fusion for Place Recognition (IJCNN 2021): [MinkLoc++](https://github.com/jac99/MinkLocMultimodal)
-* Large-Scale Topological Radar Localization Using Learned Descriptors (ICONIP 2021): [RadarLoc](https://github.com/jac99/RadarLoc)
-* EgonNN: Egocentric Neural Network for Point Cloud Based 6DoF Relocalization at the City Scale (IEEE Robotics and Automation Letters April 2022): [EgoNN](https://github.com/jac99/Egonn) 
-
-### Introduction
-The paper presents a simple and effective learning-based method for computing a discriminative 3D point cloud descriptor for place recognition purposes. 
-Recent state-of-the-art methods have relatively complex architectures such as multi-scale pyramid of point Transformers combined with a pyramid of feature aggregation modules.
-Our method uses a simple and efficient 3D convolutional feature extraction, based on a sparse voxelized representation, enhanced with channel attention blocks. 
-We employ recent advances in image retrieval and propose a modified version of a loss function based on a differentiable average precision approximation. Such loss function requires training with very large batches for the best results. This is enabled by using multistaged backpropagation.
-Experimental evaluation on the popular benchmarks proves the effectiveness of our approach, with a consistent improvement over state of the art.
-
-![Overview](media/overview.png)
-
-### Citation
-If you find this work useful, please consider citing:
-
-    @INPROCEEDINGS{9956458,  
-                  author={Komorowski, Jacek},  
-                  booktitle={2022 26th International Conference on Pattern Recognition (ICPR)},
-                  title={Improving Point Cloud Based Place Recognition with Ranking-based Loss and Large Batch Training},   
-                  year={2022},  
-                  volume={},  
-                  number={},  
-                  pages={3699-3705},  
-                  doi={10.1109/ICPR56361.2022.9956458}
-    }
-
-### Environment and Dependencies
-Code was tested using Python 3.8 with PyTorch 1.10.1 and MinkowskiEngine 0.5.4 on Ubuntu 20.04 with CUDA 10.2.
-Note: CUDA 11.1 is not recommended as there are some issues with MinkowskiEngine 0.5.4 on CUDA 11.1. 
-
-The following Python packages are required:
-* PyTorch (version 1.10.1)
-* MinkowskiEngine (version 0.5.4)
-* pytorch_metric_learning (version 1.1 or above)
-* pandas
-* wandb
-
-Modify the `PYTHONPATH` environment variable to include absolute path to the project root folder: 
+Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
 ```export PYTHONPATH
-export PYTHONPATH=$PYTHONPATH:/home/.../MinkLoc3Dv2
+export PYTHONPATH=$PYTHONPATH:<path/to/HOTFormerLoc>
 ```
 
-### Datasets
+## Datasets
 
-**MinkLoc3Dv2** is trained on a subset of Oxford RobotCar and In-house (U.S., R.A., B.D.) datasets introduced in
-*PointNetVLAD: Deep Point Cloud Based Retrieval for Large-Scale Place Recognition* paper ([link](https://arxiv.org/pdf/1804.03492)).
+### Wild-Places
+We train on the Wild-Places dataset introduced in *Wild-Places: A Large-Scale Dataset for Lidar Place Recognition in Unstructured Natural Environments* ([link](https://arxiv.org/pdf/2211.12732)).
+
+Download the dataset [here](https://csiro-robotics.github.io/Wild-Places/#8-Download), and place or symlink the data in `data/wild_places`.
+
+Run the following to fix the broken timestamps in the poses files:
+```
+cd datasets/WildPlaces
+python fix_broken_timestamps.py \
+	--root '../../data/wild_places/data/' \
+	--csv_filename 'poses.csv' \
+	--csv_savename 'poses_fixed.csv' \
+	--cloud_folder 'Clouds'
+
+python fix_broken_timestamps.py \
+	--root '../../data/wild_places/data/' \
+	--csv_filename 'poses_aligned.csv' \
+	--csv_savename 'poses_aligned_fixed.csv' \
+	--cloud_folder 'Clouds_downsampled'
+```
+
+Before network training or evaluation, run the below code to generate pickles with positive and negative point clouds for each anchor point cloud:
+```
+cd datasets/WildPlaces
+python generate_training_tuples.py \
+	--root '../../data/wild_places/data/' 
+
+python generate_test_sets.py \
+	--root '../../data/wild_places/data/'
+```
+
+### CS-Wild-Places
+We train on our novel CS-Wild-Places dataset, introduced in further detail in our [paper](https://arxiv.org/abs/2503.08140). CS-Wild-Places is built upon the ground traversals introduced by Wild-Places, so it is required to download the Wild-Places dataset alongside our data following the instructions in the above section (generating train/test pickles for Wild-Places is not required for CS-Wild-Places, so this step can be skipped). Note that the full Wild-Places dataset must be downloaded as our post-processing utilises the full resolution submaps.
+
+Download our dataset from [CSIRO's data access portal](https://data.csiro.au/collection/csiro:64896), and place or symlink the data in `data/CS-Wild-Places` (this should point to the top-level directory, with the `data/` and `metadata/` subdirectories). Note that our experiments only require the post-processed submaps (folder `postproc_voxel_0.80m_rmground_normalised`), so you can ignore the raw submaps if space is an issue. Check the [README](./media/CS_Wild_Places_README.pdf) for further information and installation instructions for CS-Wild-Places.
+
+Assuming you have followed the above instructions to setup Wild-Places, you can use the below command to post-process the Wild-Places ground submaps into the format required for CS-Wild-Places (set num_workers to a sensible number for your system). Note that this may take several hours depending on your CPU:
+```
+cd datasets/CSWildPlaces
+python postprocess_wildplaces_ground.py \
+	--root '../../data/wild_places/data/' \
+	--cswildplaces_save_dir '../../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.80m_rmground_normalised' \
+	--remove_ground \
+	--downsample \
+	--downsample_type 'voxel' \
+	--voxel_size 0.8 \
+	--normalise \
+	--num_workers XX \
+	--verbose
+```
+Note that this script will generate the submaps used for the results reported in the paper, i.e. voxel downsampled, ground points removed, and normalised. We also provide a set of unnormalised submaps for convenience, and the corresponding Wild-Places ground submaps can be generated by omitting the `--normalise` option, and by setting `--cswildplaces_save_dir` to `'../../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.80m_rmground'`.
+
+Before network training or evaluation, run the below code to generate pickles with positive and negative point clouds for each anchor point cloud:
+
+```
+cd datasets/CSWildPlaces
+python generate_train_test_tuples.py \
+	--root '../../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.80m_rmground_normalised/' \
+	--eval_thresh '30' \
+	--pos_thresh '15' \
+	--neg_thresh '60' \
+	--buffer_thresh '30' \
+	--v2_only
+```
+Note that training and evaluation pickles are saved to the directory specified in `--root` by default. 
+
+### CS-Campus3D
+We train on the CS-Campus3D dataset introduced in *CrossLoc3D: Aerial-Ground Cross-Source 3D Place Recognition* ([link](https://arxiv.org/pdf/2303.17778)).
+
+Download the dataset [here](https://drive.google.com/file/d/1yxVicykRMg_HAfZG2EQUl1R3_wxpxStd/view?usp=sharing), and place or symlink the data in `data/benchmark_datasets_cs_campus3d`. 
+
+Run the below commands to convert the CS_Campus3D train and test pickles into a suitable format for use with HOTFormerLoc.
+
+```
+cd datasets/CSCampus3D
+python save_queries_HOTFormerLoc_format.py
+```
+
+### Oxford RobotCar
+We trained on a subset of Oxford RobotCar and the In-house (U.S., R.A., B.D.) datasets introduced in
+*PointNetVLAD: Deep Point Cloud Based Retrieval for Large-Scale Place Recognition* ([link](https://arxiv.org/pdf/1804.03492)).
 There are two training datasets:
 - Baseline Dataset - consists of a training subset of Oxford RobotCar
 - Refined Dataset - consists of training subset of Oxford RobotCar and training subset of In-house
 
-For dataset description see PointNetVLAD paper or github repository ([link](https://github.com/mikacuy/pointnetvlad)).
+We report results on the Baseline set in the paper.
 
-You can download training and evaluation datasets from 
+For dataset description see the PointNetVLAD paper or github repository ([link](https://github.com/mikacuy/pointnetvlad)).
+
+You can download the dataset from 
 [here](https://drive.google.com/open?id=1rflmyfZ1v9cGGH0RL4qXRrKhg-8A-U9q) 
-([alternative link](https://drive.google.com/file/d/1-1HA9Etw2PpZ8zHd3cjrfiZa8xzbp41J/view?usp=sharing)). 
+([alternative link](https://drive.google.com/file/d/1-1HA9Etw2PpZ8zHd3cjrfiZa8xzbp41J/view?usp=sharing)), then place or symlink the data in `data/benchmark_datasets`.
 
-Before the network training or evaluation, run the below code to generate pickles with positive and negative point clouds for each anchor point cloud. 
+Before network training or evaluation, run the below code to generate pickles with positive and negative point clouds for each anchor point cloud. 
 
 ```generate pickles
-cd generating_queries/ 
+cd datasets/pointnetvlad 
 
 # Generate training tuples for the Baseline Dataset
-python generate_training_tuples_baseline.py --dataset_root <dataset_root_path>
+python generate_training_tuples_baseline.py --dataset_root '../../data/benchmark_datasets'
 
-# Generate training tuples for the Refined Dataset
-python generate_training_tuples_refine.py --dataset_root <dataset_root_path>
+# (Optionally) Generate training tuples for the Refined Dataset
+python generate_training_tuples_refine.py --dataset_root '../../data/benchmark_datasets'
 
 # Generate evaluation tuples
-python generate_test_sets.py --dataset_root <dataset_root_path>
+python generate_test_sets.py --dataset_root '../../data/benchmark_datasets'
 ```
-`<dataset_root_path>` is a path to dataset root folder, e.g. `/data/pointnetvlad/benchmark_datasets/`.
-Before running the code, ensure you have read/write rights to `<dataset_root_path>`, as training and evaluation pickles
-are saved there. 
 
-### Training
-
-To train **MinkLoc3Dv2** model, download and decompress the dataset and generate training pickles as described above.
-Edit the configuration file (`config_baseline.txt` or `config_refined.txt`). 
-Set `dataset_folder` parameter to the dataset root folder.
-If running out of GPU memory, decrease `batch_split_size` parameter value. 
+## Training
+To train **HOTFormerLoc**, download the datasets and generate training pickles as described above for any dataset you wish to train on. 
+The configuration files for each dataset can be found in `config/`. 
+Set the `dataset_folder` parameter to the dataset root folder (only necessary if you have issues with the default relative path).
+If running out of GPU memory, decrease `batch_split_size` and `val_batch_size` parameter value. If running out of RAM, you may need to decrease the `batch_size` parameter or try reducing `num_workers` to 1, but note that a smaller batch size may slightly reduce performance. We use wandb for logging by default, but this can be disabled in the config.
 
 To train the network, run:
 
-```train baseline
+```
 cd training
 
-# To train minkloc3d model on the Baseline Dataset
-python train.py --config ../config/config_baseline.txt --model_config ../models/minkloc3dv2.txt
+# To train HOTFormerLoc on CS-Wild-Places
+python train.py --config ../config/config_cs-wild-places.txt --model_config ../models/hotformerloc_cs-wild-places_cfg.txt
 
-# To train minkloc3d model on the Refined Dataset
-python train.py --config ../config/config_refined.txt --model_config ../models/minkloc3dv2.txt
+# To train HOTFormerLoc on Wild-Places
+python train.py --config ../config/config_wild-places.txt --model_config ../models/hotformerloc_wild-places_cfg.txt
+
+# To train HOTFormerLoc on CS-Campus3D
+python train.py --config ../config/config_cs-campus3d.txt --model_config ../models/hotformerloc_cs-campus3d_cfg.txt
+
+# To train HOTFormerLoc on Oxford RobotCar
+python train.py --config ../config/config_oxford.txt --model_config ../models/hotformerloc_oxford_cfg.txt
 ```
 
-### Pre-trained Models
+If training on a SLURM cluster, we provide the `submitit_train_job_single_node.py` script to automate training job submission, with support for automatic checkpointing and resubmission on job timeout. Make sure to set job parameters appropriately for your cluster.
 
-Pretrained models are available in `weights` directory
-- `minkloc3dv2_baseline.pth` trained on the Baseline Dataset 
-- `minkloc3dv2_refined.pth` trained on the Refined Dataset 
+### Pre-trained Weights
 
-### Evaluation
+Pre-trained weights for HOTFormerLoc and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below, or download and extract all from [this link](https://www.dropbox.com/scl/fi/qjyh966styqlye38a4c37/pretrained_weights.tar.gz?rlkey=qkuhupf3og7mfkfid8dts7xej&st=wx8q2v68&dl=0).
+| Model        | Dataset         | Weights Download                                                                                                                                                         |
+|--------------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| HOTFormerLoc | CS-Wild-Places  | [hotformerloc_cs-wild-places.pth](https://www.dropbox.com/scl/fi/bcgcmbyic591f3bviib64/hotformerloc_cs-wild-places.pth?rlkey=vrw0seq6nfbsihijbhqatll2u&st=d7enawjw&dl=0) |
+| HOTFormerLoc | CS-Campus3D     | [hotformerloc_cs-campus3D.pth](https://www.dropbox.com/scl/fi/l9jyn5310gjf80zw35v7z/hotformerloc_cs-campus3d.pth?rlkey=s0bpcysyc1xt2357shhclpnlw&st=zhh679b9&dl=0)       |
+| HOTFormerLoc | Wild-Places     | [hotformerloc_wild-places.pth](https://www.dropbox.com/scl/fi/yd94iy9dq6k1m312ifnyx/hotformerloc_wild-places.pth?rlkey=5ndv0p48c7hyjvah90eab1l1e&st=zl1716hh&dl=0)       |
+| HOTFormerLoc | Oxford RobotCar | [hotformerloc_oxford.pth](https://www.dropbox.com/scl/fi/4r3470zo9zomkyjys5nrm/hotformerloc_oxford.pth?rlkey=eocfo3yvmhuqqgsmjtypgf78s&st=ybhzcj6y&dl=0)                 |
+| MinkLoc3Dv2  | CS-Wild-Places  | [minkloc3dv2_cs-wild-places.pth](https://www.dropbox.com/scl/fi/2w4l8gv7qbmp0lh4eztsf/minkloc3dv2_cs-wild-places.pth?rlkey=udxvtkr6yfgdnyizra4gmw0qa&st=p0evrh61&dl=0)   |
+| CrossLoc3D   | CS-Wild-Places  | [crossloc3d_cs-wild-places.pth](https://www.dropbox.com/scl/fi/5ikt1jvr2fabiaw8mhqbb/crossloc3d_cs-wild-places.pth?rlkey=lb4gp2n814im3twy4zy5d67bd&st=znup5ewi&dl=0)     |
+| LoGG3D-Net   | CS-Wild-Places  | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=n5ytpnzc&dl=0)       |
 
-To evaluate pretrained models run the following commands:
+## Evaluation
 
-```eval baseline
+To evaluate the pretrained models run the following commands:
+
+```
 cd eval
 
-# To evaluate the model trained on the Baseline Dataset
-python evaluate.py --config ../config/config_baseline.txt --model_config ../models/minkloc3dv2.txt --weights ../weights/minkloc3dv2_baseline.pth
+# To evaluate HOTFormerLoc trained on CS-Wild-Places
+python pnv_evaluate.py --config ../config/config_cs-wild-places.txt --model_config ../models/hotformerloc_cs-wild-places_cfg.txt --weights ../weights/hotformerloc_cs-wild-places.pth
 
-# To evaluate the model trained on the Refined Dataset
-python evaluate.py --config ../config/config_refined.txt --model_config ../models/minkloc3dv2.txt --weights ../weights/minkloc3dv2_refined.pth
+# To evaluate HOTFormerLoc trained on Wild-Places
+python pnv_evaluate.py --config ../config/config_wild-places.txt --model_config ../models/hotformerloc_wild-places_cfg.txt --weights ../weights/hotformerloc_wild-places.pth
+
+# To evaluate HOTFormerLoc trained on CS-Campus3D
+python pnv_evaluate.py --config ../config/config_cs-campus3d.txt --model_config ../models/hotformerloc_cs-campus3d_cfg.txt --weights ../weights/hotformerloc_cs-campus3d.pth
+
+# To evaluate HOTFormerLoc trained on Oxford RobotCar
+python pnv_evaluate.py --config ../config/config_oxford.txt --model_config ../models/hotformerloc_oxford_cfg.txt --weights ../weights/hotformerloc_oxford.pth
 ```
 
-## Results
+Below are the results for all evaluated models on CS-Wild-Places:
 
-**MinkLoc3Dv2** performance (measured by Average Recall@1) compared to the state of the art:
+![CS-Wild-Places_baseline](media/dataset_cswp_baseline.png)
+*Comparison of SOTA on CS-Wild-Places Baseline evaluation set.*
 
-### Trained on Baseline Dataset
+![CS-Wild-Places_unseen](media/dataset_cswp_unseen.png)
+*Comparison of SOTA on CS-Wild-Places Unseen evaluation set.*
 
-| Method                   | Oxford     | U.S.       | R.A.       | B.D        | Average    |
-|--------------------------|------------|------------|------------|------------|------------|
-| PointNetVLAD [1]         | 62.8       | 63.2       | 56.1       | 57.2       | 59.8       |
-| PCAN [2]                 | 69.1       | 62.4       | 56.9       | 58.1       | 61.6       |
-| LPD-Net [4]              | 86.3       | 87.0       | 83.1       | 82.5       | 94.7       |
-| EPC-Net [5]              | 86.2       | -          | -          | -          | -          | 
-| NDT-Transformer [7]      | 93.8       | -          | -          | -          | -          |
-| MinkLoc3D [8]            | 93.0       | 86.7       | 80.4       | 81.5       | 85.4       |
-| PPT-Net [9]              | 93.5       | 90.1       | 84.1       | 84.6       | 88.1       |
-| SVT-Net [10]             | 93.7       | 90.1       | 84.4       | 85.5       | 88.4       |
-| TransLoc3D [11]          | 95.0       | -          | -          | -          | -          |
-| ***MinkLoc3Dv2 (ours)*** | ***96.3*** | ***90.9*** | ***86.5*** | ***86.3*** | ***90.0*** |
+See the paper for full results and comparison with SOTA on all datasets.
 
+## Acknowledgements
 
-### Trained on Refined Dataset
-
-
-| Method                   | Oxford     | U.S.       | R.A.       | B.D         | Average    |
-|--------------------------|------------|------------|------------|-------------|------------|
-| PointNetVLAD [1]         | 63.3       | 86.1       | 82.7       | 80.1        | 78.0       |
-| PCAN [2]                 | 70.7       | 83.7       | 82.5       | 80.3        | 79.3       |
-| DAGC [3]                 | 71.5       | 86.3       | 82.8       | 81.3        | 80.5       |
-| LPD-Net [4]              | 86.6       | 94.4       | 90.8       | 90.8        | 90.7       |
-| SOE-Net [6]              | 89.3       | 91.8       | 90.2       | 89.0        | 90.1       | 
-| MinkLoc3D [8]            | 94.8       | 97.2       | 96.7       | 94.0        | 95.7       |
-| SVT-Net [10]             | 93.7       | 97.0       | 95.2       | 94.4        | 95.3       |
-| TransLoc3D [11]          | 95.0       | 97.5       | 97.3       | 94.8        | 96.2       |
-| ***MinkLoc3Dv2 (ours)*** | ***96.9*** | ***99.0*** | ***98.3*** | ***97.6***  | ***97.9*** |
-
-1. M. A. Uy and G. H. Lee, "PointNetVLAD: Deep Point Cloud Based Retrieval for Large-Scale Place Recognition", 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
-2. W. Zhang and C. Xiao, "PCAN: 3D Attention Map Learning Using Contextual Information for Point Cloud Based Retrieval", 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
-3. Q. Sun et al., "DAGC: Employing Dual Attention and Graph Convolution for Point Cloud based Place Recognition", 2020 International Conference on Multimedia Retrieval
-4. Z. Liu et al., "LPD-Net: 3D Point Cloud Learning for Large-Scale Place Recognition and Environment Analysis", 2019 IEEE/CVF International Conference on Computer Vision (ICCV)
-5. L. Hui et al., "Efficient 3D Point Cloud Feature Learning for Large-Scale Place Recognition", preprint arXiv:2101.02374 (2021)
-6. Y. Xia et al., "SOE-Net: A Self-Attention and Orientation Encoding Network for Point Cloud based Place Recognition", 2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
-7. Z. Zhou et al., "NDT-Transformer: Large-scale 3D Point Cloud Localisation Using the Normal Distribution Transform Representation", 
-   2021 IEEE International Conference on Robotics and Automation (ICRA)
-8. J. Komorowski, "MinkLoc3D: Point Cloud Based Large-Scale Place Recognition", 2021 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)
-9. L. Hui et al.,"Pyramid Point Cloud Transformer for Large-Scale Place Recognition", 2021 IEEE/CVF International Conference on Computer Vision
-10. Z. Fan et al., "SVT-Net: Super lightweight Sparse Voxel Transformer for Large Scale Place Recognition", arXiv:2105.00149 (2021)
-11. T. Xu et al., "TransLoc3d: Point Cloud Based Large-Scale Place Recognition using Adaptive Receptive Fields", arXiv:2105.11605 (2021)
-
-### License
-Our code is released under the MIT License (see LICENSE file for details).
+Special thanks to the authors of [MinkLoc3Dv2](https://github.com/jac99/MinkLoc3Dv2) and [OctFormer](https://github.com/octree-nn/octformer) for their excellent code, which formed the foundation of this codebase. We would also like to thank the authors of [Wild-Places](https://csiro-robotics.github.io/Wild-Places/) for their fantastic dataset which serves as the base that CS-Wild-Places is built upon.
