@@ -93,12 +93,14 @@ class OctreeAttention(torch.nn.Module):
         data = self.proj_drop(data)
 
         if self.return_attn_maps:
-            attn_dict = {'attn_map': attn_map, 'q': q, 'k': k, 'v': v,
-                         'rpe': rpe}
-        attn_dict.update({'qkv_std': qkv_std})
+            attn_dict = {'attn_map': attn_map, 'q': q, 'k': k, 'v': v}
+            if rpe is not None:
+                attn_dict['rpe'] = rpe
+        attn_dict['qkv_std'] = qkv_std
         return data, attn_dict
 
     def apply_rpe(self, attn, rel_pos):
+        rpe = None
         if self.use_rpe:
             rpe = self.rpe(rel_pos)
             if self.ct_per_window > 0:
@@ -181,7 +183,7 @@ class CTAttention(torch.nn.Module):
         ct = self.proj_drop(ct)
 
         attn_dict = {'attn_map': ct_attn_map, 'q': q, 'k': k}
-        attn_dict.update({'qkv_std': qkv_std})
+        attn_dict['qkv_std'] = qkv_std
         return ct, attn_dict
 
     def apply_rpe(self, attn, rel_pos):

@@ -100,7 +100,7 @@ class RTAttention(torch.nn.Module):
         
         if self.return_attn_maps:
             attn_dict = {'attn_map': attn_map, 'q': q_temp, 'k': k, 'v': v}
-        attn_dict.update({'qkv_std': qkv_std})
+        attn_dict['qkv_std'] = qkv_std
 
         # ffn
         rt = self.proj(rt)
