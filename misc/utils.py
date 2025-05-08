@@ -113,7 +113,7 @@ class ModelParams:
             else:
                 self.qkv_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
             self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
-            self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', False)  # outputs feats and attn maps from final block of each octformer stage
+            self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', True)  # outputs feats and attn maps from each block of HOTFormerLoc
 
             if 'hotformerloc' in self.model.lower():
                 #######################################################################

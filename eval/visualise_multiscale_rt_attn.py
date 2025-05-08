@@ -31,6 +31,8 @@ from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
+from eval.vis_utils import submap_distance, get_octree_points_and_windows, \
+    print_token_similarity, remove_rt_attn_padding, get_rt_boundary_idx
 
 SMALL_SIZE = 14
 MEDIUM_SIZE = 16
@@ -44,14 +46,6 @@ plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
 plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIG_SIZE)  # fontsize of the figure title
 plt.rc('axes', titlesize=BIG_SIZE)  # fontsize of the axes title
-
-def submap_distance(q1, q2) -> float:
-    """
-    Returns the distance between two submaps based on easting and northing
-    """
-    q1_pos = np.array([q1['easting'], q1['northing']])
-    q2_pos = np.array([q2['easting'], q2['northing']])
-    return np.linalg.norm(q2_pos - q1_pos)
 
 def load_eval_sets(params):
     eval_database_files, eval_query_files = get_query_database_splits(params)
@@ -105,115 +99,6 @@ def process_pcl_to_octree(cloud: np.ndarray, params: TrainingParams) -> OctreeT:
     octree = ocnn.octree.merge_octrees([octree])  # this must be called for CT generation to be valid
     octree.construct_all_neigh()
     return octree
-
-def get_octree_points_and_windows(query_octree: OctreeT, depth: int, params: TrainingParams):
-    """
-    For a given octree depth, returns the octree points, octree points reshaped
-    to windows, and a tensor containing the idx of each window. 
-    """
-    key = query_octree.key(depth, nempty=True)
-    x, y, z, _ = ocnn.octree.key2xyz(key, depth)
-    xyz = torch.stack([x, y, z], dim=1)
-    # Convert octree point coords to original scale
-    points_octree = rescale_octree_points(xyz, depth)
-    # Undo cylindrical projection
-    if params.model_params.coordinates == 'cylindrical':
-        coord_converter = CylindricalCoordinates(use_octree=True)
-        points_octree = coord_converter.undo_conversion(points_octree)        
-    # Create window partitions and get idx
-    points_octree_windows = query_octree.data_to_windows(points_octree, depth, False)
-    windows_idx = torch.zeros(points_octree_windows.shape[:-1],
-                              dtype=torch.int32)
-    num_windows = len(windows_idx)
-    # generate idx of windows
-    idx_values = torch.arange(num_windows, dtype=torch.int32).unsqueeze(-1)
-    windows_idx += idx_values
-    # Reverse patch operation and remove padding
-    windows_idx = windows_idx.reshape(-1)
-    windows_idx = query_octree.patch_reverse(windows_idx, depth)
-    return points_octree, points_octree_windows, windows_idx
-
-def cosine_sim_matrix(a, b, eps=1e-8):
-    """
-    Computes row-wise cosine similarity between two tensors, with added eps for
-    numerical stability.
-    """
-    a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
-    a_norm = a / torch.max(a_n, eps * torch.ones_like(a_n))
-    b_norm = b / torch.max(b_n, eps * torch.ones_like(b_n))
-    sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
-    return sim_mt
-
-def print_token_similarity(token_dict, token_type: str = 'Local'):
-    """
-    Takes a dict of tokens (N, C) with keys representing octree depth, and for
-    each set of tokens at each depth, computes and prints the average similarity
-    between tokens.
-    """
-    pyramid_depths = list(token_dict.keys())
-    fig = plt.figure(figsize=(8,7))
-    # for j, depth_j in enumerate(pyramid_depths):
-    #     sim = cosine_sim_matrix(token_dict[depth_j], token_dict[depth_j])
-    #     print(f"{token_type} token average similarity - depth {depth_j} ({len(sim)} tokens total):")
-    #     print(f"Overall similarity between tokens: {sim.mean():.3f} (min similarity {sim.min():.3f})")
-    #     # print(f"Average per row:\n{sim.mean(0)}")
-    #     ax = fig.add_subplot(1,3,j+1)
-    #     ax.boxplot(sim.mean(0))
-    #     ax.set_title(f"{token_type} token similarities - depth {depth_j}")
-    # ax.xticks(range(len(pyramid_depths)), pyramid_depths)
-
-    sims_rowwise = []
-    for j, depth_j in enumerate(pyramid_depths):
-        sim = cosine_sim_matrix(token_dict[depth_j], token_dict[depth_j])
-        print(f"{token_type} token average similarity - depth {depth_j} ({len(sim)} tokens total):")
-        print(f"Overall similarity between tokens: {sim.mean():.3f} (min similarity {sim.min():.3f})")
-        # print(f"Average per row:\n{sim.mean(0)}")
-        sims_rowwise.append(sim.mean(0))  # avg per row
-        # sims_rowwise.append(sim.flatten())  # avg overall (incl. diagonal)
-        
-    ax = fig.add_subplot(1,1,1)
-    ax.boxplot(sims_rowwise)
-    ax.set_title(f"{token_type} token similarities")
-    ax.set_xticks(np.arange(len(pyramid_depths)) + 1, pyramid_depths)
-    ax.set_xlabel("Octree Depth")
-    ax.set_ylabel("Cosine Similarity")
-    ax.set_ylim([-0.4, 1])
-
-def remove_rt_attn_padding(
-    relay_token_attn_map: Tensor,
-    octree: OctreeT,
-) -> Tensor:
-    """
-    Removes padding tokens from relay token attention map. Expects a single 
-    attention head as input.
-
-    Args:
-        relay_token_attn_map (Tensor): Tensor of shape (N, N) containing attn map.
-        octree (OctreeT): Octree corresponding to attn map.
-    """
-    rt_row_mask_idx = octree.rt_attn_mask[0,0] != octree.invalid_mask_value
-    relay_token_attn_map = relay_token_attn_map[rt_row_mask_idx][:,rt_row_mask_idx]
-    return relay_token_attn_map
-
-def get_rt_boundary_idx(
-    octree: OctreeT,
-    pyramid_depths: List[int],
-    return_cumsum: bool = True
-):
-    """
-    Returns the idx of the final relay token for each pyramid level, minus the
-    padding elements. Also optionally returns the cumsum of these indices. 
-    """
-    rt_boundary_idx = [
-        (octree.batch_num_windows[depth_j].item()
-         - torch.count_nonzero(octree.ct_batch_idx[depth_j]).item())
-        for depth_j in pyramid_depths
-    ]
-    if not return_cumsum:
-        return rt_boundary_idx
-    else: 
-        rt_boundary_idx_cumsum = np.cumsum(rt_boundary_idx).tolist()
-        return rt_boundary_idx, rt_boundary_idx_cumsum
 
 def plot_rt_attn_per_block_head(
     feats_and_attn_maps: List[Dict],
@@ -282,6 +167,9 @@ def plot_rt_attn_per_block_head(
             # MATPLOTLIB VERSION:
             # temp = axes[i,j].imshow(rt_attn_map_head_i, vmin=vmin)
             temp = ax.imshow(rt_attn_map_head_i)
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            plt.colorbar(temp, cax=cax)
             # fig.colorbar(temp, ax=ax, label=None)  # ENABLE COLORBAR
             if i == 0:
                 ax.set_title(f"Head {head_idx+1}")
@@ -365,6 +253,59 @@ def plot_hosa_attn_per_block_head(
             # MATPLOTLIB VERSION:
             # temp = axes[i,j].imshow(rt_attn_map_head_i, vmin=vmin)
             temp = ax.imshow(hosa_attn_map_head_i)
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            plt.colorbar(temp, cax=cax)
+            # fig.colorbar(temp, ax=ax, label=None)  # ENABLE COLORBAR
+            if i == 0:
+                ax.set_title(f"{title_str} {head_idx+1}")
+            ax.set_xticks([], [])
+            ax.set_yticks([], [])
+            # ax.set_xlabel('k')
+            # ax.set_ylabel('q', rotation=0)
+            if j == 0:
+                ax.annotate(
+                    f"Block {block_idx+1}", xy=(0, 0.5),
+                    xytext=(-ax.yaxis.labelpad - ROW_LABEL_PAD, 0),
+                    xycoords=ax.yaxis.label, textcoords='offset points',
+                    size=BIG_SIZE, ha='right', va='center',
+            )
+        fig.tight_layout()
+
+    # Viz RPE to confirm if attention is solely reliant on RPE
+    fig, axes = plt.subplots(nrows=num_blocks_viz, ncols=num_heads_viz,
+                             figsize=(10,9))
+    fig.suptitle(
+        # f"H-OSA attention {softmax_title_part} - per block and head - level {LEVEL}",
+        f"H-OSA RPE - level {LEVEL}",
+        fontsize='x-large',
+    )
+    for i, block_idx in enumerate(block_indices_viz):
+        if i >= num_blocks_viz:
+            break
+        hosa_rpe_i = feats_and_attn_maps[block_idx]['local_attn'][depth]['rpe'] # B, H, N, N
+        # Loop through heads
+        for j, head_idx in enumerate(head_indices_viz):
+            if j >= num_heads_viz:
+                break
+            ax = axes[i,j]
+            # ax = fig.add_subplot(num_blocks_viz, num_heads_viz,
+            #                      index=i*num_blocks_viz + j+1)
+            if args.hosa_viz_mode == 'heads':
+                hosa_rpe_head_i = hosa_rpe_i[WINDOW_IDX, head_idx]
+                title_str = 'Head'
+            elif args.hosa_viz_mode == 'windows':
+                hosa_rpe_head_i = hosa_rpe_i[head_idx].mean(0) # note that the first dim is not head idx, but I was too lazy to change the variable names to accomodate these two modes
+                title_str = 'Window'
+            # # Filter out mask tokens from attention map visualisation
+            # hosa_rpe_head_i = remove_rt_attn_padding(hosa_rpe_head_i, octree)
+
+            # MATPLOTLIB VERSION:
+            # temp = axes[i,j].imshow(rt_attn_map_head_i, vmin=vmin)
+            temp = ax.imshow(hosa_rpe_head_i)
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            plt.colorbar(temp, cax=cax)
             # fig.colorbar(temp, ax=ax, label=None)  # ENABLE COLORBAR
             if i == 0:
                 ax.set_title(f"{title_str} {head_idx+1}")
@@ -620,9 +561,9 @@ def process_submap(submap, model, device, params: TrainingParams):
     # Print similarity of relay tokens (row-wise cosine sim, box plots)
     relay_tokens_i = feats_and_attn_maps_block_i['rt_feats_pre_local']
     local_feats_i = feats_and_attn_maps_block_i['local_feats']
-    # if not args.debug:  # BOX PLOTS
-    #     print_token_similarity(relay_tokens_i, token_type='Relay')
-    #     print_token_similarity(local_feats_i, token_type='Local')
+    if not args.debug:  # BOX PLOTS
+        print_token_similarity(relay_tokens_i, token_type='Relay')
+        print_token_similarity(local_feats_i, token_type='Local')
     pyramid_depths = list(relay_tokens_i.keys())
     
     # Build window octree
@@ -958,7 +899,11 @@ if __name__ == "__main__":
     if args.weights is not None:
         assert os.path.exists(args.weights), 'Cannot open network weights: {}'.format(args.weights)
         print('Loading weights: {}'.format(args.weights))
-        model.load_state_dict(torch.load(args.weights, map_location=device))
+        if os.path.splitext(args.weights)[1] == '.ckpt':
+            state = torch.load(args.weights)
+            model.load_state_dict(state['model_state_dict'])
+        else:  # .pt or .pth
+            model.load_state_dict(torch.load(args.weights, map_location=device))
     model.to(device)
 
     main(model, device, params, args.num_positives)

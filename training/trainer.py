@@ -4,11 +4,14 @@
 import os
 import numpy as np
 import torch
+import torch.nn.functional as F
 import tqdm
 import pathlib
 import typing as tp
 import wandb
 import submitit
+import matplotlib.pyplot as plt
+import seaborn as sns
 from timm.utils import ModelEmaV3
 from timm.optim.lamb import Lamb
 # import wandb_osh
@@ -20,8 +23,11 @@ from misc.utils import TrainingParams, get_datetime, set_seed, update_params_fro
 from models.losses.loss import make_losses, kdloss
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
+from models.octree import OctreeT
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
+from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
+    get_octree_points_and_windows, colourise_points_by_height
 
 class NetworkTrainer:
     """
@@ -44,6 +50,7 @@ class NetworkTrainer:
         self.resume = False
         self.start_epoch = 1
         self.curr_epoch = 1
+        self.count_batches = 0
         self.best_avg_AR_1 = 0.0
         self.checkpoint_extension = '_latest.ckpt'
         
@@ -276,6 +283,160 @@ class NetworkTrainer:
             eval_stats[database_name]['MRR'] = stats[database_name]['ave_mrr']
         return eval_stats
 
+    def log_feats_and_attn_maps(self, feats_and_attn_maps: tp.List, octree: OctreeT,
+                                softmax=False) -> tp.Dict:
+        """
+        Logs various things including attention maps, average token similarity.
+        """
+        VIZ_BLOCKS = 5
+        VIZ_HEADS = 2
+        VIZ_LOCAL_WINDOWS = 2
+        BATCH_IDX = 0  # just take samples from the first batch element for attn maps
+        # Only log once per epoch
+        if self.count_batches > 1:
+            return {}
+        
+        def create_heatmap(attn_map: torch.Tensor, ticklabels: tp.Optional[tp.List] = None) -> plt.Figure:
+            if ticklabels is None:
+                ticklabels = 'auto'
+            eps = 100  # epsilon for filtering masked tokens (as masked tokens may have a slightly different value after attention)
+            CMAP = 'viridis'
+            fig = plt.figure(figsize=(6,5))
+            # Clip masked values to prevent them overpowering the attn map
+            vmin = attn_map[attn_map > (octree.invalid_mask_value + eps)].min().item()
+            sns.heatmap(attn_map, cmap=CMAP, vmin=vmin, xticklabels=ticklabels, yticklabels=ticklabels)
+            # sns.heatmap(attn_map, cmap=CMAP, xticklabels=False, yticklabels=False)
+            return fig
+        def get_rt_heatmap_ticklabels() -> tp.List:
+            """
+            Create ticklabels for relay token heatmaps to indicate where each
+            octree level starts/ends.
+            """
+            num_rt = octree.batch_num_relay_tokens_combined[BATCH_IDX]
+            rt_idx_per_depth_list = []
+            for depth_j in octree.pyramid_depths:
+                rt_idx_per_depth_list.append(octree.batch_num_windows[depth_j][BATCH_IDX].item())
+            ticklabels = ['' for _ in range(num_rt)]
+            num_rt_depth_cumsum = np.cumsum(rt_idx_per_depth_list)
+            for num_rt_depth_j in num_rt_depth_cumsum[:-1]:
+                ticklabels[num_rt_depth_j] = num_rt_depth_j
+            return ticklabels
+
+        # Make absolutely sure that gradients aren't touched here
+        with torch.no_grad():
+            stats = {'rt_attn_map': {}, 'local_attn_map': {},
+                    'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
+                    'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
+                    'pointcloud': {}}
+            block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps)-1,
+                                    VIZ_BLOCKS, dtype=np.int32)).tolist()
+            rt_ticklabels = get_rt_heatmap_ticklabels()
+            for block_idx in block_indices:
+                if 'rt_attn' in feats_and_attn_maps[block_idx]:
+                    rt_attn_maps_i = feats_and_attn_maps[block_idx]['rt_attn']['attn_map']
+                    num_heads = rt_attn_maps_i.size(dim=1)
+                    head_indices = np.unique(np.linspace(0, num_heads-1, VIZ_HEADS,
+                                                dtype=np.int32)).tolist()
+                    for i, head_idx in enumerate(head_indices):
+                        temp_attn_map = rt_attn_maps_i[BATCH_IDX, head_idx].to(self.device)  # move to GPU as octree is on GPU
+                        temp_attn_map = remove_rt_attn_padding(temp_attn_map, octree, BATCH_IDX)
+                        if softmax:
+                            temp_attn_map = F.softmax(temp_attn_map, dim=-1)
+                        stats['rt_attn_map'][f'block_{block_idx}_head_{i}'] \
+                            = wandb.Image(create_heatmap(temp_attn_map.cpu(), rt_ticklabels))
+                        plt.close()  # close fig to prevent going OOM
+                if 'local_attn' in feats_and_attn_maps[block_idx]:
+                    local_attn_maps_i = feats_and_attn_maps[block_idx]['local_attn']
+                    for depth_j in local_attn_maps_i.keys():
+                        if block_idx == 0:
+                            stats['local_attn_map'][f'depth_{depth_j}'] = {}
+                        local_attn_maps_i_depth_j = local_attn_maps_i[depth_j]['attn_map']
+                        num_heads = local_attn_maps_i_depth_j.size(1)
+
+                        ############# NOTE: Selects windows from entire batch, rather than just one batch element
+                        ############ num_windows = octree.batch_num_windows[depth_j][BATCH_IDX].item()
+                        ############ window_indices = np.unique(np.linspace(0, num_windows-1,
+                        ############                            VIZ_LOCAL_WINDOWS, endpoint=False,  # last window contains padding, so endpoint needs to be False
+                        ############                            dtype=np.int32)).tolist() 
+
+                        # Ensure window indices only index selected batch element, not all elements
+                        window_start_idx = 0 if BATCH_IDX == 0 else octree.batch_boundary[depth_j][BATCH_IDX-1].item()
+                        window_end_idx = octree.batch_boundary[depth_j][BATCH_IDX].item()
+                        window_indices = np.unique(np.linspace(window_start_idx, window_end_idx-1,
+                                                VIZ_LOCAL_WINDOWS, endpoint=False,  # last window may contain padding, so endpoint needs to be False
+                                                dtype=np.int32)).tolist() 
+                        head_indices = np.unique(np.linspace(0, num_heads-1,
+                                                VIZ_HEADS, dtype=np.int32)).tolist()
+                        for i, head_idx in enumerate(head_indices):
+                            for j, window_jdx in enumerate(window_indices):
+                                temp_attn_map = local_attn_maps_i_depth_j[window_jdx, head_idx]
+                                if softmax:
+                                    temp_attn_map = F.softmax(temp_attn_map, dim=-1)
+                                stats['local_attn_map'][f'depth_{depth_j}'][f'block_{block_idx}_head_{i}_window_{j}'] \
+                                    = wandb.Image(create_heatmap(temp_attn_map))
+                                plt.close()  # close fig to prevent going OOM
+                # Compute similarity metrics of tokens
+                if 'rt_feats_pre_local' in feats_and_attn_maps[block_idx]:
+                    rt_feats_i = feats_and_attn_maps[block_idx]['rt_feats_pre_local']
+                    rt_feats_i_batch_list = []
+                    # Compute similarity between all RTs
+                    for depth_j in rt_feats_i.keys():
+                        # Select only tokens from a single batch
+                        token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
+                        rt_feats_i_batch_list.append(rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j])
+                        ############ if block_idx == 0:  # NOTE: THIS BLOCK COMPUTES RT SIMILARITY FOR EACH DEPTH SEPARATELY
+                        ############     stats['rt_token_sim_matrix'][f'depth_{depth_j}'] = {}
+                        ############     stats['rt_token_unique_sim'][f'depth_{depth_j}'] = {}
+                        ############ # Select only tokens from a single batch
+                        ############ token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
+                        ############ rt_feats_i_depth_j = rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
+                        ############ temp_sim = rowwise_cosine_sim(rt_feats_i_depth_j, rt_feats_i_depth_j).cpu()
+                        ############ stats['rt_token_sim_matrix'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim))
+                        ############ plt.close()
+                        ############ # Collect unique values of token similarity (off diagonal)
+                        ############ stats['rt_token_unique_sim'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                    rt_feats_i_batch = torch.cat(rt_feats_i_batch_list, dim=0)
+                    temp_sim = rowwise_cosine_sim(rt_feats_i_batch, rt_feats_i_batch).cpu()
+                    stats['rt_token_sim_matrix'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim, rt_ticklabels))
+                    plt.close()
+                    # Collect unique values of token similarity (off diagonal)
+                    stats['rt_token_unique_sim'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                if 'local_feats' in feats_and_attn_maps[block_idx]:
+                    local_feats_i = feats_and_attn_maps[block_idx]['local_feats']
+                    for depth_j in local_feats_i.keys():
+                        if block_idx == 0:
+                            stats['local_token_sim_matrix'][f'depth_{depth_j}'] = {}
+                            stats['local_token_unique_sim'][f'depth_{depth_j}'] = {}
+                            # Select only tokens from a single batch
+                        token_batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
+                        local_feats_i_depth_j = local_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
+                        temp_sim = rowwise_cosine_sim(local_feats_i_depth_j, local_feats_i_depth_j).cpu()
+                        stats['local_token_sim_matrix'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim))
+                        plt.close()
+                        # Collect unique values of token similarity (off diagonal)
+                        stats['local_token_unique_sim'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+
+            # Log the point cloud itself
+            pcl_max_depth, _, _ = get_octree_points_and_windows(
+                octree, depth=self.params.octree_depth, params=self.params
+            )
+            batch_mask_max_depth = octree.batch_id(self.params.octree_depth, octree.nempty) == BATCH_IDX
+            pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].cpu().numpy()
+            pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked)
+            pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
+            stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
+            for depth_j in octree.pyramid_depths:
+                pcl_depth_j, _, _ = get_octree_points_and_windows(
+                    octree, depth=depth_j, params=self.params
+                )
+                batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
+                pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].cpu().numpy()
+                pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked)
+                pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
+                stats['pointcloud'][f'depth_{depth_j}'] = wandb.Object3D(pcl_depth_j_combined)
+                            
+        return stats
+
     def training_step(self, global_iter, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
         assert phase in ['train', 'val']
 
@@ -298,6 +459,10 @@ class NetworkTrainer:
             stats = self.model.stats.copy() if hasattr(self.model, 'stats') else {}
 
             embeddings = y['global']
+            # Log stats related to feats and attn maps
+            if 'feats_and_attn_maps' in y:
+                temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                stats.update(temp_stats)
 
             loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
@@ -354,11 +519,16 @@ class NetworkTrainer:
         # In training phase network is in the train mode to update BatchNorm stats
         embeddings_l = []
         embeddings_ema_l = []
+        stats = {}
         with torch.set_grad_enabled(False):
-            for minibatch in batch:
+            for i, minibatch in enumerate(batch):
                 minibatch = {e: minibatch[e].to(self.device, non_blocking=True) for e in minibatch}
                 y = self.model(minibatch)
                 embeddings_l.append(y['global'])
+                # Log stats related to feats and attn maps (only for first minibatch)
+                if i == 0 and 'feats_and_attn_maps' in y:
+                    temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                    stats.update(temp_stats)
                 # Compute MESA embeddings
                 if mesa > 0.0:
                     ema_output = self.model_ema.module(minibatch)['global'].detach()
@@ -374,8 +544,9 @@ class NetworkTrainer:
         with torch.set_grad_enabled(phase == 'train'):
             if phase == 'train':
                 embeddings.requires_grad_(True)
-            loss, stats = loss_fn(embeddings, positives_mask, negatives_mask)
-            stats = self.tensors_to_numbers(stats)
+            loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
+            temp_stats = self.tensors_to_numbers(temp_stats)
+            stats.update(temp_stats)
             # Compute MESA loss
             if mesa > 0.0:
                 kd = kdloss(embeddings, embeddings_ema)
@@ -480,7 +651,7 @@ class NetworkTrainer:
                 if self.params.verbose:
                     print(f"[INFO] Begin {phase} phase", flush=True)
                 running_stats = []  # running stats for the current epoch and phase
-                count_batches = 0
+                self.count_batches = 0
                 epoch_embeddings = None
                 epoch_stage_gradient_magnitudes = None
 
@@ -489,14 +660,18 @@ class NetworkTrainer:
                 else:
                     global_iter = None if dataloaders['val'] is None else iter(dataloaders['val'])
 
+                # TODO: Need to load a specific submap (or set of them) for 
+                #       logging attn maps and token similarity. Can use existing
+                #       dataloaders with a custom dataset/batch sampler.
+
                 while True:
-                    count_batches += 1
+                    self.count_batches += 1
                     batch_stats = {}
-                    if self.params.debug and count_batches > 2:
+                    if self.params.debug and self.count_batches > 2:
                         break
                     
                     if self.params.verbose:
-                        print(f"[INFO] Processing {phase} batch: {count_batches}",
+                        print(f"[INFO] Processing {phase} batch: {self.count_batches}",
                             flush=True)
 
                     try:
@@ -512,7 +687,7 @@ class NetworkTrainer:
 
                     running_stats.append(batch_stats)
                     if (epoch % self.params.embeddings_log_freq == 0
-                        and count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
+                        and self.count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
                         epoch_embeddings = temp_embeddings
 
                 # Log average gradients per stage
@@ -525,14 +700,18 @@ class NetworkTrainer:
                 for substep in running_stats[0]:
                     epoch_stats[substep] = {}
                     for key in running_stats[0][substep]:
-                        temp = [e[substep][key] for e in running_stats]
-                        if type(temp[0]) is dict:
-                            epoch_stats[substep][key] = {key: np.mean([e[key] for e in temp]) for key in temp[0]}
-                        elif type(temp[0]) is np.ndarray:
-                            # Mean value per vector element
-                            epoch_stats[substep][key] = np.mean(np.stack(temp), axis=0)
+                        try:
+                            temp = [e[substep][key] for e in running_stats]
+                        except KeyError:  # special case when value is only logged once during training
+                            epoch_stats[substep][key] = running_stats[0][substep][key]
                         else:
-                            epoch_stats[substep][key] = np.mean(temp)
+                            if type(temp[0]) is dict:
+                                epoch_stats[substep][key] = {key: np.mean([e[key] for e in temp]) for key in temp[0]}
+                            elif type(temp[0]) is np.ndarray:
+                                # Mean value per vector element
+                                epoch_stats[substep][key] = np.mean(np.stack(temp), axis=0)
+                            else:
+                                epoch_stats[substep][key] = np.mean(temp)
 
                 stats[phase].append(epoch_stats)
                 self.print_stats(phase, epoch_stats)
@@ -641,4 +820,18 @@ class NetworkTrainer:
             metrics['qkv_weight_norm_loss'] = epoch_stats['global']['qkv_weight_norm_loss']
         if 'qkv_weight_norm' in epoch_stats['global']:
             metrics['qkv_weight_norm'] = epoch_stats['global']['qkv_weight_norm']
+        if 'rt_attn_map' in epoch_stats['global']:
+            metrics['rt_attn_map'] = epoch_stats['global']['rt_attn_map']
+        if 'local_attn_map' in epoch_stats['global']:
+            metrics['local_attn_map'] = epoch_stats['global']['local_attn_map']
+        if 'rt_token_unique_sim' in epoch_stats['global']:
+            metrics['rt_token_unique_sim'] = epoch_stats['global']['rt_token_unique_sim']
+        if 'local_token_unique_sim' in epoch_stats['global']:
+            metrics['local_token_unique_sim'] = epoch_stats['global']['local_token_unique_sim']
+        if 'rt_token_sim_matrix' in epoch_stats['global']:
+            metrics['rt_token_sim_matrix'] = epoch_stats['global']['rt_token_sim_matrix']
+        if 'local_token_sim_matrix' in epoch_stats['global']:
+            metrics['local_token_sim_matrix'] = epoch_stats['global']['local_token_sim_matrix']
+        if 'pointcloud' in epoch_stats['global']:
+            metrics['pointcloud'] = epoch_stats['global']['pointcloud']
         return metrics

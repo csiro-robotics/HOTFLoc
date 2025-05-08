@@ -80,7 +80,7 @@ class HOTFormerLoc(torch.nn.Module):
                 rt_qkv_std.append(dict_i.pop('rt_qkv_std'))
 
         if self.return_feats_and_attn_maps:
-            return {'global': x, 'octf_qkv_std': octf_qkv_std,
+            return {'global': x, 'octree': octree, 'octf_qkv_std': octf_qkv_std,
                     'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std,
                     'feats_and_attn_maps': feats_and_attn_maps['hotformer'],
                     'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']}
