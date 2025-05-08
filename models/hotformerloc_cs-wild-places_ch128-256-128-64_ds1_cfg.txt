@@ -1,5 +1,5 @@
 [MODEL]
-model=HOTFormerLoc-CSWP-ch256-pyrmd
+model=HOTFormerLoc-CSWP-ch256-pyrmd-ds1
 channels=128,256,128,64
 num_blocks=4,10
 num_heads=8,16,8,4
@@ -10,7 +10,7 @@ ADaPE_mode=cov
 patch_size=64
 input_features=P
 downsample_input_embeddings=True
-num_input_downsamples=2
+num_input_downsamples=1
 disable_RPE=False
 grad_checkpoint=True
 conv_norm=layernorm

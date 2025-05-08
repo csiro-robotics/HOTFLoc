@@ -1,7 +1,7 @@
 [MODEL]
-model=HOTFormerLoc-CSWP-ch256-pyrmd
+model=HOTFormerLoc-CSWP-ch256-pyrmd-blocks4-8
 channels=128,256,128,64
-num_blocks=4,10
+num_blocks=4,8
 num_heads=8,16,8,4
 num_pyramid_levels=3
 ct_size=1
