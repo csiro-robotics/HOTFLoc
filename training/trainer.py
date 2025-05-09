@@ -296,7 +296,8 @@ class NetworkTrainer:
         if self.count_batches > 1:
             return {}
         
-        def create_heatmap(attn_map: torch.Tensor, ticklabels: tp.Optional[tp.List] = None) -> plt.Figure:
+        def create_heatmap(attn_map: torch.Tensor, ticklabels: tp.Optional[tp.List] = None,
+                           title: tp.Optional[str] = None) -> plt.Figure:
             if ticklabels is None:
                 ticklabels = 'auto'
             eps = 100  # epsilon for filtering masked tokens (as masked tokens may have a slightly different value after attention)
@@ -304,8 +305,9 @@ class NetworkTrainer:
             fig = plt.figure(figsize=(6,5))
             # Clip masked values to prevent them overpowering the attn map
             vmin = attn_map[attn_map > (octree.invalid_mask_value + eps)].min().item()
-            sns.heatmap(attn_map, cmap=CMAP, vmin=vmin, xticklabels=ticklabels, yticklabels=ticklabels)
-            # sns.heatmap(attn_map, cmap=CMAP, xticklabels=False, yticklabels=False)
+            ax = sns.heatmap(attn_map, cmap=CMAP, vmin=vmin, xticklabels=ticklabels, yticklabels=ticklabels)
+            if title is not None:
+                ax.set_title(title)
             return fig
         def get_rt_heatmap_ticklabels() -> tp.List:
             """
@@ -325,9 +327,9 @@ class NetworkTrainer:
         # Make absolutely sure that gradients aren't touched here
         with torch.no_grad():
             stats = {'rt_attn_map': {}, 'local_attn_map': {},
-                    'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
-                    'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
-                    'pointcloud': {}}
+                     'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
+                     'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
+                     'pointcloud': {}}
             block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps)-1,
                                     VIZ_BLOCKS, dtype=np.int32)).tolist()
             rt_ticklabels = get_rt_heatmap_ticklabels()
@@ -337,19 +339,20 @@ class NetworkTrainer:
                     num_heads = rt_attn_maps_i.size(dim=1)
                     head_indices = np.unique(np.linspace(0, num_heads-1, VIZ_HEADS,
                                                 dtype=np.int32)).tolist()
-                    for i, head_idx in enumerate(head_indices):
-                        temp_attn_map = rt_attn_maps_i[BATCH_IDX, head_idx].to(self.device)  # move to GPU as octree is on GPU
+                    for k, head_kdx in enumerate(head_indices):
+                        temp_attn_map = rt_attn_maps_i[BATCH_IDX, head_kdx].to(self.device)  # move to GPU as octree is on GPU
                         temp_attn_map = remove_rt_attn_padding(temp_attn_map, octree, BATCH_IDX)
                         if softmax:
                             temp_attn_map = F.softmax(temp_attn_map, dim=-1)
-                        stats['rt_attn_map'][f'block_{block_idx}_head_{i}'] \
-                            = wandb.Image(create_heatmap(temp_attn_map.cpu(), rt_ticklabels))
+                        stats['rt_attn_map'][f'block_{block_idx}_head_{k}'] \
+                            = wandb.Image(create_heatmap(temp_attn_map.cpu(), rt_ticklabels,
+                                                         title=f'Block {block_idx} - Head {k}'))
                         plt.close()  # close fig to prevent going OOM
                 if 'local_attn' in feats_and_attn_maps[block_idx]:
                     local_attn_maps_i = feats_and_attn_maps[block_idx]['local_attn']
-                    for depth_j in local_attn_maps_i.keys():
+                    for j, depth_j in enumerate(local_attn_maps_i.keys()):
                         if block_idx == 0:
-                            stats['local_attn_map'][f'depth_{depth_j}'] = {}
+                            stats['local_attn_map'][f'stage_{j}'] = {}
                         local_attn_maps_i_depth_j = local_attn_maps_i[depth_j]['attn_map']
                         num_heads = local_attn_maps_i_depth_j.size(1)
 
@@ -367,54 +370,57 @@ class NetworkTrainer:
                                                 dtype=np.int32)).tolist() 
                         head_indices = np.unique(np.linspace(0, num_heads-1,
                                                 VIZ_HEADS, dtype=np.int32)).tolist()
-                        for i, head_idx in enumerate(head_indices):
-                            for j, window_jdx in enumerate(window_indices):
-                                temp_attn_map = local_attn_maps_i_depth_j[window_jdx, head_idx]
+                        for k, head_kdx in enumerate(head_indices):
+                            for w, window_wdx in enumerate(window_indices):
+                                temp_attn_map = local_attn_maps_i_depth_j[window_wdx, head_kdx]
                                 if softmax:
                                     temp_attn_map = F.softmax(temp_attn_map, dim=-1)
-                                stats['local_attn_map'][f'depth_{depth_j}'][f'block_{block_idx}_head_{i}_window_{j}'] \
-                                    = wandb.Image(create_heatmap(temp_attn_map))
+                                stats['local_attn_map'][f'stage_{j}'][f'block_{block_idx}_head_{k}_window_{w}'] \
+                                    = wandb.Image(create_heatmap(temp_attn_map,
+                                                                 title=f'Block {block_idx} - Head {k} - Window {w}'))
                                 plt.close()  # close fig to prevent going OOM
                 # Compute similarity metrics of tokens
                 if 'rt_feats_pre_local' in feats_and_attn_maps[block_idx]:
                     rt_feats_i = feats_and_attn_maps[block_idx]['rt_feats_pre_local']
                     rt_feats_i_batch_list = []
                     # Compute similarity between all RTs
-                    for depth_j in rt_feats_i.keys():
+                    for j, depth_j in enumerate(rt_feats_i.keys()):
                         # Select only tokens from a single batch
                         token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
                         rt_feats_i_batch_list.append(rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j])
                         ############ if block_idx == 0:  # NOTE: THIS BLOCK COMPUTES RT SIMILARITY FOR EACH DEPTH SEPARATELY
-                        ############     stats['rt_token_sim_matrix'][f'depth_{depth_j}'] = {}
-                        ############     stats['rt_token_unique_sim'][f'depth_{depth_j}'] = {}
+                        ############     stats['rt_token_sim_matrix'][f'stage_{j}'] = {}
+                        ############     stats['rt_token_unique_sim'][f'stage_{j}'] = {}
                         ############ # Select only tokens from a single batch
                         ############ token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
                         ############ rt_feats_i_depth_j = rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
                         ############ temp_sim = rowwise_cosine_sim(rt_feats_i_depth_j, rt_feats_i_depth_j).cpu()
-                        ############ stats['rt_token_sim_matrix'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim))
+                        ############ stats['rt_token_sim_matrix'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim))
                         ############ plt.close()
                         ############ # Collect unique values of token similarity (off diagonal)
-                        ############ stats['rt_token_unique_sim'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                        ############ stats['rt_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
                     rt_feats_i_batch = torch.cat(rt_feats_i_batch_list, dim=0)
                     temp_sim = rowwise_cosine_sim(rt_feats_i_batch, rt_feats_i_batch).cpu()
-                    stats['rt_token_sim_matrix'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim, rt_ticklabels))
+                    stats['rt_token_sim_matrix'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim, rt_ticklabels,
+                                                                                                    title=f'Block {block_idx}'))
                     plt.close()
                     # Collect unique values of token similarity (off diagonal)
                     stats['rt_token_unique_sim'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
                 if 'local_feats' in feats_and_attn_maps[block_idx]:
                     local_feats_i = feats_and_attn_maps[block_idx]['local_feats']
-                    for depth_j in local_feats_i.keys():
+                    for j, depth_j in enumerate(local_feats_i.keys()):
                         if block_idx == 0:
-                            stats['local_token_sim_matrix'][f'depth_{depth_j}'] = {}
-                            stats['local_token_unique_sim'][f'depth_{depth_j}'] = {}
+                            stats['local_token_sim_matrix'][f'stage_{j}'] = {}
+                            stats['local_token_unique_sim'][f'stage_{j}'] = {}
                             # Select only tokens from a single batch
                         token_batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
                         local_feats_i_depth_j = local_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
                         temp_sim = rowwise_cosine_sim(local_feats_i_depth_j, local_feats_i_depth_j).cpu()
-                        stats['local_token_sim_matrix'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim))
+                        stats['local_token_sim_matrix'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim,
+                                                                                                                         title=f'Block {block_idx}'))
                         plt.close()
                         # Collect unique values of token similarity (off diagonal)
-                        stats['local_token_unique_sim'][f'depth_{depth_j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                        stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
 
             # Log the point cloud itself
             pcl_max_depth, _, _ = get_octree_points_and_windows(
@@ -422,18 +428,18 @@ class NetworkTrainer:
             )
             batch_mask_max_depth = octree.batch_id(self.params.octree_depth, octree.nempty) == BATCH_IDX
             pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].cpu().numpy()
-            pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked)
+            pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
             pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
             stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
-            for depth_j in octree.pyramid_depths:
+            for j, depth_j in enumerate(octree.pyramid_depths):
                 pcl_depth_j, _, _ = get_octree_points_and_windows(
                     octree, depth=depth_j, params=self.params
                 )
                 batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
                 pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].cpu().numpy()
-                pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked)
+                pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
                 pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
-                stats['pointcloud'][f'depth_{depth_j}'] = wandb.Object3D(pcl_depth_j_combined)
+                stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                             
         return stats
 
