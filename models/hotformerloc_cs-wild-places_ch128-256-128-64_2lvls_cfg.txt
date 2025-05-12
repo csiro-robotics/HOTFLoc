@@ -17,7 +17,7 @@ conv_norm=layernorm
 feature_size=256
 output_dim=256
 pooling=PyramidAttnPoolMixer
-k_pooled_tokens=74,36,18
+k_pooled_tokens=86,42
 
 coordinates=cartesian
 
