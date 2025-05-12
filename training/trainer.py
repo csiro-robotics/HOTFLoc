@@ -290,7 +290,7 @@ class NetworkTrainer:
         """
         VIZ_BLOCKS = 5
         VIZ_HEADS = 2
-        VIZ_LOCAL_WINDOWS = 2
+        VIZ_LOCAL_WINDOWS = 1
         BATCH_IDX = 0  # just take samples from the first batch element for attn maps
         # Only log once per epoch
         if self.count_batches > 1:
@@ -326,7 +326,7 @@ class NetworkTrainer:
 
         # Make absolutely sure that gradients aren't touched here
         with torch.no_grad():
-            stats = {'rt_attn_map': {}, 'local_attn_map': {},
+            stats = {'rt_attn_map': {}, 'local_attn_map': {}, 'local_rpe': {},
                      'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
                      'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
                      'pointcloud': {}}
@@ -351,25 +351,23 @@ class NetworkTrainer:
                 if 'local_attn' in feats_and_attn_maps[block_idx]:
                     local_attn_maps_i = feats_and_attn_maps[block_idx]['local_attn']
                     for j, depth_j in enumerate(local_attn_maps_i.keys()):
+                        local_rpe_i_depth_j = None
                         if block_idx == 0:
                             stats['local_attn_map'][f'stage_{j}'] = {}
+                            stats['local_rpe'][f'stage_{j}'] = {}
                         local_attn_maps_i_depth_j = local_attn_maps_i[depth_j]['attn_map']
+                        # Also log RPE to compare differences
+                        if 'rpe' in local_attn_maps_i[depth_j]:
+                            local_rpe_i_depth_j = local_attn_maps_i[depth_j]['rpe']
                         num_heads = local_attn_maps_i_depth_j.size(1)
-
-                        ############# NOTE: Selects windows from entire batch, rather than just one batch element
-                        ############ num_windows = octree.batch_num_windows[depth_j][BATCH_IDX].item()
-                        ############ window_indices = np.unique(np.linspace(0, num_windows-1,
-                        ############                            VIZ_LOCAL_WINDOWS, endpoint=False,  # last window contains padding, so endpoint needs to be False
-                        ############                            dtype=np.int32)).tolist() 
-
                         # Ensure window indices only index selected batch element, not all elements
                         window_start_idx = 0 if BATCH_IDX == 0 else octree.batch_boundary[depth_j][BATCH_IDX-1].item()
                         window_end_idx = octree.batch_boundary[depth_j][BATCH_IDX].item()
                         window_indices = np.unique(np.linspace(window_start_idx, window_end_idx-1,
-                                                VIZ_LOCAL_WINDOWS, endpoint=False,  # last window may contain padding, so endpoint needs to be False
-                                                dtype=np.int32)).tolist() 
+                                                   VIZ_LOCAL_WINDOWS, endpoint=False,  # last window may contain padding, so endpoint needs to be False
+                                                   dtype=np.int32)).tolist() 
                         head_indices = np.unique(np.linspace(0, num_heads-1,
-                                                VIZ_HEADS, dtype=np.int32)).tolist()
+                                                 VIZ_HEADS, dtype=np.int32)).tolist()
                         for k, head_kdx in enumerate(head_indices):
                             for w, window_wdx in enumerate(window_indices):
                                 temp_attn_map = local_attn_maps_i_depth_j[window_wdx, head_kdx]
@@ -379,6 +377,12 @@ class NetworkTrainer:
                                     = wandb.Image(create_heatmap(temp_attn_map,
                                                                  title=f'Block {block_idx} - Head {k} - Window {w}'))
                                 plt.close()  # close fig to prevent going OOM
+                                if local_rpe_i_depth_j is not None:
+                                    temp_rpe = local_rpe_i_depth_j[window_wdx, head_kdx]
+                                    stats['local_rpe'][f'stage_{j}'][f'block_{block_idx}_head_{k}_window_{w}'] \
+                                        = wandb.Image(create_heatmap(temp_rpe,
+                                                                     title=f'Block {block_idx} - Head {k} - Window {w}')) 
+                                    plt.close()
                 # Compute similarity metrics of tokens
                 if 'rt_feats_pre_local' in feats_and_attn_maps[block_idx]:
                     rt_feats_i = feats_and_attn_maps[block_idx]['rt_feats_pre_local']
