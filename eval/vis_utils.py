@@ -7,6 +7,8 @@ from typing import List
 import numpy as np
 import torch
 from torch import Tensor
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 import ocnn
 import matplotlib.pyplot as plt
 from dataset.coordinate_utils import CylindricalCoordinates
@@ -142,6 +144,33 @@ def get_rt_boundary_idx(
         rt_boundary_idx_cumsum = np.cumsum(rt_boundary_idx).tolist()
         return rt_boundary_idx, rt_boundary_idx_cumsum
 
+def colourise_points(
+    values: np.ndarray, colourmap_name='viridis',
+) -> np.ndarray:
+    """
+    Colourise a point cloud based on scalar values using a matplotlib colourmap.
+    
+    Args:
+        values: numpy array of shape (N, 1) containing scalar values to colourise each point by
+        colourmap_name: name of the matplotlib colourmap to use (default: 'viridis')
+    
+    Returns:
+        colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
+    """
+    # Normalize values to range [0, 1]
+    if np.max(values) > np.min(values):
+        normalised = (values - np.min(values)) / (np.max(values) - np.min(values))
+    else:
+        # Handle the case where all points have the same value
+        normalised = np.zeros_like(values)
+    
+    # Get the colormap from matplotlib
+    cmap = plt.get_cmap(colourmap_name)
+    
+    # Convert normalized values to colors
+    colours = cmap(normalised)[:, :3]  # Only take RGB, discard alpha
+    return colours
+
 def colourise_points_by_height(
     points: np.ndarray, colourmap_name='viridis',
 ) -> np.ndarray:
@@ -149,25 +178,45 @@ def colourise_points_by_height(
     Colourise a point cloud based on z values using a matplotlib colourmap.
     
     Args:
-        points: numpy array of shape (N, 3) containing 3D points
+        points: numpy array of shape (N, 3) containing 3D points (last dim MUST be height)
         colourmap_name: name of the matplotlib colourmap to use (default: 'viridis')
     
     Returns:
         colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
     """
+    assert points.ndim == 2 and points.shape[1] == 3
     # Extract z-values (height)
     z_values = points[:, 2]
     
-    # Normalize z-values to range [0, 1]
-    if np.max(z_values) > np.min(z_values):
-        z_normalized = (z_values - np.min(z_values)) / (np.max(z_values) - np.min(z_values))
-    else:
-        # Handle the case where all points have the same z-value
-        z_normalized = np.zeros_like(z_values)
-    
-    # Get the colormap from matplotlib
-    cmap = plt.get_cmap(colourmap_name)
-    
     # Convert normalized values to colors
-    colours = cmap(z_normalized)[:, :3]  # Only take RGB, discard alpha
+    colours = colourise_points(z_values, colourmap_name=colourmap_name)
+    return colours
+
+def colourise_points_by_similarity(
+    embeddings: np.ndarray, mode: str = 'tsne',
+) -> np.ndarray:
+    """
+    Colourise a point cloud based on similarity of local features. Uses t-SNE or
+    PCA to compute the colourisation.
+    
+    Args:
+        embeddings: numpy array of shape (N, D) containing embeddings for each point
+    
+    Returns:
+        colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
+    """
+    assert mode.lower() in ('tsne', 'pca'), "mode must be 'tsne' or 'pca'"
+    assert embeddings.ndim == 2
+    eps = 1e-8
+    if mode.lower() == 'tsne':
+        # NOTE: perplexity is not meant to be lower than n_samples, so may need to adjust this
+        #       for shallow octree levels with only a handful of octants
+        tsne = TSNE(n_components=3, n_iter=1000, metric='euclidean', perplexity=5)
+        colours = tsne.fit_transform(embeddings)
+    elif mode.lower() == 'pca':
+        pca = PCA(n_components=3)
+        colours = pca.fit_transform(embeddings)
+
+    # Normalize to [0, 1]
+    colours = (colours - colours.min(0)) / (colours.max(0) - colours.min(0) + eps)
     return colours

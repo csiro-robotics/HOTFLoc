@@ -27,7 +27,7 @@ from models.octree import OctreeT
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
-    get_octree_points_and_windows, colourise_points_by_height
+    get_octree_points_and_windows, colourise_points_by_height, colourise_points_by_similarity
 
 class NetworkTrainer:
     """
@@ -412,7 +412,7 @@ class NetworkTrainer:
                         if block_idx == 0:
                             stats['local_token_sim_matrix'][f'stage_{j}'] = {}
                             stats['local_token_unique_sim'][f'stage_{j}'] = {}
-                            # Select only tokens from a single batch
+                        # Select only tokens from a single batch
                         token_batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
                         local_feats_i_depth_j = local_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
                         temp_sim = rowwise_cosine_sim(local_feats_i_depth_j, local_feats_i_depth_j).cpu()
@@ -437,7 +437,14 @@ class NetworkTrainer:
                 )
                 batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
                 pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].cpu().numpy()
-                pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
+                # Colourise by last layer embeddings if available, else by height
+                if 'local_feats' in feats_and_attn_maps[-1]:
+                    local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
+                    local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j.cpu()].numpy()
+                    assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
+                    pcl_depth_j_colours = colourise_points_by_similarity(local_feats_depth_j_masked, mode='pca') * 255.0
+                else:
+                    pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
                 pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                 stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                             
