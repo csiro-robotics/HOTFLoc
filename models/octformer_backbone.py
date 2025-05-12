@@ -27,7 +27,7 @@ class OctreeAttention(torch.nn.Module):
                  qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
                  dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True,
-                 return_attn_maps: bool = False):
+                 return_attn_maps: bool = False, ct_rpe_init: bool = True):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
@@ -35,6 +35,7 @@ class OctreeAttention(torch.nn.Module):
         self.dilation = dilation
         self.ct_per_window = ct_per_window
         self.use_rpe = use_rpe
+        self.ct_rpe_init = ct_rpe_init
         self.return_attn_maps = return_attn_maps
         self.scale = qk_scale or (dim // num_heads) ** -0.5
 
@@ -49,7 +50,14 @@ class OctreeAttention(torch.nn.Module):
         # stablize the training process and improve the performance on ScanNet by
         # 0.3 to 0.5; on the other datasets, the improvements are more marginal. So
         # it is not indispensible, and can be removed by setting `use_rpe` as False.
-        self.rpe = RPE(patch_size, num_heads, dilation) if use_rpe else None
+        self.rpe, self.ct_rpe = None, None
+        if not use_rpe:
+            return
+        self.rpe = RPE(patch_size, num_heads, dilation)
+        if self.ct_per_window > 0 and self.ct_rpe_init:
+            # Separate learnable value for CTs during RPE (instead of assuming 0)
+            self.ct_rpe = torch.nn.Parameter(torch.zeros(num_heads))
+            torch.nn.init.trunc_normal_(self.ct_rpe, std=0.02)
 
     def forward(self, data: torch.Tensor, octree: OctreeT, depth: int):
         attn_dict = {}
@@ -104,8 +112,13 @@ class OctreeAttention(torch.nn.Module):
         if self.use_rpe:
             rpe = self.rpe(rel_pos)
             if self.ct_per_window > 0:
-                # Pad RPE for CTs (assume no relative pos for CTs)
-                rpe = F.pad(rpe, (self.ct_per_window, 0, self.ct_per_window, 0))
+                # Pad RPE with values for CTs
+                rpe = F.pad(rpe, (self.ct_per_window, 0, self.ct_per_window, 0), value=0.)
+                if self.ct_rpe_init:
+                    # Add separate learnable RPE for CTs (per head)
+                    ct_rpe = self.ct_rpe.view(1, self.num_heads, 1)
+                    rpe[:,:,0,1:] += ct_rpe
+                    rpe[:,:,:,0] += ct_rpe
             attn = attn + rpe
         return attn, rpe
 
