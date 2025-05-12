@@ -35,6 +35,8 @@ if __name__ == "__main__":
                         help='Number of cpus requested per gpu')
     parser.add_argument('--job_mem', type=str, default='200gb',
                         help='Memory requested per job, 280gb to prevent 2 jobs entering the same node (and causing shm overflow)')
+    parser.add_argument('--job_max_num_timeouts', type=int, default=5,
+                        help='Max number of times to resubmit job.')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode, submit jobs on local device')
     parser.add_argument('--verbose', action='store_true',
@@ -48,6 +50,7 @@ if __name__ == "__main__":
     print('Days requested: {}'.format(args.job_days))
     print('CPUs (per node) requested: {}'.format(args.job_cpus))
     print('Mem requested: {}'.format(args.job_mem))
+    print('Max num timeouts: {}'.format(args.job_max_num_timeouts))
     print('Debug: {}'.format(args.debug))
     print('Verbose: {}'.format(args.verbose))
 
@@ -68,7 +71,7 @@ if __name__ == "__main__":
     cluster = 'debug' if args.debug else None
     executor = submitit.AutoExecutor(
         folder=log_folder, cluster=cluster,
-        slurm_max_num_timeout=5,
+        slurm_max_num_timeout=args.job_max_num_timeouts,
     )
     executor.update_parameters(name=params.model_params.model, **job_config)
     training_callable = NetworkTrainer()
