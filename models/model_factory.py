@@ -67,6 +67,7 @@ def model_factory(model_params: ModelParams):
             rt_size=model_params.ct_size,
             rt_propagation=model_params.ct_propagation,
             rt_propagation_scale=model_params.ct_propagation_scale,
+            rt_init_type=model_params.rt_init_type,
             disable_rt=model_params.disable_rt,
             ADaPE_mode=model_params.ADaPE_mode,
             grad_checkpoint=model_params.grad_checkpoint,

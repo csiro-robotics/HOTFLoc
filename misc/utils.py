@@ -96,6 +96,8 @@ class ModelParams:
             self.ct_size = params.getint('ct_size', 1)  # carrier token size, if using HAT layers
             self.ct_propagation = params.getboolean('ct_propagation', False)  # propagate ct features to local features at end of stage
             self.ct_propagation_scale = params.getfloat('ct_propagation_scale', None)  # learnable scalar multiplier for ct propagation step
+            self.rt_init_type = params.get('rt_init_type', 'avg_pool')
+            assert self.rt_init_type.lower() in ['avg_pool', 'max_pool', 'learnable']
             self.ADaPE_mode = params.get('ADaPE_mode', None)  # Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)

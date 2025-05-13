@@ -305,7 +305,8 @@ class RelayTokenInitialiser(torch.nn.Module):
     """
     
     def __init__(self, dim: int, patch_size: int, nempty: bool, conv_norm: str,
-                 rt_size: int = 1, use_cpe: bool = False, xcpe: bool = False):
+                 rt_size: int = 1, use_cpe: bool = False, xcpe: bool = False,
+                 rt_init_type: str = 'avg_pool'):
         """
         Args:
             dim: feature size dimension.
@@ -316,8 +317,10 @@ class RelayTokenInitialiser(torch.nn.Module):
             rt_size: number of relay tokens per local window.
             use_cpe: disable CPE during token initialisation.
             xcpe: Use xCPE instead of CPE.
+            init_type: Type of initialisation to use. Valid values are ('avg_pool', 'max_pool', 'learnable').
         """
         super().__init__()
+        VALID_INIT_TYPES = ('avg_pool', 'max_pool', 'learnable')
         self.use_cpe = use_cpe
         if use_cpe:
             self.cpe = CPE(dim, nempty=nempty, conv_norm=conv_norm, xcpe=xcpe)
@@ -338,25 +341,49 @@ class RelayTokenInitialiser(torch.nn.Module):
         self.patch_size = patch_size
         self.dim = dim
         self.rt_size = rt_size
+        rt_init_type = rt_init_type.lower()
+        if rt_init_type not in VALID_INIT_TYPES:
+            raise ValueError()
+        self.rt_init_type = rt_init_type
+        self.rt_init_token = None
+        if rt_init_type == 'learnable':
+            self.rt_init_token = torch.nn.Parameter(torch.zeros(1, self.dim))
+            torch.nn.init.normal_(self.rt_init_token, std=1)
+            # TODO: test other inits? trunc normal 0.02? (normal with std 1.0 seems reasonable though given local token scale)
 
     def forward(self, data: Tensor, octree: OctreeT, depth: int):
         K = self.patch_size
         C = self.dim
         G = self.rt_size
-        
+ 
         if self.use_cpe:  # CPE disabled when using ADaPE
             data = self.cpe(data, octree, depth)
         data = octree.patch_partition(data, depth)
-        # Reshape to windows, and mask out ignored values as NaN
+        # Reshape to windows
         # TODO: Make this work with rt_size > 1
         data = data.view(-1, K//G, C)
         mask = octree.ct_init_mask[depth].unsqueeze(-1)
-        data = data.masked_fill(mask, value=torch.nan)
-        # Avg pool over spatial dimension
-        # NOTE: AvgPool1D can't handle NaNs, so use nanmean() instead
-        relay_tokens = torch.nanmean(data, dim=1)
-        assert(not torch.any(relay_tokens.isnan())), \
-            "NaN propagated during relay token init, check code"
+        if self.rt_init_type == 'avg_pool':
+            # Mask out ignored values with NaNs
+            data = data.masked_fill(mask, value=torch.nan)
+            # Avg pool over spatial dimension
+            # NOTE: AvgPool1D can't handle NaNs, so use nanmean() instead
+            relay_tokens = torch.nanmean(data, dim=1)
+            assert(not torch.any(relay_tokens.isnan())), \
+                "NaN propagated during relay token init, check code"
+        elif self.rt_init_type == 'max_pool':
+            # Mask out ignored values with sufficiently negative values
+            data = data.masked_fill(mask, value=-torch.inf)
+            # Max pool over spatial dimension
+            relay_tokens = torch.max(data, dim=1).values
+        elif self.rt_init_type == 'learnable':
+            # TODO: Likely need to add something here to prevent RT uniformity 
+            #       (ADaPE should contribute somewhat this, or could swap order
+            #       of RTSA and H-OSA so that RTs aggregate local window feats)
+            N = data.size(0)
+            relay_tokens = self.rt_init_token.expand(N, C).clone()
+        else:
+            raise ValueError()
         return relay_tokens
     
 
@@ -372,6 +399,7 @@ class HOTFormerStage(torch.nn.Module):
                  disable_RPE: bool = False, rt_size: int = 1,
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
+                 rt_init_type: str = 'avg_pool',
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
@@ -506,6 +534,7 @@ class HOTFormerStage(torch.nn.Module):
                         rt_size=rt_size,
                         use_cpe=(not self.use_ADaPE),
                         xcpe=xcpe,
+                        rt_init_type=rt_init_type,
                     ) for j in range(self.num_pyramid_levels)]
                 )
             else:
@@ -687,6 +716,7 @@ class HOTFormerBase(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, rt_size: int = 1,
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
+                 rt_init_type: str = 'avg_pool',
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True,
@@ -738,9 +768,9 @@ class HOTFormerBase(torch.nn.Module):
             nempty=nempty, disable_RPE=disable_RPE,
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
-            rt_propagation_scale=rt_propagation_scale, disable_rt=disable_rt,
-            ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe, 
-            return_feats_and_attn_maps=return_feats_and_attn_maps)
+            rt_propagation_scale=rt_propagation_scale, rt_init_type=rt_init_type,
+            disable_rt=disable_rt, ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
+            xcpe=xcpe, return_feats_and_attn_maps=return_feats_and_attn_maps)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
         # Generate initial convolution embeddings
@@ -796,6 +826,7 @@ class HOTFormer(torch.nn.Module):
         rt_size: int = 1,
         rt_propagation: bool = False,
         rt_propagation_scale: Optional[float] = None,
+        rt_init_type: str = 'avg_pool',
         disable_rt: bool = False,
         ADaPE_mode: Optional[str] = None,
         grad_checkpoint: bool = True,
@@ -823,6 +854,7 @@ class HOTFormer(torch.nn.Module):
             rt_size: Size of relay tokens, note that patch_size must be divisible by this.
             rt_propagation: Boolean indicating if relay token features should be propagated to local features at the end of the stage.
             rt_propagation_scale: Learnable scalar multiplier for rt propagation step, to prevent 'blurring' of local features.
+            rt_init_type: Type of initialisation to use for relay tokens. Valid types include ['avg_pool', 'max_pool', 'learnable']
             disable_rt: Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
@@ -852,6 +884,7 @@ class HOTFormer(torch.nn.Module):
             rt_size=rt_size,
             rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale,
+            rt_init_type=rt_init_type,
             disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode,
             grad_checkpoint=grad_checkpoint,
