@@ -60,6 +60,7 @@ class OctreeT(Octree):
         self.start_depth = start_depth or self.full_depth
         self.num_pyramid_levels = num_pyramid_levels
         self.num_octf_levels = num_octf_levels
+        self.pyramid_depths = None
         if self.num_pyramid_levels > 0:  # HOTFormerLoc
             self.ct_layers = [False]*self.num_octf_levels + [True]*self.num_pyramid_levels
             self.pyramid_depths = [(self.max_depth - self.num_octf_levels - j) for j in range(self.num_pyramid_levels)]

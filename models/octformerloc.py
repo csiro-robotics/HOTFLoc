@@ -35,7 +35,7 @@ class OctFormerLoc(torch.nn.Module):
         octree = batch['octree']
         data = self.get_input_feature(octree)
         
-        x, output_depth, feats_and_attn_maps = self.backbone(data=data, octree=octree, depth=octree.depth)
+        x, output_depth, octree_t, feats_and_attn_maps = self.backbone(data=data, octree=octree, depth=octree.depth)
         # x is (num_points, n_features) tensor
         assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
                                                   f'Expected: {self.pooling.in_dim}'
@@ -53,17 +53,20 @@ class OctFormerLoc(torch.nn.Module):
             x = F.normalize(x, dim=1)
 
         # Separate `qkv_std` from `feats_and_attn_maps`
-        local_qkv_std = []
-        ct_qkv_std = []
-        for dict_i in feats_and_attn_maps:
-            if 'local_qkv_std' in dict_i.keys():
-                local_qkv_std.append(dict_i.pop('local_qkv_std'))
-            if 'ct_qkv_std' in dict_i.keys():
-                ct_qkv_std.append(dict_i.pop('ct_qkv_std'))
+        local_qkv_std = {}
+        ct_qkv_std = {}
+        for depth, octf_feats_and_attn_maps_i in feats_and_attn_maps.items():
+            local_qkv_std[depth] = []
+            ct_qkv_std[depth] = []
+            for dict_i in octf_feats_and_attn_maps_i:
+                if 'local_qkv_std' in dict_i.keys():
+                    local_qkv_std[depth].append(dict_i.pop('local_qkv_std'))
+                if 'ct_qkv_std' in dict_i.keys():
+                    ct_qkv_std[depth].append(dict_i.pop('ct_qkv_std'))
 
         if self.return_feats_and_attn_maps:
-            return {'global': x, 'local_qkv_std': local_qkv_std, 'ct_qkv_std': ct_qkv_std,
-                    'feats_and_attn_maps': feats_and_attn_maps}
+            return {'global': x, 'octree': octree_t, 'local_qkv_std': local_qkv_std,
+                    'ct_qkv_std': ct_qkv_std, 'feats_and_attn_maps': feats_and_attn_maps}
         return {'global': x, 'local_qkv_std': local_qkv_std, 'ct_qkv_std': ct_qkv_std}
 
     def print_info(self):

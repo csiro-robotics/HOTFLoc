@@ -607,7 +607,7 @@ class OctFormerBase(torch.nn.Module):
             feats_and_attn_maps_per_stage[depth_i] = feats_and_attn_maps_layer_i
             if i < self.num_stages - 1:
                 data = self.downsamples[i](data, octree, depth_i)
-        return features, feats_and_attn_maps_per_stage
+        return features, feats_and_attn_maps_per_stage, octree
 
 
 class FPNHeader(torch.nn.Module):
@@ -741,6 +741,6 @@ class OctFormer(torch.nn.Module):
             torch.nn.init.constant_(m.bias, 0)
 
     def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        features, feats_and_attn_maps = self.backbone(data, octree, depth)
+        features, feats_and_attn_maps, octree_t = self.backbone(data, octree, depth)
         output, output_depth = self.head(features, octree)
-        return output, output_depth, feats_and_attn_maps
+        return output, output_depth, octree_t, feats_and_attn_maps

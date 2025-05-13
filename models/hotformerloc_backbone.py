@@ -931,7 +931,7 @@ class HOTFormer(torch.nn.Module):
             torch.nn.init.constant_(m.bias, 0)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
-        local_feat_dict, relay_token_dict, octree, feats_and_attn_maps = (
+        local_feat_dict, relay_token_dict, octree_t, feats_and_attn_maps = (
             self.backbone(data, octree, depth)
         )
-        return local_feat_dict, relay_token_dict, octree, feats_and_attn_maps
+        return local_feat_dict, relay_token_dict, octree_t, feats_and_attn_maps
