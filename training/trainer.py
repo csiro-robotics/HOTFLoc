@@ -841,6 +841,8 @@ class NetworkTrainer:
             metrics['rt_attn_map'] = epoch_stats['global']['rt_attn_map']
         if 'local_attn_map' in epoch_stats['global']:
             metrics['local_attn_map'] = epoch_stats['global']['local_attn_map']
+        if 'local_rpe' in epoch_stats['global']:
+            metrics['local_rpe'] = epoch_stats['global']['local_rpe']
         if 'rt_token_unique_sim' in epoch_stats['global']:
             metrics['rt_token_unique_sim'] = epoch_stats['global']['rt_token_unique_sim']
         if 'local_token_unique_sim' in epoch_stats['global']:
