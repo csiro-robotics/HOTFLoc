@@ -130,9 +130,11 @@ class HOTFormerBlock(torch.nn.Module):
                  activation: torch.nn.Module = torch.nn.GELU, rt_size: int = 1,
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
+                 rt_rpe_init: bool = False, 
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  last: bool = False, layer_scale: Optional[float] = None,
-                 xcpe: bool = False, return_attn_maps: bool = False, **kwargs):
+                 xcpe: bool = False,
+                 return_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dim = dim
@@ -157,7 +159,8 @@ class HOTFormerBlock(torch.nn.Module):
         self.attention = OctreeAttention(
             dim, patch_size, num_heads, qkv_bias, qk_scale, attn_drop,
             proj_drop, dilation, ct_per_window=rt_per_window,
-            use_rpe=(not disable_RPE), return_attn_maps=return_attn_maps,
+            use_rpe=(not disable_RPE), ct_rpe_init=rt_rpe_init,
+            return_attn_maps=return_attn_maps,
         )
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
@@ -400,6 +403,7 @@ class HOTFormerStage(torch.nn.Module):
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
                  rt_init_type: str = 'avg_pool',
+                 rt_rpe_init: bool = False, 
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
@@ -458,6 +462,7 @@ class HOTFormerStage(torch.nn.Module):
                         rt_size=rt_size,
                         rt_propagation=rt_propagation,
                         rt_propagation_scale=rt_propagation_scale,
+                        rt_rpe_init=rt_rpe_init, 
                         use_ADaPE=self.use_ADaPE,
                         conv_norm=conv_norm,
                         last=(i == self.num_blocks - 1),
@@ -717,6 +722,7 @@ class HOTFormerBase(torch.nn.Module):
                  rt_propagation: bool = False,
                  rt_propagation_scale: Optional[float] = None,
                  rt_init_type: str = 'avg_pool',
+                 rt_rpe_init: bool = False, 
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True,
@@ -769,8 +775,9 @@ class HOTFormerBase(torch.nn.Module):
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale, rt_init_type=rt_init_type,
-            disable_rt=disable_rt, ADaPE_mode=ADaPE_mode, layer_scale=layer_scale,
-            xcpe=xcpe, return_feats_and_attn_maps=return_feats_and_attn_maps)
+            rt_rpe_init=rt_rpe_init, disable_rt=disable_rt, ADaPE_mode=ADaPE_mode,
+            layer_scale=layer_scale, xcpe=xcpe,
+            return_feats_and_attn_maps=return_feats_and_attn_maps)
 
     def forward(self, data: Tensor, octree: Octree, depth: int):
         # Generate initial convolution embeddings
@@ -827,6 +834,7 @@ class HOTFormer(torch.nn.Module):
         rt_propagation: bool = False,
         rt_propagation_scale: Optional[float] = None,
         rt_init_type: str = 'avg_pool',
+        rt_rpe_init: bool = False, 
         disable_rt: bool = False,
         ADaPE_mode: Optional[str] = None,
         grad_checkpoint: bool = True,
@@ -885,6 +893,7 @@ class HOTFormer(torch.nn.Module):
             rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale,
             rt_init_type=rt_init_type,
+            rt_rpe_init=rt_rpe_init, 
             disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode,
             grad_checkpoint=grad_checkpoint,

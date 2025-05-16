@@ -27,7 +27,7 @@ class OctreeAttention(torch.nn.Module):
                  qkv_bias: bool = True, qk_scale: Optional[float] = None,
                  attn_drop: float = 0.0, proj_drop: float = 0.0,
                  dilation: int = 1, ct_per_window: int = 0, use_rpe: bool = True,
-                 return_attn_maps: bool = False, ct_rpe_init: bool = True):
+                 ct_rpe_init: bool = False, return_attn_maps: bool = False):
         super().__init__()
         self.dim = dim
         self.patch_size = patch_size
@@ -225,7 +225,8 @@ class OctFormerBlock(torch.nn.Module):
                  ct_propagation_scale: Optional[float] = None,
                  use_ADaPE: bool = False, disable_RPE: bool = False,
                  conv_norm: str = 'batchnorm', last: bool = False,
-                 layer_scale: Optional[float] = None, xcpe: bool = False,                                 
+                 layer_scale: Optional[float] = None, xcpe: bool = False,
+                 ct_rpe_init: bool = False,
                  return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
@@ -249,6 +250,7 @@ class OctFormerBlock(torch.nn.Module):
                                          qk_scale, attn_drop, proj_drop, dilation,
                                          ct_per_window=ct_per_window,
                                          use_rpe=(not disable_RPE),
+                                         ct_rpe_init=ct_rpe_init,
                                          return_attn_maps=return_feats_and_attn_maps)
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
@@ -425,8 +427,9 @@ class OctFormerStage(torch.nn.Module):
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, num_blocks: int = 2,
                  conv_norm: str = 'batchnorm', layer_scale: Optional[float] = None,
-                 xcpe: bool = False, return_feats_and_attn_maps: bool = False,
-                 octformer_block=OctFormerBlock, **kwargs):
+                 xcpe: bool = False, ct_rpe_init: bool = False,
+                 return_feats_and_attn_maps: bool = False, octformer_block=OctFormerBlock,
+                 **kwargs):
         super().__init__()
         self.num_blocks = num_blocks
         self.grad_checkpoint = grad_checkpoint
@@ -444,7 +447,8 @@ class OctFormerStage(torch.nn.Module):
             drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
             nempty=nempty, activation=activation, disable_RPE=disable_RPE,
             use_ct=use_ct, ct_size=ct_size, ct_propagation=ct_propagation,
-            ct_propagation_scale=ct_propagation_scale, use_ADaPE=self.use_ADaPE,
+            ct_propagation_scale=ct_propagation_scale, ct_rpe_init=ct_rpe_init,
+            use_ADaPE=self.use_ADaPE,
             conv_norm=conv_norm, last=(i == num_blocks - 1),
             layer_scale=layer_scale, xcpe=xcpe,
             return_feats_and_attn_maps=return_feats_and_attn_maps) for i in range(num_blocks)])
@@ -546,6 +550,7 @@ class OctFormerBase(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
                  ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
+                 ct_rpe_init: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
@@ -583,7 +588,8 @@ class OctFormerBase(torch.nn.Module):
                 conv_norm=conv_norm, use_ct=ct_layers[i], ct_size=ct_size,
                 ct_propagation=ct_propagation,
                 ct_propagation_scale=ct_propagation_scale,
-                ADaPE_mode=ADaPE_mode, layer_scale=layer_scale, xcpe=xcpe,
+                ct_rpe_init=ct_rpe_init, ADaPE_mode=ADaPE_mode,
+                layer_scale=layer_scale, xcpe=xcpe,
                 return_feats_and_attn_maps=return_feats_and_attn_maps) for i in range(self.num_stages)])
         self.downsamples = torch.nn.ModuleList([Downsample(
                 channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
@@ -660,6 +666,7 @@ class OctFormer(torch.nn.Module):
                  nempty: bool = True, stem_down: int = 2, ct_size: int = 1,
                  ct_propagation: bool = False,
                  ct_propagation_scale: Optional[float] = None,
+                 ct_rpe_init: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  num_top_down: int = 2, fpn_channel: int = 168,
                  grad_checkpoint: bool = True,
@@ -700,7 +707,7 @@ class OctFormer(torch.nn.Module):
         self.backbone = OctFormerBase(
             in_channels, channels, num_blocks, num_heads, ct_layers,
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
-            ct_propagation, ct_propagation_scale, ADaPE_mode, grad_checkpoint,
+            ct_propagation, ct_propagation_scale, ct_rpe_init, ADaPE_mode, grad_checkpoint,
             downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
             xcpe, return_feats_and_attn_maps,
         )
