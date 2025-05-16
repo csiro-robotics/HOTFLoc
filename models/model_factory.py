@@ -37,7 +37,8 @@ def model_factory(model_params: ModelParams):
             conv0_kernel_size=model_params.conv0_kernel_size,
             block=block_module,
             layers=model_params.layers,
-            planes=model_params.planes
+            planes=model_params.planes,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
         pooling = PoolingWrapper(
             pool_method=model_params.pooling,
@@ -47,7 +48,8 @@ def model_factory(model_params: ModelParams):
         model = MinkLoc(
             backbone=backbone,
             pooling=pooling,
-            normalize_embeddings=model_params.normalize_embeddings
+            normalize_embeddings=model_params.normalize_embeddings,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'hotformerloc' in model_params.model.lower():
         in_channels = get_in_channels(model_params.input_features)

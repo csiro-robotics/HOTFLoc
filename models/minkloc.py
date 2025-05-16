@@ -10,16 +10,18 @@ from models.layers.pooling_wrapper import PoolingWrapper
 
 
 class MinkLoc(torch.nn.Module):
-    def __init__(self, backbone: nn.Module, pooling: PoolingWrapper, normalize_embeddings: bool = False):
+    def __init__(self, backbone: nn.Module, pooling: PoolingWrapper, normalize_embeddings: bool = False,
+                 return_feats_and_attn_maps: bool = False):
         super().__init__()
         self.backbone = backbone
         self.pooling = pooling
         self.normalize_embeddings = normalize_embeddings
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.stats = {}
 
     def forward(self, batch):
         x = ME.SparseTensor(batch['features'], coordinates=batch['coords'])
-        x = self.backbone(x)
+        x, logged_feature_maps = self.backbone(x)
         # x is (num_points, n_features) tensor
         assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
                                                   f'Expected: {self.pooling.in_dim}'
@@ -36,6 +38,8 @@ class MinkLoc(torch.nn.Module):
             x = F.normalize(x, dim=1)
 
         # x is (batch_size, output_dim) tensor
+        if self.return_feats_and_attn_maps:
+            return {'global': x, 'feats_and_attn_maps': logged_feature_maps}
         return {'global': x}
 
     def print_info(self):

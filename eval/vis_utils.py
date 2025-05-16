@@ -3,7 +3,7 @@ Utility functions for visualising HOTFormerLoc and octrees.
 
 Ethan Griffiths (Data61, Pullenvale)
 """
-from typing import List
+from typing import List, Optional
 import numpy as np
 import torch
 from torch import Tensor
@@ -11,6 +11,7 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import ocnn
 import matplotlib.pyplot as plt
+import seaborn as sns
 from dataset.coordinate_utils import CylindricalCoordinates
 from misc.utils import TrainingParams, rescale_octree_points
 from models.octree import OctreeT
@@ -220,3 +221,18 @@ def colourise_points_by_similarity(
     # Normalize to [0, 1]
     colours = (colours - colours.min(0)) / (colours.max(0) - colours.min(0) + eps)
     return colours
+
+def create_heatmap(values: torch.Tensor, ticklabels: Optional[List] = None,
+                   min_value: Optional[float] = None, title: Optional[str] = None) -> plt.Figure:
+    CMAP = 'viridis'
+    vmin = None
+    if ticklabels is None:
+        ticklabels = 'auto'
+    fig = plt.figure(figsize=(6,5))
+    # Clip masked values to prevent them overpowering the attn map
+    if min_value is not None: 
+        vmin = values[values > min_value].min().item()
+    ax = sns.heatmap(values, cmap=CMAP, vmin=vmin, xticklabels=ticklabels, yticklabels=ticklabels)
+    if title is not None:
+        ax.set_title(title)
+    return fig

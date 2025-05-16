@@ -9,7 +9,7 @@ from models.resnet import ResNetBase
 class MinkFPN(ResNetBase):
     # Feature Pyramid Network (FPN) architecture implementation using Minkowski ResNet building blocks
     def __init__(self, in_channels, out_channels, num_top_down=1, conv0_kernel_size=5, block=BasicBlock,
-                 layers=(1, 1, 1), planes=(32, 64, 64)):
+                 layers=(1, 1, 1), planes=(32, 64, 64), return_feats_and_attn_maps=False):
         assert len(layers) == len(planes)
         assert 1 <= len(layers)
         assert 0 <= num_top_down <= len(layers)
@@ -21,6 +21,7 @@ class MinkFPN(ResNetBase):
         self.planes = planes
         self.lateral_dim = out_channels
         self.init_dim = planes[0]
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         ResNetBase.__init__(self, in_channels, out_channels, D=3)
 
     def network_initialization(self, in_channels, out_channels, D):
@@ -66,9 +67,12 @@ class MinkFPN(ResNetBase):
         # *** BOTTOM-UP PASS ***
         # First bottom-up convolution is special (with bigger kernel)
         feature_maps = []
+        logged_feature_maps = []  # store all feat maps for logging
         x = self.conv0(x)
         x = self.bn0(x)
         x = self.relu(x)
+        if self.return_feats_and_attn_maps:
+            logged_feature_maps.append(x)
         if self.num_top_down == self.num_bottom_up:
             feature_maps.append(x)
 
@@ -78,6 +82,8 @@ class MinkFPN(ResNetBase):
             x = bn(x)
             x = self.relu(x)
             x = block(x)
+            if self.return_feats_and_attn_maps:
+                logged_feature_maps.append(x)
             if self.num_bottom_up - 1 - self.num_top_down <= ndx < len(self.convs) - 1:
                 feature_maps.append(x)
 
@@ -89,5 +95,7 @@ class MinkFPN(ResNetBase):
         for ndx, tconv in enumerate(self.tconvs):
             x = tconv(x)        # Upsample using transposed convolution
             x = x + self.conv1x1[ndx+1](feature_maps[-ndx - 1])
+            if self.return_feats_and_attn_maps:
+                logged_feature_maps.append(x)
 
-        return x
+        return x, logged_feature_maps

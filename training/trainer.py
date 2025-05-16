@@ -27,7 +27,8 @@ from models.octree import OctreeT
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
-    get_octree_points_and_windows, colourise_points_by_height, colourise_points_by_similarity
+    get_octree_points_and_windows, colourise_points_by_height, colourise_points_by_similarity, \
+        create_heatmap
 
 class NetworkTrainer:
     """
@@ -283,6 +284,41 @@ class NetworkTrainer:
             eval_stats[database_name]['MRR'] = stats[database_name]['ave_mrr']
         return eval_stats
 
+    def log_feats(self, feature_maps: tp.List) -> tp.Dict:
+        """
+        Logs feature maps coming from MinkLoc.
+        """
+        BATCH_IDX = 0  # only look at one batch element
+        # Only log once per epoch
+        if self.count_batches > 1:
+            return {}
+
+        # Make absolutely sure that gradients aren't touched here
+        with torch.no_grad():
+            stats = {'local_token_unique_sim': {}, 'local_token_sim_matrix': {},
+                     'pointcloud': {}}
+            # Log the point cloud itself (in this case using the quantized point cloud)
+            pcl_orig = feature_maps[0].coordinates_at(batch_index=BATCH_IDX).cpu().numpy()
+            pcl_orig_colours = colourise_points_by_height(pcl_orig) * 255.0
+            pcl_orig_combined = np.concatenate([pcl_orig, pcl_orig_colours], axis=1)
+            stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_orig_combined)
+
+            # Log embedding similarities and colourised point cloud for each layer
+            for i, feats_i in enumerate(feature_maps):
+                pcl_i, feature_map_i = feats_i.coordinates_and_features_at(batch_index=BATCH_IDX)
+                pcl_i, feature_map_i = pcl_i.cpu().numpy(), feature_map_i.detach().cpu()
+                temp_sim = rowwise_cosine_sim(feature_map_i, feature_map_i)
+                stats['local_token_sim_matrix'][f'layer_{i}'] = wandb.Image(create_heatmap(temp_sim, title=f'Layer {i}'))
+                plt.close()
+                # Collect unique values of token similarity (off diagonal)
+                stats['local_token_unique_sim'][f'layer_{i}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                # Plot points colourised by PCA embeddings
+                pcl_i_colours = colourise_points_by_similarity(feature_map_i.numpy(), mode='pca') * 255.0
+                pcl_i_combined = np.concatenate([pcl_i, pcl_i_colours], axis=1)
+                stats['pointcloud'][f'layer_{i}'] = wandb.Object3D(pcl_i_combined)
+                
+        return stats
+
     def log_feats_and_attn_maps(self, feats_and_attn_maps: tp.List, octree: OctreeT,
                                 softmax=False) -> tp.Dict:
         """
@@ -292,23 +328,12 @@ class NetworkTrainer:
         VIZ_HEADS = 2
         VIZ_LOCAL_WINDOWS = 1
         BATCH_IDX = 0  # just take samples from the first batch element for attn maps
+        EPS = 100  # epsilon for filtering masked tokens (as masked tokens may have a slightly different value after attention)
+        MIN_ATTN_VALUE = octree.invalid_mask_value + EPS
         # Only log once per epoch
         if self.count_batches > 1:
             return {}
         
-        def create_heatmap(attn_map: torch.Tensor, ticklabels: tp.Optional[tp.List] = None,
-                           title: tp.Optional[str] = None) -> plt.Figure:
-            if ticklabels is None:
-                ticklabels = 'auto'
-            eps = 100  # epsilon for filtering masked tokens (as masked tokens may have a slightly different value after attention)
-            CMAP = 'viridis'
-            fig = plt.figure(figsize=(6,5))
-            # Clip masked values to prevent them overpowering the attn map
-            vmin = attn_map[attn_map > (octree.invalid_mask_value + eps)].min().item()
-            ax = sns.heatmap(attn_map, cmap=CMAP, vmin=vmin, xticklabels=ticklabels, yticklabels=ticklabels)
-            if title is not None:
-                ax.set_title(title)
-            return fig
         def get_rt_heatmap_ticklabels() -> tp.List:
             """
             Create ticklabels for relay token heatmaps to indicate where each
@@ -350,8 +375,8 @@ class NetworkTrainer:
                             if softmax:
                                 temp_attn_map = F.softmax(temp_attn_map, dim=-1)
                             stats['rt_attn_map'][f'block_{block_idx}_head_{k}'] \
-                                = wandb.Image(create_heatmap(temp_attn_map.cpu(), rt_ticklabels,
-                                                            title=f'Block {block_idx} - Head {k}'))
+                                = wandb.Image(create_heatmap(temp_attn_map.cpu(), rt_ticklabels, min_value=MIN_ATTN_VALUE, 
+                                                             title=f'Block {block_idx} - Head {k}'))
                             plt.close()  # close fig to prevent going OOM
                     if 'local_attn' in feats_and_attn_maps[block_idx]:
                         local_attn_maps_i = feats_and_attn_maps[block_idx]['local_attn']
@@ -379,14 +404,14 @@ class NetworkTrainer:
                                     if softmax:
                                         temp_attn_map = F.softmax(temp_attn_map, dim=-1)
                                     stats['local_attn_map'][f'stage_{j}'][f'block_{block_idx}_head_{k}_window_{w}'] \
-                                        = wandb.Image(create_heatmap(temp_attn_map,
-                                                                    title=f'Block {block_idx} - Head {k} - Window {w}'))
+                                        = wandb.Image(create_heatmap(temp_attn_map, min_value=MIN_ATTN_VALUE,
+                                                                     title=f'Block {block_idx} - Head {k} - Window {w}'))
                                     plt.close()  # close fig to prevent going OOM
                                     if local_rpe_i_depth_j is not None:
                                         temp_rpe = local_rpe_i_depth_j[window_wdx, head_kdx]
                                         stats['local_rpe'][f'stage_{j}'][f'block_{block_idx}_head_{k}_window_{w}'] \
-                                            = wandb.Image(create_heatmap(temp_rpe,
-                                                                        title=f'Block {block_idx} - Head {k} - Window {w}')) 
+                                            = wandb.Image(create_heatmap(temp_rpe, min_value=MIN_ATTN_VALUE,
+                                                                         title=f'Block {block_idx} - Head {k} - Window {w}')) 
                                         plt.close()
                     # Compute similarity metrics of tokens
                     if 'rt_feats_pre_local' in feats_and_attn_maps[block_idx]:
@@ -426,7 +451,7 @@ class NetworkTrainer:
                             local_feats_i_depth_j = local_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j]
                             temp_sim = rowwise_cosine_sim(local_feats_i_depth_j, local_feats_i_depth_j).cpu()
                             stats['local_token_sim_matrix'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Image(create_heatmap(temp_sim,
-                                                                                                                            title=f'Block {block_idx}'))
+                                                                                                                             title=f'Block {block_idx}'))
                             plt.close()
                             # Collect unique values of token similarity (off diagonal)
                             stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
@@ -582,7 +607,10 @@ class NetworkTrainer:
             embeddings = y['global']
             # Log stats related to feats and attn maps
             if 'feats_and_attn_maps' in y:
-                temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                if 'octree' in y:
+                    temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                else:  # minkloc
+                    temp_stats = self.log_feats(y['feats_and_attn_maps'])
                 stats.update(temp_stats)
 
             loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
@@ -648,7 +676,10 @@ class NetworkTrainer:
                 embeddings_l.append(y['global'])
                 # Log stats related to feats and attn maps (only for first minibatch)
                 if i == 0 and 'feats_and_attn_maps' in y:
-                    temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                    if 'octree' in y:
+                        temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                    else:  # minkloc
+                        temp_stats = self.log_feats(y['feats_and_attn_maps'])
                     stats.update(temp_stats)
                 # Compute MESA embeddings
                 if mesa > 0.0:
