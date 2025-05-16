@@ -457,24 +457,25 @@ class NetworkTrainer:
                             stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
 
                 # Log the point cloud itself
+                octree_local = octree.cpu()
                 pcl_max_depth, _, _ = get_octree_points_and_windows(
-                    octree, depth=self.params.octree_depth, params=self.params
+                    octree_local, depth=self.params.octree_depth, params=self.params
                 )
-                batch_mask_max_depth = octree.batch_id(self.params.octree_depth, octree.nempty) == BATCH_IDX
-                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].cpu().numpy()
+                batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == BATCH_IDX
+                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
                 pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
                 pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
                 stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
-                for j, depth_j in enumerate(octree.pyramid_depths):
+                for j, depth_j in enumerate(octree_local.pyramid_depths):
                     pcl_depth_j, _, _ = get_octree_points_and_windows(
-                        octree, depth=depth_j, params=self.params
+                        octree_local, depth=depth_j, params=self.params
                     )
-                    batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
-                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].cpu().numpy()
+                    batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == BATCH_IDX
+                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
                     # Colourise by last layer embeddings if available, else by height
                     if 'local_feats' in feats_and_attn_maps[-1]:
                         local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
-                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j.cpu()].numpy()
+                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
                         assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
                         pcl_depth_j_colours = colourise_points_by_similarity(local_feats_depth_j_masked, mode='pca') * 255.0
                     else:
@@ -549,24 +550,25 @@ class NetworkTrainer:
                             stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
 
                 # Log the point cloud itself
+                octree_local = octree.cpu()
                 pcl_max_depth, _, _ = get_octree_points_and_windows(
-                    octree, depth=self.params.octree_depth, params=self.params
+                    octree_local, depth=self.params.octree_depth, params=self.params
                 )
-                batch_mask_max_depth = octree.batch_id(self.params.octree_depth, octree.nempty) == BATCH_IDX
-                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].cpu().numpy()
+                batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == BATCH_IDX
+                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
                 pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
                 pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
                 stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
                 for j, depth_j in enumerate(feats_and_attn_maps.keys()):
                     pcl_depth_j, _, _ = get_octree_points_and_windows(
-                        octree, depth=depth_j, params=self.params
+                        octree_local, depth=depth_j, params=self.params
                     )
-                    batch_mask_depth_j = octree.batch_id(depth_j, octree.nempty) == BATCH_IDX
-                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].cpu().numpy()
+                    batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == BATCH_IDX
+                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
                     # Colourise by last layer embeddings if available, else by height
                     if 'local_feats' in feats_and_attn_maps[depth_j][-1]:
                         local_feats_depth_j = feats_and_attn_maps[depth_j][block_idx]['local_feats']
-                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j.cpu()].numpy()
+                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
                         assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
                         pcl_depth_j_colours = colourise_points_by_similarity(local_feats_depth_j_masked, mode='pca') * 255.0
                     else:

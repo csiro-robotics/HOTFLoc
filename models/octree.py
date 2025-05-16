@@ -370,6 +370,8 @@ class OctreeT(Octree):
             the copy will be asynchronous with respect to the host. Otherwise,
             the argument has no effect. Default: False.
         """
+        print("[WARNING] .to() is not currently verified for OctreeT, use with"
+              " caution as not all class variables may be transferred correctly.")
         if isinstance(device, str):
             device = torch.device(device)
             
@@ -391,19 +393,22 @@ class OctreeT(Octree):
         # Construct new OctreeT and copy objects over
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          self.max_depth, self.start_depth, self.ct_layers,
-                         self.ct_size, self.ADaPE_mode)
+                         self.ct_size, self.ADaPE_mode, self.num_pyramid_levels,
+                         self.num_octf_levels)
         octree.batch_idx = list_to_device(self.batch_idx)
         octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
         octree.ct_batch_idx = list_to_device(self.ct_batch_idx)
         octree.batch_boundary = list_clone(self.batch_boundary)  # CPU
         octree.batch_num_windows = list_clone(self.batch_num_windows)  # CPU
+        octree.batch_num_relay_tokens_combined = self.batch_num_relay_tokens_combined.clone()  # CPU
         octree.batch_window_overlap_mask = list_clone(self.batch_window_overlap_mask)  # CPU
         octree.patch_mask = list_to_device(self.patch_mask)
         octree.dilate_mask = list_to_device(self.dilate_mask)
         octree.hat_window_mask = list_to_device(self.hat_window_mask)
         octree.ct_mask = list_to_device(self.ct_mask)
         octree.ct_init_mask  = list_to_device(self.ct_init_mask)
+        octree.rt_attn_mask = self.rt_attn_mask.to(device, non_blocking=non_blocking)
         octree.rel_pos = list_to_device(self.rel_pos)
         octree.dilate_pos = list_to_device(self.dilate_pos)
-        octree.window_stats = list_to_device(self.window_stats)        
+        octree.window_stats = list_to_device(self.window_stats)
         return octree
