@@ -3,7 +3,7 @@ Utility functions for visualising HOTFormerLoc and octrees.
 
 Ethan Griffiths (Data61, Pullenvale)
 """
-from typing import List, Optional
+from typing import List, Optional, Union
 import numpy as np
 import torch
 from torch import Tensor
@@ -194,14 +194,16 @@ def colourise_points_by_height(
     return colours
 
 def colourise_points_by_similarity(
-    embeddings: np.ndarray, mode: str = 'tsne',
-) -> np.ndarray:
+    embeddings: np.ndarray, mode: str = 'tsne', return_explained_variance=False,
+) -> Union[np.ndarray, List[np.ndarray]]:
     """
     Colourise a point cloud based on similarity of local features. Uses t-SNE or
     PCA to compute the colourisation.
     
     Args:
         embeddings: numpy array of shape (N, D) containing embeddings for each point
+        mode: tSNE or PCA projection
+        return_explained_variance: if using PCA, returns explained variance of each component
     
     Returns:
         colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
@@ -217,9 +219,13 @@ def colourise_points_by_similarity(
     elif mode.lower() == 'pca':
         pca = PCA(n_components=3)
         colours = pca.fit_transform(embeddings)
+        pca_explained_variance = pca.explained_variance_ratio_
 
     # Normalize to [0, 1]
     colours = (colours - colours.min(0)) / (colours.max(0) - colours.min(0) + eps)
+
+    if mode.lower() == 'pca' and return_explained_variance:
+        return colours, pca_explained_variance
     return colours
 
 def create_heatmap(values: torch.Tensor, ticklabels: Optional[List] = None,

@@ -296,7 +296,7 @@ class NetworkTrainer:
         # Make absolutely sure that gradients aren't touched here
         with torch.no_grad():
             stats = {'local_token_unique_sim': {}, 'local_token_sim_matrix': {},
-                     'pointcloud': {}}
+                     'pointcloud': {}, 'pca_variance': {}}
             # Log the point cloud itself (in this case using the quantized point cloud)
             pcl_orig = feature_maps[0].coordinates_at(batch_index=BATCH_IDX).cpu().numpy()
             pcl_orig_colours = colourise_points_by_height(pcl_orig) * 255.0
@@ -313,9 +313,13 @@ class NetworkTrainer:
                 # Collect unique values of token similarity (off diagonal)
                 stats['local_token_unique_sim'][f'layer_{i}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
                 # Plot points colourised by PCA embeddings
-                pcl_i_colours = colourise_points_by_similarity(feature_map_i.numpy(), mode='pca') * 255.0
+                pcl_i_colours, feature_map_i_variance = colourise_points_by_similarity(
+                    feature_map_i.numpy(), mode='pca', return_explained_variance=True
+                )
+                pcl_i_colours *= 255.0
                 pcl_i_combined = np.concatenate([pcl_i, pcl_i_colours], axis=1)
                 stats['pointcloud'][f'layer_{i}'] = wandb.Object3D(pcl_i_combined)
+                stats['pca_variance'][f'layer_{i}'] = wandb.Histogram(feature_map_i_variance)
                 
         return stats
 
@@ -359,7 +363,7 @@ class NetworkTrainer:
                 stats = {'rt_attn_map': {}, 'local_attn_map': {}, 'local_rpe': {},
                         'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
                         'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
-                        'pointcloud': {}}
+                        'pointcloud': {}, 'pca_variance': {}}
                 block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps)-1,
                                         VIZ_BLOCKS, dtype=np.int32)).tolist()
                 rt_ticklabels = get_rt_heatmap_ticklabels()
@@ -477,11 +481,15 @@ class NetworkTrainer:
                         local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
                         local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
                         assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
-                        pcl_depth_j_colours = colourise_points_by_similarity(local_feats_depth_j_masked, mode='pca') * 255.0
+                        pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
+                            local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                        )
+                        pcl_depth_j_colours *= 255.0
                     else:
                         pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
                     pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                     stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
+                    stats['pca_variance'][f'stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
             return stats
         def log_octformer() -> tp.Dict:
             """
@@ -492,7 +500,7 @@ class NetworkTrainer:
                 stats = {'ct_attn_map': {}, 'local_attn_map': {}, 'local_rpe': {},
                         'ct_token_unique_sim': {}, 'local_token_unique_sim': {},
                         'ct_token_sim_matrix': {}, 'local_token_sim_matrix': {},
-                        'pointcloud': {}}
+                        'pointcloud': {}, 'pca_variance': {}}
                 for j, depth_j in enumerate(feats_and_attn_maps.keys()): 
                     block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps[depth_j])-1,
                                               VIZ_BLOCKS, dtype=np.int32)).tolist()
@@ -570,11 +578,15 @@ class NetworkTrainer:
                         local_feats_depth_j = feats_and_attn_maps[depth_j][block_idx]['local_feats']
                         local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
                         assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
-                        pcl_depth_j_colours = colourise_points_by_similarity(local_feats_depth_j_masked, mode='pca') * 255.0
+                        pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
+                            local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                        )
+                        pcl_depth_j_colours *= 255.0
                     else:
                         pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
                     pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                     stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
+                    stats['pca_variance'][f'stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
             return stats
 
         if 'octformer' in self.params.model_params.model.lower():
@@ -990,4 +1002,6 @@ class NetworkTrainer:
             metrics['local_token_sim_matrix'] = epoch_stats['global']['local_token_sim_matrix']
         if 'pointcloud' in epoch_stats['global']:
             metrics['pointcloud'] = epoch_stats['global']['pointcloud']
+        if 'pca_variance' in epoch_stats['global']:
+            metrics['pca_variance'] = epoch_stats['global']['pca_variance']
         return metrics
