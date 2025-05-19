@@ -297,29 +297,35 @@ class NetworkTrainer:
         with torch.no_grad():
             stats = {'local_token_unique_sim': {}, 'local_token_sim_matrix': {},
                      'pointcloud': {}, 'pca_variance': {}}
-            # Log the point cloud itself (in this case using the quantized point cloud)
-            pcl_orig = feature_maps[0].coordinates_at(batch_index=BATCH_IDX).cpu().numpy()
-            pcl_orig_colours = colourise_points_by_height(pcl_orig) * 255.0
-            pcl_orig_combined = np.concatenate([pcl_orig, pcl_orig_colours], axis=1)
-            stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_orig_combined)
+            # Log query and positive (queries and positives are neighbour pairs within the batch)
+            assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
+            query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+            for i, batch_idx in enumerate(query_pos_indices):
+                pcl_type = 'query' if i == 0 else 'positive'
+                # Log the point cloud itself (in this case using the quantized point cloud)
+                pcl_orig = feature_maps[0].coordinates_at(batch_index=batch_idx).cpu().numpy()
+                pcl_orig_colours = colourise_points_by_height(pcl_orig) * 255.0
+                pcl_orig_combined = np.concatenate([pcl_orig, pcl_orig_colours], axis=1)
+                stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_orig_combined)
 
-            # Log embedding similarities and colourised point cloud for each layer
-            for i, feats_i in enumerate(feature_maps):
-                pcl_i, feature_map_i = feats_i.coordinates_and_features_at(batch_index=BATCH_IDX)
-                pcl_i, feature_map_i = pcl_i.cpu().numpy(), feature_map_i.detach().cpu()
-                temp_sim = rowwise_cosine_sim(feature_map_i, feature_map_i)
-                stats['local_token_sim_matrix'][f'layer_{i}'] = wandb.Image(create_heatmap(temp_sim, title=f'Layer {i}'))
-                plt.close()
-                # Collect unique values of token similarity (off diagonal)
-                stats['local_token_unique_sim'][f'layer_{i}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
-                # Plot points colourised by PCA embeddings
-                pcl_i_colours, feature_map_i_variance = colourise_points_by_similarity(
-                    feature_map_i.numpy(), mode='pca', return_explained_variance=True
-                )
-                pcl_i_colours *= 255.0
-                pcl_i_combined = np.concatenate([pcl_i, pcl_i_colours], axis=1)
-                stats['pointcloud'][f'layer_{i}'] = wandb.Object3D(pcl_i_combined)
-                stats['pca_variance'][f'layer_{i}'] = wandb.Histogram(feature_map_i_variance)
+                # Log embedding similarities and colourised point cloud for each layer
+                for j, feats_j in enumerate(feature_maps):
+                    pcl_j, feature_map_j = feats_j.coordinates_and_features_at(batch_index=batch_idx)
+                    pcl_j, feature_map_j = pcl_j.cpu().numpy(), feature_map_j.detach().cpu()
+                    if i == 0:  # currently only logging similarity for one point cloud
+                        temp_sim = rowwise_cosine_sim(feature_map_j, feature_map_j)
+                        stats['local_token_sim_matrix'][f'layer_{j}'] = wandb.Image(create_heatmap(temp_sim, title=f'Layer {j}'))
+                        plt.close()
+                        # Collect unique values of token similarity (off diagonal)
+                        stats['local_token_unique_sim'][f'layer_{j}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                    # Plot points colourised by PCA embeddings
+                    pcl_j_colours, feature_map_j_variance = colourise_points_by_similarity(
+                        feature_map_j.numpy(), mode='pca', return_explained_variance=True
+                    )
+                    pcl_j_colours *= 255.0
+                    pcl_j_combined = np.concatenate([pcl_j, pcl_j_colours], axis=1)
+                    stats['pointcloud'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_combined)
+                    stats['pca_variance'][f'{pcl_type}_layer_{j}'] = wandb.Histogram(feature_map_j_variance)
                 
         return stats
 
@@ -465,31 +471,36 @@ class NetworkTrainer:
                 pcl_max_depth, _, _ = get_octree_points_and_windows(
                     octree_local, depth=self.params.octree_depth, params=self.params
                 )
-                batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == BATCH_IDX
-                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
-                pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
-                pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
-                stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
-                for j, depth_j in enumerate(octree_local.pyramid_depths):
-                    pcl_depth_j, _, _ = get_octree_points_and_windows(
-                        octree_local, depth=depth_j, params=self.params
-                    )
-                    batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == BATCH_IDX
-                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
-                    # Colourise by last layer embeddings if available, else by height
-                    if 'local_feats' in feats_and_attn_maps[-1]:
-                        local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
-                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
-                        assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
-                        pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
-                            local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                # Log query and positive (queries and positives are neighbour pairs within the batch)
+                assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
+                query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+                for i, batch_idx in enumerate(query_pos_indices):
+                    pcl_type = 'query' if i == 0 else 'positive'
+                    batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == batch_idx
+                    pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
+                    pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
+                    pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
+                    stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
+                    for j, depth_j in enumerate(octree_local.pyramid_depths):
+                        pcl_depth_j, _, _ = get_octree_points_and_windows(
+                            octree_local, depth=depth_j, params=self.params
                         )
-                        pcl_depth_j_colours *= 255.0
-                    else:
-                        pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
-                    pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
-                    stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
-                    stats['pca_variance'][f'stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
+                        batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == batch_idx
+                        pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
+                        # Colourise by last layer embeddings if available, else by height
+                        if 'local_feats' in feats_and_attn_maps[-1]:
+                            local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
+                            local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
+                            assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
+                            pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
+                                local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                            )
+                            pcl_depth_j_colours *= 255.0
+                        else:
+                            pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
+                        pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
+                        stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
+                        stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
             return stats
         def log_octformer() -> tp.Dict:
             """
@@ -562,31 +573,36 @@ class NetworkTrainer:
                 pcl_max_depth, _, _ = get_octree_points_and_windows(
                     octree_local, depth=self.params.octree_depth, params=self.params
                 )
-                batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == BATCH_IDX
-                pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
-                pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
-                pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
-                stats['pointcloud']['depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
-                for j, depth_j in enumerate(feats_and_attn_maps.keys()):
-                    pcl_depth_j, _, _ = get_octree_points_and_windows(
-                        octree_local, depth=depth_j, params=self.params
-                    )
-                    batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == BATCH_IDX
-                    pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
-                    # Colourise by last layer embeddings if available, else by height
-                    if 'local_feats' in feats_and_attn_maps[depth_j][-1]:
-                        local_feats_depth_j = feats_and_attn_maps[depth_j][block_idx]['local_feats']
-                        local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
-                        assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
-                        pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
-                            local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                # Log query and positive (queries and positives are neighbour pairs within the batch)
+                assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
+                query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+                for i, batch_idx in enumerate(query_pos_indices):
+                    pcl_type = 'query' if i == 0 else 'positive'
+                    batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == batch_idx
+                    pcl_max_depth_masked = pcl_max_depth[batch_mask_max_depth].numpy()
+                    pcl_max_depth_colours = colourise_points_by_height(pcl_max_depth_masked) * 255.0
+                    pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
+                    stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
+                    for j, depth_j in enumerate(feats_and_attn_maps.keys()):
+                        pcl_depth_j, _, _ = get_octree_points_and_windows(
+                            octree_local, depth=depth_j, params=self.params
                         )
-                        pcl_depth_j_colours *= 255.0
-                    else:
-                        pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
-                    pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
-                    stats['pointcloud'][f'stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
-                    stats['pca_variance'][f'stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
+                        batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == batch_idx
+                        pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
+                        # Colourise by last layer embeddings if available, else by height
+                        if 'local_feats' in feats_and_attn_maps[depth_j][-1]:
+                            local_feats_depth_j = feats_and_attn_maps[depth_j][block_idx]['local_feats']
+                            local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
+                            assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
+                            pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
+                                local_feats_depth_j_masked, mode='pca', return_explained_variance=True
+                            )
+                            pcl_depth_j_colours *= 255.0
+                        else:
+                            pcl_depth_j_colours = colourise_points_by_height(pcl_depth_j_masked) * 255.0
+                        pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
+                        stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
+                        stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
             return stats
 
         if 'octformer' in self.params.model_params.model.lower():
