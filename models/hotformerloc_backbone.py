@@ -134,11 +134,11 @@ class HOTFormerBlock(torch.nn.Module):
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
                  last: bool = False, layer_scale: Optional[float] = None,
                  xcpe: bool = False,
-                 return_attn_maps: bool = False, **kwargs):
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         self.dim = dim
-        self.return_attn_maps = return_attn_maps
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # NOTE: Dilation is disabled when using carrier tokens, as it is
         #       likely redundant to use both (and carrier tokens for dilated
         #       windows does not make sense).
@@ -160,7 +160,7 @@ class HOTFormerBlock(torch.nn.Module):
             dim, patch_size, num_heads, qkv_bias, qk_scale, attn_drop,
             proj_drop, dilation, ct_per_window=rt_per_window,
             use_rpe=(not disable_RPE), ct_rpe_init=rt_rpe_init,
-            return_attn_maps=return_attn_maps,
+            return_attn_maps=return_feats_and_attn_maps,
         )
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
@@ -245,12 +245,12 @@ class RelayTokenTransformerBlock(torch.nn.Module):
                  rt_size: int = 1, use_ADaPE: bool = False,
                  conv_norm: str = 'batchnorm',
                  layer_scale: Optional[float] = None,
-                 return_attn_maps: bool = False, **kwargs):
+                 return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
         # self.use_ADaPE = use_ADaPE,
         self.dim = dim
-        self.return_attn_maps = return_attn_maps
+        self.return_feats_and_attn_maps = return_feats_and_attn_maps
         rt_per_window = rt_size  # track number of carrier tokens per window
         self.rt_per_window = rt_per_window
         use_layer_scale = layer_scale is not None and type(layer_scale) in [int, float]
@@ -261,7 +261,7 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         self.norm1 = torch.nn.LayerNorm(dim)
         self.rt_attention = RTAttention(dim, patch_size, num_heads, qkv_bias,
                                         qk_scale, attn_drop, proj_drop,
-                                        return_attn_maps=return_attn_maps)
+                                        return_attn_maps=return_feats_and_attn_maps)
         self.norm2 = torch.nn.LayerNorm(dim)
         self.mlp = MLP(dim, int(dim * mlp_ratio), dim, activation, proj_drop)
         self.drop_path = OctreeDropPath(drop_path, nempty, use_ct=True)
@@ -468,7 +468,7 @@ class HOTFormerStage(torch.nn.Module):
                         last=(i == self.num_blocks - 1),
                         layer_scale=layer_scale,
                         xcpe=xcpe,
-                        return_attn_maps=return_feats_and_attn_maps,
+                        return_feats_and_attn_maps=return_feats_and_attn_maps,
                     ))
                 else:
                     hosa_blocks_j.append(OctFormerBlock(
@@ -489,7 +489,7 @@ class HOTFormerStage(torch.nn.Module):
                         last=(i == self.num_blocks - 1),
                         layer_scale=layer_scale,
                         xcpe=xcpe,
-                        return_attn_maps=return_feats_and_attn_maps,
+                        return_feats_and_attn_maps=return_feats_and_attn_maps,
                     ))                    
                 if self.use_projections:
                     up_projections_j.append(torch.nn.Linear(
@@ -526,7 +526,7 @@ class HOTFormerStage(torch.nn.Module):
                     use_ADaPE=self.use_ADaPE,
                     conv_norm=conv_norm,
                     layer_scale=layer_scale,
-                    return_attn_maps=return_feats_and_attn_maps,
+                    return_feats_and_attn_maps=return_feats_and_attn_maps,
                 ) for i in range(self.num_blocks)]
             )
             if self.use_projections:
@@ -682,24 +682,36 @@ class HOTFormerStage(torch.nn.Module):
                     )
 
                 # Log qkv std (removed from dict so gradients are not detached in next step)
+                if 'qkv_std' in local_attn_dict_depth_j:
+                    qkv_std_temp = local_attn_dict_depth_j.pop('qkv_std')
+                elif 'local_qkv_std' in local_attn_dict_depth_j:
+                    qkv_std_temp = local_attn_dict_depth_j.pop('local_qkv_std')
+                else:
+                    raise KeyError
                 feats_and_attn_maps_per_block[i]['local_qkv_std'].update({
-                    depth_j: local_attn_dict_depth_j.pop('qkv_std')
+                    depth_j: qkv_std_temp
                 })
                 
                 # Log feats and attn maps
                 if self.return_feats_and_attn_maps:
-                    feats_and_attn_maps_per_block[i]['local_attn'].update({
-                        depth_j: {
-                            k: v.detach().cpu()
-                            for k, v in local_attn_dict_depth_j.items()
-                        },
-                    })
+                    if not self.disable_rt:
+                        temp_attn_dict = {
+                            depth_j: {k: v.detach().cpu()
+                                      for k, v in local_attn_dict_depth_j.items()},
+                        }
+                    else:  # Octformer blocks have different dict layout, so need to get 'local_attn' key here
+                        temp_attn_dict = {
+                            depth_j: {k: v.detach().cpu()
+                                      for k, v in local_attn_dict_depth_j['local_attn'].items()},
+                        }
+                    feats_and_attn_maps_per_block[i]['local_attn'].update(temp_attn_dict)
                     feats_and_attn_maps_per_block[i]['local_feats'].update({
                         depth_j: local_feat_dict[depth_j].detach().cpu(),
                     })
-                    feats_and_attn_maps_per_block[i]['rt_feats_post_local'].update({
-                        depth_j: relay_token_dict[depth_j].detach().cpu(),
-                    })
+                    if not self.disable_rt:
+                        feats_and_attn_maps_per_block[i]['rt_feats_post_local'].update({
+                            depth_j: relay_token_dict[depth_j].detach().cpu(),
+                        })
                     
                 # Project RTs to global channel dim
                 if self.use_projections and not self.disable_rt:

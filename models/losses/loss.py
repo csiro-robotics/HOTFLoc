@@ -25,6 +25,9 @@ def make_losses(params: TrainingParams):
 
     # Loss applied to QKV projections to prevent collapse to zero
     if params.local_qkv_std_coeff > 0 or params.rt_qkv_std_coeff > 0:
+        if params.rt_qkv_std_coeff > 0 and params.model_params.disable_rt:
+            print('[WARNING] Value specified for relay token QKV std loss, but relay tokens are disabled')
+            params.rt_qkv_std_coeff = 0  # set to zero to prevent key error in the loss func
         qkv_loss_fn = QKV_STD_Loss(
             local_qkv_std_coeff=params.local_qkv_std_coeff,
             rt_qkv_std_coeff=params.rt_qkv_std_coeff,
