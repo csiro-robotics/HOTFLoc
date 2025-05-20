@@ -3,7 +3,7 @@
 dataset_folder = ../data/wild_places/data
 
 [TRAIN]
-num_workers = 2
+num_workers = 1
 batch_size = 1024
 batch_split_size = 96
 val_batch_size = 128
