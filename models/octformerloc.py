@@ -27,8 +27,14 @@ class OctFormerLoc(torch.nn.Module):
         self.stats = {}
         
     def get_input_feature(self, octree):
-        octree_feature = ocnn.modules.InputFeature(self.input_features, nempty=True)  # P for global position, D for local displacement (check docs)
-        data = octree_feature(octree)
+        if self.input_features.upper() == 'F':
+            # Make input have unit features, similar to in MinkLoc
+            data = torch.ones(size=(octree.nnum_nempty[octree.depth],1),
+                              device=octree.device, dtype=torch.float32)
+            assert len(data) == len(octree.points[octree.depth])
+        else:
+            octree_feature = ocnn.modules.InputFeature(self.input_features, nempty=True)  # P for global position, L for local position (check docs)
+            data = octree_feature(octree)
         return data
 
     def forward(self, batch):

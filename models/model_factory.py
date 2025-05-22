@@ -15,13 +15,13 @@ from models.layers.pooling_wrapper import PoolingWrapper
 
 def get_in_channels(input_features: str) -> int:
     in_channels = 0
-    channel_num_dict = {'L': 3, 'P': 3, 'D': 1, 'N': 3}  # https://ocnn-pytorch.readthedocs.io/en/latest/modules/octree.html#ocnn.octree.Octree.get_input_feature
+    channel_num_dict = {'L': 3, 'P': 3, 'D': 1, 'N': 3, 'F': 1}  # https://ocnn-pytorch.readthedocs.io/en/latest/modules/octree.html#ocnn.octree.Octree.get_input_feature
     
     for feature in input_features:
-        assert feature in channel_num_dict.keys(), "Invalid input features specified, must be in ['L','P','D','N']"
+        assert feature in channel_num_dict.keys(), "Invalid input features specified, must be in ['L','P','D','N','F']"
         in_channels += channel_num_dict[feature]
 
-    assert in_channels > 0, "Invalid input features specified, must be in ['L','P','D','N']"
+    assert in_channels > 0, "Invalid input features specified, must be in ['L','P','D','N','F']"
     
     return in_channels
 
