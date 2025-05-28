@@ -74,15 +74,17 @@ class PoolingWrapper(nn.Module):
                 k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
             )
         elif self.pool_method == 'AttnPoolMixer':
-            # Attentional pooling with token mixing MLP - relay tokens
-            self.pooled_feats = 'relaytokens'
+            # Attentional pooling with token mixing MLP - relay tokens (or just regular tokens for non-HOTFormerLoc models)
+            if self.num_pyramid_levels is not None:
+                self.pooled_feats = 'relaytokens'
             self.pooling = AttnPoolWrapper(
                 feature_size=in_dim, output_dim=output_dim,
                 k_pooled_tokens=k_pooled_tokens, aggregator='mixer',
             )
         elif self.pool_method == 'AttnPoolGeM':
-            # Attentional pooling with GeM pooling - relay tokens
-            self.pooled_feats = 'relaytokens'
+            # Attentional pooling with GeM pooling - relay tokens (or just regular tokens for non-HOTFormerLoc models)
+            if self.num_pyramid_levels is not None:
+                self.pooled_feats = 'relaytokens'
             self.pooling = AttnPoolWrapper(
                 feature_size=in_dim, output_dim=output_dim,
                 k_pooled_tokens=k_pooled_tokens, aggregator='GeM',

@@ -55,6 +55,11 @@ class ModelParams:
         self.normalize_embeddings = params.getboolean('normalize_embeddings', False)
         self.feature_size = params.getint('feature_size', 256)
         self.pooling = params.get('pooling', 'GeM')
+        self.k_pooled_tokens = params.get('k_pooled_tokens', '64')  # number of tokens to pool to when using attentional pooling
+        if self.k_pooled_tokens.isdigit():
+            self.k_pooled_tokens = int(self.k_pooled_tokens)
+        else:
+            self.k_pooled_tokens = tuple([int(e) for e in params['k_pooled_tokens'].split(',')])
         self.num_top_down = params.getint('num_top_down', 1)
         self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', True)  # outputs feats and attn maps from each block of HOTFormerLoc (or MinkLoc)
 
@@ -124,12 +129,7 @@ class ModelParams:
                 #######################################################################
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
-                self.k_pooled_tokens = params.get('k_pooled_tokens', '64')  # number of tokens to pool to when using attentional pooling
                 self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
-                if self.k_pooled_tokens.isdigit():
-                    self.k_pooled_tokens = int(self.k_pooled_tokens)
-                else:
-                    self.k_pooled_tokens = tuple([int(e) for e in params['k_pooled_tokens'].split(',')])
             else:
                 if 'ct_layers' in params:  # using carrier token attention per stage
                     self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])

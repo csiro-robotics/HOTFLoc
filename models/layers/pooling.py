@@ -1,6 +1,6 @@
 # Pooling methods code based on: https://github.com/filipradenovic/cnnimageretrieval-pytorch
 
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 from collections.abc import Sequence
 import torch
 import torch.nn as nn
@@ -115,7 +115,7 @@ class NetVLADWrapper(nn.Module):
         features = x.decomposed_features
         # features is a list of (n_points, feature_size) tensors with variable number of points
         batch_size = len(features)
-        features = torch.nn.utils.rnn.pad_sequence(features, batch_first=True)
+        features = nn.utils.rnn.pad_sequence(features, batch_first=True)
         # features is (batch_size, n_points, feature_size) tensor padded with zeros
 
         x = self.net_vlad(features)
@@ -332,7 +332,7 @@ class AttnPoolWrapper(nn.Module):
         self.feature_size = feature_size
         self.output_dim = output_dim
         assert isinstance(k_pooled_tokens, int), (
-            "Only 1 value allowed for k_pooled_tokens when using relay tokens"
+            "Only 1 value allowed for k_pooled_tokens for single-level attention pooling"
         )
         self.k_pooled_tokens = k_pooled_tokens
         self.mlp_ratio = mlp_ratio
@@ -367,14 +367,20 @@ class AttnPoolWrapper(nn.Module):
             self.descriptor_extractor = RelayTokenGeM(input_dim=feature_size)
         else:
             raise NotImplementedError(f'No valid aggregator: {aggregator}')
-            
 
-    def forward(self, relay_token_dict: Dict[int, Tensor],
-                octree: OctreeT, depth: int = None):
-        split_tokens = concat_and_pad_rt(relay_token_dict, octree)
-        attn_mask = self.calc_rt_attn_mask(octree.rt_attn_mask)
+    def forward(self, tokens: Union[ME.SparseTensor, Dict[int, Tensor]],
+                octree: Optional[OctreeT] = None, depth: Optional[int] = None):
+        padded_tokens, attn_mask = None, None
+        if octree is not None:
+            # Extract relay tokens into list and pad
+            padded_tokens = concat_and_pad_rt(tokens, octree)
+            attn_mask = self.calc_rt_attn_mask(octree.rt_attn_mask)
+        elif isinstance(tokens, ME.SparseTensor):
+            # Extract sparse tensors into list and pad
+            padded_tokens = pad_sequence(tokens.decomposed_features)
+            attn_mask = self.calc_mink_attn_mask(tokens)
         # Pool to k tokens
-        token_attn = self.attpool(split_tokens, attn_mask)
+        token_attn = self.attpool(padded_tokens, attn_mask)
         # Aggregate tokens into a global descriptor
         if self.aggregator.lower() != 'mixer':
             token_attn = token_attn + self.token_processor(token_attn)
@@ -389,4 +395,20 @@ class AttnPoolWrapper(nn.Module):
         # All query tokens should ignore padding tokens
         attn_mask = rt_attn_mask[:, 0, :].unsqueeze(1)  # (B, N, N) -> (B, k, N)
         attn_mask = attn_mask.repeat(1, self.k_pooled_tokens, 1)
+        return attn_mask
+
+    def calc_mink_attn_mask(self, local_features: ME.SparseTensor,
+                            invalid_mask_value=-1e3):
+        """
+        Computes attention mask for tokens contained in Minkowski Sparse Tensor.
+        Probably slow but it is currently only for testing.
+        """
+        features_list = local_features.decomposed_features
+        batch_num_features = [batch_elem.size(0) for batch_elem in features_list]
+        mask = torch.zeros((len(batch_num_features), max(batch_num_features)),
+                           device=local_features.device)
+        for idx, num_features in enumerate(batch_num_features):
+            # Make padded elems non-zero in mask
+            mask[idx, num_features:] = invalid_mask_value
+        attn_mask = mask[:, None, :].repeat(1, self.k_pooled_tokens, 1)
         return attn_mask

@@ -28,7 +28,7 @@ def get_in_channels(input_features: str) -> int:
 def model_factory(model_params: ModelParams):
     in_channels = 1
 
-    if model_params.model.lower() == 'minkloc':
+    if 'minkloc' in model_params.model.lower():
         block_module = create_resnet_block(model_params.block)
         backbone = MinkFPN(
             in_channels=in_channels,
@@ -43,7 +43,8 @@ def model_factory(model_params: ModelParams):
         pooling = PoolingWrapper(
             pool_method=model_params.pooling,
             in_dim=model_params.feature_size,
-            output_dim=model_params.output_dim
+            output_dim=model_params.output_dim,
+            k_pooled_tokens=model_params.k_pooled_tokens,
         )
         model = MinkLoc(
             backbone=backbone,

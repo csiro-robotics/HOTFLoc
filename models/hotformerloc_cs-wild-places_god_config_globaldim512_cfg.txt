@@ -1,5 +1,5 @@
 [MODEL]
-model=HOTFormerLoc-CSWP-ch192-pyrmd-2lvls
+model=HOTFormerLoc-CSWP-ch192-pyrmd-2lvls-globaldim512
 channels=96,192,96
 num_blocks=4,10
 num_heads=6,12,6
@@ -14,8 +14,8 @@ num_input_downsamples=2
 disable_RPE=False
 grad_checkpoint=True
 conv_norm=layernorm
-feature_size=256
-output_dim=256
+feature_size=512
+output_dim=512
 pooling=PyramidAttnPoolMixer
 k_pooled_tokens=48,16
 

@@ -1,8 +1,8 @@
 [MODEL]
-model=HOTFormerLoc-CSWP-ch192-pyrmd-2lvls
+model=HOTFormerLoc-CSWP-ch192-pyrmd-2lvls-doubleHeads
 channels=96,192,96
 num_blocks=4,10
-num_heads=6,12,6
+num_heads=12,24,12
 num_pyramid_levels=2
 ct_size=1
 ct_propagation=False
