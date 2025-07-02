@@ -1,24 +1,32 @@
 # Base dataset classes, inherited by dataset-specific classes
 import os
 import pickle
-from typing import List
-from typing import Dict
-import torch
+from typing import List, Dict
+
 import numpy as np
+import torch
 from torch.utils.data import Dataset
+
+from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
+from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
+from dataset.point_clouds import PointCloudLoader
 
 
 class TrainingTuple:
-    # Tuple describing an element for training/validation
-    def __init__(self, id: int, timestamp: int, rel_scan_filepath: str, positives: np.ndarray,
-                 non_negatives: np.ndarray, position: np.ndarray):
+    # Tuple describing an element for training/validation, with optional pose for metric localisation
+    def __init__(self, id: int, timestamp: float, rel_scan_filepath: str, positives: np.ndarray,
+                 non_negatives: np.ndarray, position: np.ndarray, pose: np.ndarray = None,
+                 positive_poses: Dict[int, np.ndarray] = None):
         # id: element id (ids start from 0 and are consecutive numbers)
         # ts: timestamp
         # rel_scan_filepath: relative path to the scan
         # positives: sorted ndarray of positive elements id
-        # negatives: sorted ndarray of elements id
+        # non_negatives: sorted ndarray of elements id
         # position: x, y position in meters (northing, easting)
+        # pose: optional pose as SE(3) matrix
+        # positives_poses: optional relative poses of positive examples (ideally refined using ICP)
         assert position.shape == (2,)
+        assert pose is None or pose.shape == (4, 4)
 
         self.id = id
         self.timestamp = timestamp
@@ -26,27 +34,35 @@ class TrainingTuple:
         self.positives = positives
         self.non_negatives = non_negatives
         self.position = position
+        self.pose = pose
+        self.positive_poses = positive_poses
 
 
 class EvaluationTuple:
-    # Tuple describing an evaluation set element
-    def __init__(self, timestamp: int, rel_scan_filepath: str, position: np.array):
+    # Tuple describing an evaluation set element, with optional pose for metric localisation
+    def __init__(self, timestamp: float, rel_scan_filepath: str, position: np.ndarray, pose: np.ndarray = None):
         # position: x, y position in meters
+        # pose: optional pose as SE(3) matrix
         assert position.shape == (2,)
+        assert pose is None or pose.shape == (4, 4)
+
         self.timestamp = timestamp
         self.rel_scan_filepath = rel_scan_filepath
         self.position = position
+        self.pose = pose
 
     def to_tuple(self):
-        return self.timestamp, self.rel_scan_filepath, self.position
+        return self.timestamp, self.rel_scan_filepath, self.position, self.pose
 
 
 class TrainingDataset(Dataset):
-    def __init__(self, dataset_path, query_filename, transform=None, set_transform=None,
-                 load_octree=False, octree_depth=11, full_depth=2, coordinates='cartesian'):
+    def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
+                 transform=None, set_transform=None, load_octree=False,
+                 octree_depth=11, full_depth=2, coordinates='cartesian'):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
         self.dataset_path = dataset_path
+        self.dataset_type = dataset_type
         self.query_filepath = os.path.join(dataset_path, query_filename)
         assert os.path.exists(self.query_filepath), 'Cannot access query file: {}'.format(self.query_filepath)
         self.transform = transform
@@ -62,8 +78,7 @@ class TrainingDataset(Dataset):
         self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, 'rb')).load()
         print('{} queries in the dataset'.format(len(self)))
 
-        # pc_loader must be set in the inheriting class
-        self.pc_loader: PointCloudLoader = None
+        self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
 
     def __len__(self):
         return len(self.queries)
@@ -96,8 +111,86 @@ class TrainingDataset(Dataset):
         return self.queries[ndx].non_negatives
 
 
+class Training6DOFDataset(TrainingDataset):
+    """
+    Dataset wrapper for for 6dof estimation.
+    """
+    def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
+                 local_transform=None, **kwargs):
+        super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
+        self.local_transform = local_transform
+
+    def __getitem__(self, ndx):
+        # TODO: Consider adding gravity alignment as a step here
+        query_shift_and_scale = None
+        positive_shift_and_scale = None
+        # pose is a global coordinate system pose 3x4 R|T matrix
+        query_pc, _ = super().__getitem__(ndx)
+
+        # get random positive
+        positives = self.get_positives(ndx)
+        positive_idx = np.random.choice(positives, 1)[0]
+        positive_pc, _ = super().__getitem__(positive_idx)
+
+        # get relative pose from global poses
+        if self.queries[ndx].positive_poses is None:
+            raise ValueError("Invalid training tuple, ensure 6DOF poses are present")
+        transform = torch.tensor(self.queries[ndx].positives_poses[positive_idx].copy())
+        
+        if self.local_transform is not None:
+            # Apply only normalization and jitter to the query point cloud
+            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
+            # Apply random transform to the positive point cloud
+            # TODO: Verify that augmented transform correctly registers to query
+            positive_pc, positive_shift_and_scale, aug_tf = self.local_transform(positive_pc)
+            transform = aug_tf @ transform
+
+        return query_pc, positive_pc, transform, query_shift_and_scale, positive_shift_and_scale
+
+
+class EvalDataset(Dataset):
+    def __init__(self, dataset_path: str, dataset_type: str, data_set_dict: Dict,
+                 transform=None, load_octree=False, coordinates='cartesian'):
+        assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
+        self.dataset_path = dataset_path
+        self.dataset_type = dataset_type
+        assert len(data_set_dict) > 0, "Empty dict"
+        self.tuple_dict = data_set_dict
+        self.transform = transform
+        self.coordinates = coordinates
+        self.load_octree = load_octree
+
+        self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
+
+    def __len__(self):
+        return len(self.tuple_dict)
+
+    def __getitem__(self, ndx):
+        # Load point cloud and apply transform
+        file_pathname = os.path.join(self.dataset_path, self.tuple_dict[ndx]['query'])
+        query_pc = self.pc_loader(file_pathname)
+        data = torch.tensor(query_pc, dtype=torch.float)
+        if self.transform is not None:
+            data = self.transform(data)
+        if self.load_octree:
+            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+            mask = torch.all(abs(data) <= 1.0, dim=1)
+            data = data[mask]
+            # Also ensure this will hold if converting coordinate systems
+            if self.coordinates == 'cylindrical':
+                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+                mask = torch.all(data_norm <= 1.0, dim=1)
+                data = data[mask]
+            # elif self.coordinates == 'spherical':  # TODO: if spherical is used
+            #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
+            #     mask = torch.all(data_norm <= 1.0, dim=1)
+        return data
+
+
 class EvaluationSet:
-    # Evaluation set consisting of map and query elements
+    """NOT IN USE CURRENTLY  
+    Evaluation set consisting of map and query elements
+    """
     def __init__(self, query_set: List[EvaluationTuple] = None, map_set: List[EvaluationTuple] = None):
         self.query_set = query_set
         self.map_set = map_set
@@ -121,11 +214,11 @@ class EvaluationSet:
 
         self.query_set = []
         for e in query_l:
-            self.query_set.append(EvaluationTuple(e[0], e[1], e[2]))
+            self.query_set.append(EvaluationTuple(e[0], e[1], e[2], e[3]))
 
         self.map_set = []
         for e in map_l:
-            self.map_set.append(EvaluationTuple(e[0], e[1], e[2]))
+            self.map_set.append(EvaluationTuple(e[0], e[1], e[2], e[3]))
 
     def get_map_positions(self):
         # Get map positions as (N, 2) array
@@ -142,41 +235,13 @@ class EvaluationSet:
         return positions
 
 
-class PointCloudLoader:
-    def __init__(self):
-        # remove_zero_points: remove points with all zero coordinates
-        # remove_ground_plane: remove points on ground plane level and below
-        # ground_plane_level: ground plane level
-        self.remove_zero_points = True
-        self.remove_ground_plane = True
-        self.ground_plane_level = None
-        self.set_properties()
-
-    def set_properties(self):
-        # Set point cloud properties, such as ground_plane_level. Must be defined in inherited classes.
-        raise NotImplementedError('set_properties must be defined in inherited classes')
-
-    def __call__(self, file_pathname):
-        # Reads the point cloud from a disk and preprocess (optional removal of zero points and points on the ground
-        # plane and below
-        # file_pathname: relative file path
-        assert os.path.exists(file_pathname), f"Cannot open point cloud: {file_pathname}"
-        pc = self.read_pc(file_pathname)
-        assert pc.shape[1] == 3
-
-        if self.remove_zero_points:
-            mask = np.all(np.isclose(pc, 0), axis=1)
-            pc = pc[~mask]
-
-        if self.remove_ground_plane:
-            mask = pc[:, 2] > self.ground_plane_level
-            pc = pc[mask]
-
-        return pc
-
-    def read_pc(self, file_pathname: str) -> np.ndarray:
-        # Reads the point cloud without pre-processing
-        raise NotImplementedError("read_pc must be overloaded in an inheriting class")
+def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
+    if 'WildPlaces' in dataset_type:
+        return CSWildPlacesPointCloudLoader()
+    elif dataset_type in ['Oxford', 'CSCampus3D']:
+        return PNVPointCloudLoader()
+    else:
+        raise NotImplementedError(f"Unsupported dataset type: {dataset_type}")
 
 
 class CustomUnpickler(pickle.Unpickler):

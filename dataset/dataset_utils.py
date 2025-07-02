@@ -1,7 +1,7 @@
 # Warsaw University of Technology
 
 import numpy as np
-from typing import List, Sequence
+from typing import List, Sequence, Dict
 import time
 import torch
 from torch.utils.data import DataLoader
@@ -10,65 +10,59 @@ from sklearn.neighbors import KDTree
 import ocnn
 from ocnn.octree import Octree, Points
 
-from dataset.base_datasets import EvaluationTuple, TrainingDataset
-from dataset.augmentation import TrainSetTransform
-from dataset.pointnetvlad.pnv_train import PNVTrainingDataset
-from dataset.pointnetvlad.pnv_train import TrainTransform as PNVTrainTransform
-from dataset.pointnetvlad.pnv_train import ValTransform as PNVValTransform
-from dataset.CSWildPlaces.CSWildPlaces_train import CSWildPlacesTrainingDataset
-from dataset.CSWildPlaces.CSWildPlaces_train import TrainTransform as CSWildPlacesTrainTransform
-from dataset.CSWildPlaces.CSWildPlaces_train import ValTransform as CSWildPlacesValTransform
-from dataset.samplers import BatchSampler
+from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset
+from dataset.augmentation import TrainTransform, TrainSetTransform, Train6DOFTransform, ValTransform, Val6DOFTransform
+from dataset.samplers import BatchSampler, BatchSampler6DOF
 from misc.utils import TrainingParams
-from dataset.base_datasets import PointCloudLoader
-from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
-from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
 
 
-def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
-    if 'CSWildPlaces' in dataset_type or 'WildPlaces' in dataset_type:
-        return CSWildPlacesPointCloudLoader
-    else:
-        return PNVPointCloudLoader()
-
-
-def make_datasets(params: TrainingParams, validation: bool = True):
+def make_datasets(params: TrainingParams, local=False, validation=True):
     # Create training and validation datasets
     datasets = {}
     train_set_transform = TrainSetTransform(params.set_aug_mode, random_rot_theta=params.random_rot_theta)
 
-    if 'CSWildPlaces' in params.dataset_name or 'WildPlaces' in params.dataset_name:
-        train_transform = CSWildPlacesTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
-                                                     scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
-                                                     zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta)
-        datasets['train'] = CSWildPlacesTrainingDataset(params.dataset_folder, params.train_file,
-                                                        transform=train_transform, set_transform=train_set_transform,
-                                                        load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                        full_depth=params.full_depth, coordinates=params.model_params.coordinates)
+    train_transform = TrainTransform(
+        params.aug_mode, normalize_points=params.normalize_points,
+        scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
+        zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta
+    )
+    datasets['global_train'] = TrainingDataset(
+        params.dataset_folder, params.dataset_name, params.train_file, transform=train_transform,
+        set_transform=train_set_transform, load_octree=params.load_octree,
+        octree_depth=params.octree_depth, full_depth=params.full_depth,
+        coordinates=params.model_params.coordinates
+    )
+    if validation:
+        val_transform = ValTransform(
+            normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+        )
+        datasets['global_val'] = TrainingDataset(
+            params.dataset_folder, params.dataset_name, params.val_file, transform=val_transform,
+            load_octree=params.load_octree, octree_depth=params.octree_depth,
+            full_depth=params.full_depth, coordinates=params.model_params.coordinates
+        )
+    if local:
+        local_train_transform = Train6DOFTransform(
+            params.local_aug_mode, normalize_points=params.normalize_points,
+            scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
+            zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta
+        )
+        datasets['local_train'] = Training6DOFDataset(
+            params.dataset_folder, params.dataset_name, params.train_file, local_transform=local_train_transform,
+            load_octree=params.load_octree, octree_depth=params.octree_depth,
+            full_depth=params.full_depth, coordinates=params.model_params.coordinates
+        )
         if validation:
-            val_transform = CSWildPlacesValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-                                                     unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean)
-            datasets['val'] = CSWildPlacesTrainingDataset(params.dataset_folder, params.val_file,
-                                                          transform=val_transform,
-                                                          load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                          full_depth=params.full_depth, coordinates=params.model_params.coordinates)
-    # PoinNetVLAD datasets (RobotCar and Inhouse)
-    # PNV datasets have their own transform
-    else:  # used for Oxford and CS-Campus3D
-        train_transform = PNVTrainTransform(params.aug_mode, normalize_points=params.normalize_points,
-                                            scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
-                                            zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta)
-        datasets['train'] = PNVTrainingDataset(params.dataset_folder, params.train_file,
-                                               transform=train_transform, set_transform=train_set_transform,
-                                               load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                               full_depth=params.full_depth, coordinates=params.model_params.coordinates)
-        if validation:
-            val_transform = PNVValTransform(normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-                                            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean)
-            datasets['val'] = PNVTrainingDataset(params.dataset_folder, params.val_file,
-                                                 transform=val_transform,
-                                                 load_octree=params.load_octree, octree_depth=params.octree_depth,
-                                                 full_depth=params.full_depth, coordinates=params.model_params.coordinates)
+            local_val_transform = Val6DOFTransform(
+                normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+                unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+            )
+            datasets['local_val'] = Training6DOFDataset(
+                params.dataset_folder, params.dataset_name, params.val_file, local_transform=local_val_transform,
+                load_octree=params.load_octree, octree_depth=params.octree_depth,
+                full_depth=params.full_depth, coordinates=params.model_params.coordinates
+            )
 
     return datasets
 
@@ -156,24 +150,64 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     return collate_fn
 
 
-def make_dataloaders(params: TrainingParams, validation=True):
+def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: TrainingParams):
+    """
+    Collation function for local batches. Returns batch + 6DOF relative transform + 
+    normalization shift and scale parameters.
+    """
+    def collate_fn(data_list):
+        # Constructs a batch object
+        anchor_clouds = [e[0] for e in data_list]
+        positive_clouds = [e[1] for e in data_list]
+        rel_transforms = [e[2] for e in data_list]
+        anchor_shift_and_scale = [e[3] for e in data_list]
+        positive_shift_and_scale = [e[4] for e in data_list]
+        len_batch = []
+        for batch_id, _ in enumerate(anchor_clouds):
+            N1 = anchor_clouds[batch_id].shape[0]
+            N2 = positive_clouds[batch_id].shape[0]
+            len_batch.append([N1, N2])
+
+        # Generate anchor and positive batches
+        anchor_batch = create_batch(anchor_clouds, quantizer, params)
+        positive_batch = create_batch(positive_clouds, quantizer, params)
+        # Concatenate point coordinates
+        anchor_xyz = torch.cat(anchor_clouds, 0, dtype=torch.float32)
+        positive_xyz = torch.cat(positive_clouds, 0, dtype=torch.float32)
+        # Stack transforms
+        trans_batch = torch.stack(rel_transforms, 0, dtype=torch.float32)
+
+        # Returns:
+        # Anc and pos point clouds, anc and pos batch, relative transformations, length per batch, normalization shift and scale params
+        return {
+            "anc_pcd": anchor_xyz, "pos_pcd": positive_xyz, "anc_batch": anchor_batch,
+            "pos_batch": positive_batch, "T_gt": trans_batch, "len_batch": len_batch,
+            "anc_shift_and_scale": anchor_shift_and_scale, "pos_shift_and_scale": positive_shift_and_scale
+        }
+
+    return collate_fn
+
+
+def make_dataloaders(params: TrainingParams, local=False, validation=True):
     """
     Create training and validation dataloaders that return groups of k=2 similar elements
+
     :param train_params:
     :param model_params:
     :return:
+    :rtype: dict
     """
-    datasets = make_datasets(params, validation=validation)
+    datasets = make_datasets(params, local=local, validation=validation)
 
     dataloders = {}
-    train_sampler = BatchSampler(datasets['train'], batch_size=params.batch_size,
+    train_sampler = BatchSampler(datasets['global_train'], batch_size=params.batch_size,
                                  batch_size_limit=params.batch_size_limit,
                                  batch_expansion_rate=params.batch_expansion_rate)
 
     # Collate function collates items into a batch and applies a 'set transform' on the entire batch
     quantizer = params.model_params.quantizer
-    train_collate_fn = make_collate_fn(datasets['train'], quantizer, params)
-    dataloders['train'] = DataLoader(datasets['train'], batch_sampler=train_sampler,
+    train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
+    dataloders['global_train'] = DataLoader(datasets['global_train'], batch_sampler=train_sampler,
                                      collate_fn=train_collate_fn, num_workers=params.num_workers,
                                      pin_memory=True)
     if validation and 'val' in datasets:
@@ -184,7 +218,73 @@ def make_dataloaders(params: TrainingParams, validation=True):
         dataloders['val'] = DataLoader(datasets['val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
                                        num_workers=params.num_workers, pin_memory=True)
 
+    if local:
+        train_collate_fn_loc = make_collate_fn_6DOF(datasets['local_train'], quantizer, params)
+        train_sampler_loc = BatchSampler6DOF(datasets['local_train'], batch_size=params.local_batch_size)
+        dataloders['local_train'] = DataLoader(datasets['local_train'], batch_sampler=train_sampler_loc, 
+                                               collate_fn=train_collate_fn_loc,
+                                               num_workers=params.num_workers, pin_memory=True)
+        if validation and 'local_val' in datasets:
+            val_collate_fn_loc = make_collate_fn_6DOF(datasets['local_val'], quantizer, params)
+            val_sampler_loc = BatchSampler6DOF(datasets['local_val'], batch_size=params.local_batch_size)
+            dataloders['local_val'] = DataLoader(datasets['local_val'], batch_sampler=val_sampler_loc,
+                                                 collate_fn=val_collate_fn_loc,
+                                                 num_workers=params.num_workers, pin_memory=True)
+
     return dataloders
+
+
+def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False):
+    """
+    Create dataset class for a single sequence.
+    """
+    if local:
+        raise NotImplementedError()
+    else:
+        val_transform = ValTransform(
+            normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+        )
+        dataset = EvalDataset(
+            params.dataset_folder, params.dataset_name, data_set,
+            transform=val_transform, load_octree=params.load_octree,
+            coordinates=params.model_params.coordinates
+        )
+
+    return dataset
+
+
+def make_eval_collate_fn(quantizer, params: TrainingParams):
+    """
+    Custom collate function for evaluation dataloader. Only returns batches.
+    """
+    def collate_fn(data_list):
+        if params.verbose:
+            tic = time.time()
+
+        # Generate batches in correct format for MinkLoc/OctFormer
+        batch = create_batch(data_list, quantizer, params)
+
+        if params.verbose:
+            toc = time.time()
+            print(f"[INFO] Collating batch done in {toc-tic:.2f}s", flush=True)
+
+        return batch
+
+    return collate_fn
+
+
+def make_eval_dataloader(params: TrainingParams, data_set: Dict, local=False):
+    """
+    Creates dataloader suitable for evaluate.py script.
+    """
+    quantizer = params.model_params.quantizer
+    eval_dataset = make_eval_dataset(params, data_set, local=local)
+    eval_collate_fn = make_eval_collate_fn(quantizer, params)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=params.val_batch_size,
+                                 shuffle=False, pin_memory=True, num_workers=params.num_workers,
+                                 collate_fn=eval_collate_fn)
+    return eval_dataloader
 
 
 def filter_query_elements(query_set: List[EvaluationTuple], map_set: List[EvaluationTuple],
@@ -229,15 +329,13 @@ def in_sorted_array_vectorised(query_array : np.ndarray,
                                sorted_array: np.ndarray) -> List[bool]:
     """Check if each element of `query_array` is in `sorted_array`.
 
-    Parameters
-    ----------
-    query_array (np.ndarray): Array of integers to check.
-    sorted_array (np.ndarray): Sorted array of integers.
+    Args:
+        query_array (np.ndarray): Array of integers to check.
+        sorted_array (np.ndarray): Sorted array of integers.
 
-    Returns
-    --------
-    np.ndarray: Boolean array where each element indicates if the corresponding
-                element in `query_array` is in `sorted_array`.
+    Returns:
+        np.ndarray: Boolean array where each element indicates if the corresponding
+            element in `query_array` is in `sorted_array`.
     """
     query_array = np.asarray(query_array)
     sorted_array = np.asarray(sorted_array)

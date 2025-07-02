@@ -4,6 +4,7 @@ import os
 import configparser
 import time
 import random
+import pickle
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -160,6 +161,7 @@ class TrainingParams:
                  debug: bool = False, verbose: bool = False):
         """
         Configuration files
+
         :param path: Training configuration file
         :param model_params: Model-specific configuration file
         """
@@ -280,6 +282,9 @@ class TrainingParams:
         self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
         self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
 
+        # Metric localisation and re-ranking parameters
+        self.local_aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
+        
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path)
         
@@ -290,9 +295,9 @@ class TrainingParams:
         if self.load_octree and self.model_params.coordinates == 'cylindrical':
             if self.normalize_points:
                 if not self.unit_sphere_norm:
-                    print(f"[WARNING] Unit sphere normalization recommended for cylindrical octrees")
+                    print("[WARNING] Unit sphere normalization recommended for cylindrical octrees")
             else:
-                print(f"[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
+                print("[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
         # If running a hyperparameter search
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
         
@@ -412,3 +417,12 @@ def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
     std_syn = torch.std(timings)
     print(f"{func.__class__} runtime:")
     print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
+
+def save_pickle(data, filename):
+    with open(filename, 'wb') as handle:
+        pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+def load_pickle(filename):
+    with open(filename, 'rb') as handle:
+        data = pickle.load(handle)
+    return data

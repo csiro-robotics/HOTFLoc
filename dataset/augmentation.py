@@ -29,6 +29,154 @@ class TrainSetTransform:
         return e
 
 
+class TrainTransform:
+    # Augmentations for global training.
+    def __init__(self, aug_mode, normalize_points=False, scale_factor=None,
+                 unit_sphere_norm=False, zero_mean=True, random_rot_theta: float = 5.0):
+        self.aug_mode = aug_mode
+        self.normalize_points = normalize_points
+        self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
+        self.zero_mean = zero_mean
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
+        self.transform = None
+        t = []
+        if self.normalize_points:
+            t.append(Normalize(scale_factor=self.scale_factor,
+                               unit_sphere_norm=self.unit_sphere_norm,
+                               zero_mean=self.zero_mean))
+        if self.aug_mode == 1:
+            # Augmentations without random rotation around z-axis (values assume [-1, 1] range)
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
+                      RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
+        elif self.aug_mode == 2:
+            # Augmentations with random rotation around z-axis 
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
+                      RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
+                      RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
+        elif self.aug_mode == 0:    # No augmentations
+            pass
+        else:
+            raise NotImplementedError('Unknown aug_mode: {}'.format(self.aug_mode))
+        if len(t) == 0:
+            return None
+        self.transform = transforms.Compose(t)
+
+    def __call__(self, e):
+        if self.transform is not None:
+            e = self.transform(e)
+        return e
+
+
+class ValTransform:
+    def __init__(self, normalize_points=False, scale_factor=None,
+                 unit_sphere_norm=False, zero_mean=True):
+        self.normalize_points = normalize_points
+        self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
+        self.zero_mean = zero_mean
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
+        t = None
+        if self.normalize_points:
+            t = Normalize(scale_factor=self.scale_factor,
+                          unit_sphere_norm=self.unit_sphere_norm,
+                          zero_mean=self.zero_mean)
+        self.transform = t
+
+    def __call__(self, e):
+        if self.transform is not None:
+            e = self.transform(e)
+        return e
+
+
+class Train6DOFTransform:
+    # Augmentations for local training. Returns normalization
+    # parameters and transformation needed to undo augmentations.
+    def __init__(self, local_aug_mode, normalize_points=False, scale_factor=None,
+                 unit_sphere_norm=False, zero_mean=True, random_rot_theta: float = 5.0):
+        self.local_aug_mode = local_aug_mode
+        self.normalize_points = normalize_points
+        self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
+        self.zero_mean = zero_mean
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
+        self.normalization_transform = None
+        self.transform = None
+        self.rotation_transform = None
+        self.translation_transform = None
+        t = []
+        if self.normalize_points:
+            self.normalization_transform = Normalize(scale_factor=self.scale_factor,
+                                                     unit_sphere_norm=self.unit_sphere_norm,
+                                                     zero_mean=self.zero_mean,
+                                                     return_shift_and_scale=True)
+        # NOTE: Not using point/block removal for local batches to simplify
+        #       overlap calculation (otherwise needs to be computed on the fly)
+        if self.local_aug_mode == 1:
+            # Augmentations with random rotation around z-axis 
+            t.extend([JitterPoints(sigma=0.001, clip=0.002)])
+            self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
+                                                     axis=np.array([0, 0, 1]),
+                                                     return_rotation=True)
+            self.translation_transform = RandomTranslation(max_delta=0.01,
+                                                           return_translation=True)
+        elif self.local_aug_mode == 0:    # No augmentations
+            pass
+        else:
+            raise NotImplementedError('Unknown local_aug_mode: {}'.format(self.local_aug_mode))
+        if len(t) == 0:
+            return None
+        self.transform = transforms.Compose(t)
+
+    def __call__(self, e, ignore_rot_and_trans=False):
+        shift_and_scale = None
+        aug_tf = torch.eye(4)
+        if self.normalization_transform is not None:
+            e, shift_and_scale = self.normalization_transform(e)
+        if self.transform is not None:
+            e = self.transform(e)
+        if ignore_rot_and_trans:
+            return e, shift_and_scale, aug_tf
+        if self.rotation_transform is not None:
+            e, rotation_matrix = self.rotation_transform(e)
+            aug_tf[:3,:3] = torch.tensor(rotation_matrix)
+        if self.translation_transform is not None:
+            e, translation_vector = self.translation_transform(e)
+            aug_tf[:3,-1] = torch.tensor(translation_vector)
+        return e, shift_and_scale, aug_tf
+
+
+class Val6DOFTransform:
+    def __init__(self, normalize_points=False, scale_factor=None,
+                 unit_sphere_norm=False, zero_mean=True):
+        self.normalize_points = normalize_points
+        self.scale_factor = None
+        self.unit_sphere_norm = unit_sphere_norm
+        self.zero_mean = zero_mean
+        if scale_factor is not None:
+            self.normalize_points = True
+            self.scale_factor = scale_factor
+        self.normalization_transform = None
+        if self.normalize_points:
+            self.normalization_transform = Normalize(scale_factor=self.scale_factor,
+                                                     unit_sphere_norm=self.unit_sphere_norm,
+                                                     zero_mean=self.zero_mean,
+                                                     return_shift_and_scale=True)
+
+    def __call__(self, e):
+        shift_and_scale = None
+        aug_tf = torch.eye(4)
+        if self.normalization_transform is not None:
+            e, shift_and_scale = self.normalization_transform(e)
+        return e, shift_and_scale, aug_tf
+
+
 class RandomFlip:
     def __init__(self, p):
         # p = [p_x, p_y, p_z] probability of flipping each axis
@@ -53,10 +201,12 @@ class RandomFlip:
 
 
 class RandomRotation:
-    def __init__(self, axis=None, max_theta=180, max_theta2=None):
+    def __init__(self, axis=None, max_theta=180, max_theta2=None,
+                 return_rotation=False):
         self.axis = axis
         self.max_theta = max_theta      # Rotation around axis
         self.max_theta2 = max_theta2    # Smaller rotation in random direction
+        self.return_rotation = return_rotation
 
     def _M(self, axis, theta):
         return expm(np.cross(np.eye(3), axis / norm(axis) * theta)).astype(np.float32)
@@ -67,22 +217,30 @@ class RandomRotation:
         else:
             axis = np.random.rand(3) - 0.5
         R = self._M(axis, (np.pi * self.max_theta / 180.) * 2. * (np.random.rand(1) - 0.5))
-        if self.max_theta2 is None:
-            coords = coords @ R
-        else:
+        if self.max_theta2 is not None:
             R_n = self._M(np.random.rand(3) - 0.5, (np.pi * self.max_theta2 / 180.) * 2. * (np.random.rand(1) - 0.5))
-            coords = coords @ R @ R_n
+            R = R_n @ R
+        coords = coords @ R.T
 
-        return coords
+        if self.return_rotation:
+            return coords, R
+        else:
+            return coords
 
 
 class RandomTranslation:
-    def __init__(self, max_delta=0.05):
+    def __init__(self, max_delta=0.05, return_translation=False):
         self.max_delta = max_delta
+        self.return_translation = return_translation
 
     def __call__(self, coords):
-        trans = self.max_delta * np.random.randn(1, 3)
-        return coords + trans.astype(np.float32)
+        trans = (self.max_delta * np.random.randn(1, 3)).astype(np.float32)
+        coords = coords + trans
+
+        if self.return_translation:
+            return coords, trans
+        else:
+            return coords
 
 
 class JitterPoints:
@@ -194,13 +352,15 @@ class Normalize:
     def __init__(self, norm_range: Optional[float] = None,
                  scale_factor: Optional[float] = None,
                  unit_sphere_norm: bool = False,
-                 zero_mean: bool = True):
+                 zero_mean: bool = True,
+                 return_shift_and_scale: bool = False):
         assert not all([arg is not None for arg in [norm_range, scale_factor]]),\
             "Must specify one of norm_range or scale_factor, not both"
         self.norm_range = 1.0
         self.scale_factor = None
         self.unit_sphere_norm = unit_sphere_norm
         self.zero_mean = zero_mean
+        self.return_shift_and_scale = return_shift_and_scale
         if norm_range is not None:
             assert norm_range > 0, "Range must be positive"
             self.norm_range = norm_range
@@ -210,26 +370,51 @@ class Normalize:
             self.scale_factor = scale_factor
 
     def __call__(self, coords: torch.Tensor):
+        current_shift, current_scale = (torch.zeros(3, dtype=coords.dtype), 0)
         if not self.unit_sphere_norm:                
             bbmin = coords.min(dim=0).values
             bbmax = coords.max(dim=0).values
             if self.zero_mean:
                 center = (bbmin + bbmax) * 0.5
                 coords = (coords - center)
+                current_shift = center
             if self.scale_factor is not None:
                 coords_normalized = coords / self.scale_factor
+                current_scale = self.scale_factor
             else:
                 box_size = (bbmax - bbmin).max() + 1.0e-6
-                coords_normalized = coords * (2.0 * self.norm_range / box_size)
+                current_scale = 1 / (2.0 * self.norm_range / box_size)
+                coords_normalized = coords / current_scale
         else:
             # UNIT SPHERE NORMALIZATION:
             if self.zero_mean:
                 centroid = torch.mean(coords, axis=0)
                 coords = coords - centroid
+                current_shift = centroid
             if self.scale_factor is not None:
                 max_distance = self.scale_factor
             else:
                 # max_distance = torch.max(abs(coords_normalized)) / self.norm_range  ## INCORRECT, DOES NOT CONSIDER RADIAL DISTANCE
                 max_distance = torch.max(torch.linalg.norm(coords, dim=1)) / self.norm_range
             coords_normalized = coords / max_distance        
-        return coords_normalized
+            current_scale = max_distance
+        
+        if current_scale <= 0:
+            raise ValueError("Invalid scaling factor")
+        if self.return_shift_and_scale:
+            return coords_normalized, (current_shift, current_scale)
+        else:
+            return coords_normalized
+
+    @staticmethod
+    def unnormalize(coords: torch.Tensor, shift_and_scale: tuple[torch.Tensor, float]):
+        """
+        Undo normalization using shift and scale output from Normalize(). Note
+        that this function will not verify that you have provided the correct
+        shift and scale parameters for the given set of points.
+        """
+        shift, scale = shift_and_scale
+        if scale <= 0:
+            raise ValueError("Invalid scaling factor")
+        coords_unnormalized = coords * scale + shift
+        return coords_unnormalized

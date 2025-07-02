@@ -792,9 +792,9 @@ class NetworkTrainer:
             # Multi-staged training approach with large batch split into multiple smaller chunks with batch_split_size elems
             train_step_fn = self.multistaged_training_step
 
-        ###########################################################################
+        ########################################################################
         # Initialize Weights&Biases logging service
-        ###########################################################################
+        ########################################################################
 
         params_dict = {e: self.params.__dict__[e] for e in self.params.__dict__ if e != 'model_params'}
         model_params_dict = {"model_params." + e: self.params.model_params.__dict__[e] for e in self.params.model_params.__dict__}
@@ -807,14 +807,14 @@ class NetworkTrainer:
             self.wandb_id = wandb.run.id
             wandb.watch(self.model, log='all', log_freq=self.params.embeddings_log_freq)
 
-        ###########################################################################
+        ########################################################################
         #
-        ###########################################################################
+        ########################################################################
 
         # Training statistics
         stats = {'train': [], 'eval': []}
 
-        if 'val' in dataloaders:
+        if 'global_val' in dataloaders:
             # Validation phase
             phases = ['train', 'val']
             stats['val'] = []
@@ -838,13 +838,9 @@ class NetworkTrainer:
                 epoch_stage_gradient_magnitudes = None
 
                 if phase == 'train':
-                    global_iter = iter(dataloaders['train'])
+                    global_iter = iter(dataloaders['global_train'])
                 else:
-                    global_iter = None if dataloaders['val'] is None else iter(dataloaders['val'])
-
-                # TODO: Need to load a specific submap (or set of them) for 
-                #       logging attn maps and token similarity. Can use existing
-                #       dataloaders with a custom dataset/batch sampler.
+                    global_iter = None if dataloaders['global_val'] is None else iter(dataloaders['global_val'])
 
                 while True:
                     self.count_batches += 1
@@ -946,7 +942,7 @@ class NetworkTrainer:
                 le_train_stats = stats['train'][-1]  # Last epoch training stats
                 rnz = le_train_stats['global']['num_non_zero_triplets'] / le_train_stats['global']['num_triplets']
                 if rnz < self.params.batch_expansion_th:
-                    dataloaders['train'].batch_sampler.expand_batch()
+                    dataloaders['global_train'].batch_sampler.expand_batch()
 
         print('')
 

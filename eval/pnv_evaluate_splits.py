@@ -11,21 +11,17 @@ import os
 import argparse
 import torch
 import MinkowskiEngine as ME
-import random
 import tqdm
 import ocnn
-from ocnn.octree import Octree, Points
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, set_seed
-from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
-from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
-from dataset.augmentation import Normalize
-from dataset.coordinate_utils import CylindricalCoordinates
+from misc.utils import TrainingParams, set_seed, load_pickle, save_pickle
+from dataset.dataset_utils import make_eval_dataloader
 from eval.utils import get_query_database_splits
 
 def evaluate(model, device, params: TrainingParams, log: bool = False,
-             model_name: str = 'model', show_progress: bool = False):
+             model_name: str = 'model', show_progress: bool = False, 
+             save_embeddings: bool = False, load_embeddings: bool = False):
     # Run evaluation on all eval datasets
     eval_database_files, eval_query_files = get_query_database_splits(params)
 
@@ -57,8 +53,10 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
         with open(p, 'rb') as f:
             query_sets = pickle.load(f)
 
-        temp = evaluate_dataset(model, device, params, database_sets, query_sets,
-                                log=log, model_name=model_name, show_progress=show_progress)
+        print(f'Evaluating {location_name}:')
+        temp = evaluate_dataset(model, device, params, database_sets, query_sets, location_name,
+                                log=log, model_name=model_name, show_progress=show_progress,
+                                save_embeddings=save_embeddings, load_embeddings=load_embeddings)
         stats[location_name] = temp
         # 'average' key only exists when more than one split exists
         if 'average' in temp:
@@ -77,8 +75,9 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
 
 
 def evaluate_dataset(model, device, params: TrainingParams, database_sets, query_sets,
-                     log: bool = False, model_name: str = 'model', 
-                     show_progress: bool = False):
+                     location_name: str, log: bool = False, model_name: str = 'model',
+                     show_progress: bool = False, save_embeddings: bool = False,
+                     load_embeddings: bool = False):
     # Run evaluation on a single dataset
     recall = np.zeros(25)
     stats = {}
@@ -91,11 +90,29 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
 
     model.eval()
 
-    for data_set in tqdm.tqdm(database_sets, disable=not show_progress, desc='Computing database embeddings'):
-        database_embeddings.append(get_latent_vectors(model, data_set, device, params))
+    print(f'{"Loading" if load_embeddings else "Computing"} database embeddings:')
+    for ii, data_set in enumerate(database_sets):
+        temp_embeddings = None
+        if len(data_set) > 0:
+            if load_embeddings:
+                temp_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
+            else:
+                temp_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+            if save_embeddings:
+                save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
+        database_embeddings.append(temp_embeddings)
 
-    for data_set in tqdm.tqdm(query_sets, disable=not show_progress, desc='Computing query embeddings'):
-        query_embeddings.append(get_latent_vectors(model, data_set, device, params))
+    print(f'{"Loading" if load_embeddings else "Computing"} query embeddings:')
+    for jj, data_set in enumerate(query_sets):
+        temp_embeddings = None
+        if len(data_set) > 0:
+            if load_embeddings:
+                temp_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
+            else:
+                temp_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+            if save_embeddings:
+                save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
+        query_embeddings.append(temp_embeddings)
 
     for i in range(len(database_sets)):
         for j in range(len(query_sets)):
@@ -145,63 +162,31 @@ def collate_batch(data, device, params: TrainingParams):
         batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
     return batch
 
-def get_latent_vectors(model, data_set, device, params: TrainingParams):
+
+def get_latent_vectors(model, data_set, device, params: TrainingParams,
+                       show_progress: bool = False):
     # Adapted from original PointNetVLAD code
+    if len(data_set) == 0:
+        return None
 
     ### NOTE: Disabled so that eval can be tested during training debug mode
     # if params.debug:
-    #     embeddings = np.random.rand(len(set), 256)
+    #     embeddings = np.random.rand(len(data_set), 256)
     #     return embeddings
 
-    if params.dataset_name in ['Oxford','CSCampus3D']:
-        pc_loader = PNVPointCloudLoader()
-    elif 'AboveUnder' in params.dataset_name or 'WildPlaces' in params.dataset_name:
-        pc_loader = AboveUnderPointCloudLoader()
-    
-    if params.normalize_points or params.scale_factor is not None:
-        normalize_transform = Normalize(scale_factor=params.scale_factor,
-                                        unit_sphere_norm=params.unit_sphere_norm)
-        
-    if params.load_octree and params.model_params.coordinates == 'cylindrical':
-        coord_converter = CylindricalCoordinates(use_octree=True)
-
-    model.eval()
-    bs = params.val_batch_size
+    # Create dataloader for data_set
+    dataloader = make_eval_dataloader(params, data_set, local=False)
     embeddings = None
-    curr_batch = []
-    count_batches = 0
-    for i, elem_ndx in enumerate(data_set):        
-        pc_file_path = os.path.join(params.dataset_folder, data_set[elem_ndx]["query"])
-        data = pc_loader(pc_file_path)
-        data = torch.tensor(data)
-        if params.normalize_points or params.scale_factor is not None:
-            data = normalize_transform(data)
-        if params.load_octree:  # Convert to Octree format
-            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            mask = torch.all(abs(data) <= 1.0, dim=1)
-            data = data[mask]
-            # Also ensure this will hold if converting coordinate systems
-            if params.model_params.coordinates == 'cylindrical':
-                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
-                mask = torch.all(data_norm <= 1.0, dim=1)
-                data = data[mask]
-                # Convert to cylindrical coords
-                data = coord_converter(data)
-            # Convert to ocnn Points object, then create Octree
-            points = Points(data)
-            data = Octree(params.octree_depth, full_depth=2)
-            data.build_octree(points)
-        curr_batch.append(data)
-        
-        if len(curr_batch) >= bs or i == (len(data_set)-1):
-            batch = collate_batch(curr_batch, device, params)
-            embedding = compute_embedding(model, batch)
+    model.eval()
+    with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
+        for ii, batch in enumerate(dataloader):
+            batch = {e: batch[e].to(device, non_blocking=True) for e in batch}
+            temp_embedding = compute_embedding(model, batch)
             if embeddings is None:
-                embeddings = np.zeros((len(data_set), embedding.shape[1]), dtype=embedding.dtype)
-            embeddings[count_batches*bs:count_batches*bs+len(curr_batch)] = embedding
-            curr_batch = []
-            count_batches += 1
-
+                embeddings = np.zeros((len(data_set), temp_embedding.shape[1]), dtype=temp_embedding.dtype)
+            embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_embedding))] = temp_embedding
+            pbar.update(len(temp_embedding))
+    
     return embeddings
 
 
@@ -342,6 +327,29 @@ def pnv_write_eval_stats(file_name, prefix, stats):
         f.write(s)
 
 
+def save_embeddings_to_file(global_embeddings, model_name: str, dataset_name: str,
+                            location_name: str, set_name: str = "database"):
+    save_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    global_embeddings_file = os.path.join(save_dir, f"{set_name}_global_embeddings.pickle")
+    save_pickle(global_embeddings, global_embeddings_file)
+
+
+def load_embeddings_from_file(model_name: str, dataset_name: str,
+                              location_name: str, set_name: str = "database"):
+    load_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
+    if not os.path.exists(load_dir):
+        raise FileNotFoundError("No saved embeddings found for model. Run with --save_embeddings first.")
+    else:
+        global_embeddings_file = os.path.join(load_dir, f"{set_name}_global_embeddings.pickle")
+        global_embeddings = load_pickle(global_embeddings_file)
+        assert (len(global_embeddings) > 0), (
+            "Saved descriptors are corrupted, rerun with `save_descriptors` enabled"
+        )
+    return global_embeddings
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate model on PointNetVLAD (Oxford) dataset')
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
@@ -353,6 +361,10 @@ if __name__ == "__main__":
     parser.set_defaults(visualize=False)
     parser.add_argument('--log', dest='log', action='store_true', help="Log false positives and top-5 retrievals")
     parser.set_defaults(log=False)
+    parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
+    parser.add_argument('--load_embeddings', action='store_true',
+                        help=('Load embeddings from disk. Note this script will only check if '
+                              'weights paths match, not if the configs used match.'))
 
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
@@ -362,6 +374,12 @@ if __name__ == "__main__":
     else:
         w = args.weights
     print('Weights: {}'.format(w))
+    if args.save_embeddings and args.load_embeddings:
+        print('[WARNING] Both save_embeddings AND load_embeddings specified, which is redundant. '
+              'Will proceed without saving embeddings.')
+        args.save_embeddings = False
+    print(f'Save embeddings: {args.save_embeddings}')
+    print(f'Load embeddings: {args.load_embeddings}')
     print('Debug mode: {}'.format(args.debug))
     print('Log search results: {}'.format(args.log))
     print('')
@@ -380,22 +398,26 @@ if __name__ == "__main__":
     model = model_factory(params.model_params)
     if args.weights is not None:
         assert os.path.exists(args.weights), 'Cannot open network weights: {}'.format(args.weights)
+        model_name = os.path.splitext(os.path.split(args.weights)[1])[0]
         print('Loading weights: {}'.format(args.weights))
         if os.path.splitext(args.weights)[1] == '.ckpt':
             state = torch.load(args.weights)
             model.load_state_dict(state['model_state_dict'])
         else:  # .pt or .pth
             model.load_state_dict(torch.load(args.weights, map_location=device))
+    else:
+        model_name = w
 
     model.to(device)
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
     config_name = os.path.split(params.params_path)[1]
-    model_name = os.path.splitext(os.path.split(args.weights)[1])[0]
     prefix = "Model Params: {}, Config: {}, Model: {}".format(model_params_name, config_name, model_name)
 
-    stats = evaluate(model, device, params, args.log, model_name, show_progress=True)
+    stats = evaluate(model, device, params, args.log, model_name, show_progress=True,
+                     save_embeddings=args.save_embeddings,
+                     load_embeddings=args.load_embeddings)
     print_eval_stats(stats)
 
     pnv_write_eval_stats(f"pnv_{params.dataset_name}_split_results.txt", prefix, stats)

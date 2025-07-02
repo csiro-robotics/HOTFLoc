@@ -45,11 +45,13 @@ class ListDict(object):
 
 
 class BatchSampler(Sampler):
-    # Sampler returning list of indices to form a mini-batch
-    # Samples elements in groups consisting of k=2 similar elements (positives)
-    # Batch has the following structure: item1_1, ..., item1_k, item2_1, ... item2_k, itemn_1, ..., itemn_k
+    """
+    Sampler returning list of indices to form a mini-batch.  
+    Samples elements in groups consisting of k=2 similar elements (positives).   
+    Batch has the following structure: item1_1, ..., item1_k, item2_1, ... item2_k, itemn_1, ..., itemn_k
+    """
     def __init__(self, dataset: TrainingDataset, batch_size: int, batch_size_limit: int = None,
-                 batch_expansion_rate: float = None, max_batches: int = None):
+                 batch_expansion_rate: float = None, max_batches: int = None, local: bool = False):
         if batch_expansion_rate is not None:
             assert batch_expansion_rate > 1., 'batch_expansion_rate must be greater than 1'
             assert batch_size <= batch_size_limit, 'batch_size_limit must be greater or equal to batch_size'
@@ -59,8 +61,9 @@ class BatchSampler(Sampler):
         self.batch_expansion_rate = batch_expansion_rate
         self.max_batches = max_batches
         self.dataset = dataset
+        self.local = local
         self.k = 2  # Number of positive examples per group must be 2
-        if self.batch_size < 2 * self.k:
+        if not self.local and self.batch_size < 2 * self.k:
             self.batch_size = 2 * self.k
             print('WARNING: Batch too small. Batch size increased to {}.'.format(self.batch_size))
 
@@ -97,7 +100,8 @@ class BatchSampler(Sampler):
         unused_elements_ndx = ListDict(self.elems_ndx)
         current_batch = []
 
-        assert self.k == 2, 'sampler can sample only k=2 elements from the same class'
+        if not self.local:
+            assert self.k == 2, 'sampler can sample only k=2 elements from the same class'
 
         while True:
             if len(current_batch) >= self.batch_size or len(unused_elements_ndx) == 0:
@@ -106,7 +110,7 @@ class BatchSampler(Sampler):
                 if len(current_batch) >= 2*self.k:
                     # Ensure there're at least two groups of similar elements, otherwise, it would not be possible
                     # to find negative examples in the batch
-                    assert len(current_batch) % self.k == 0, 'Incorrect bach size: {}'.format(len(current_batch))
+                    assert len(current_batch) % self.k == 0, 'Incorrect batch size: {}'.format(len(current_batch))
                     self.batch_idx.append(current_batch)
                     current_batch = []
                     if (self.max_batches is not None) and (len(self.batch_idx) >= self.max_batches):
@@ -134,5 +138,44 @@ class BatchSampler(Sampler):
             current_batch += [selected_element, second_positive]
 
         for batch in self.batch_idx:
-            assert len(batch) % self.k == 0, 'Incorrect bach size: {}'.format(len(batch))
+            assert len(batch) % self.k == 0, 'Incorrect batch size: {}'.format(len(batch))
 
+
+class BatchSampler6DOF(BatchSampler):
+    """
+    Sampler returning list of indices to form a mini-batch.  
+    Samples elements, only selecting valid queries with positives.
+    """
+    def __init__(self, dataset: TrainingDataset, batch_size: int, batch_size_limit: int = None,
+                 batch_expansion_rate: float = None, max_batches: int = None):
+        super().__init__(dataset, batch_size, batch_size_limit, batch_expansion_rate,
+                         max_batches, local = True)
+
+    def generate_batches(self):
+        # Generate training/evaluation batches.
+        # batch_idx holds indexes of elements in each batch as a list of lists
+        self.batch_idx = []
+
+        unused_elements_ndx = ListDict(self.elems_ndx)
+        current_batch = []
+
+        while True:
+            if len(current_batch) >= self.batch_size or len(unused_elements_ndx) == 0:
+                # Flush out batch when it has a desired size, or a smaller 
+                # batch, when there's no more elements to process
+                self.batch_idx.append(current_batch)
+                current_batch = []
+                if (self.max_batches is not None) and (len(self.batch_idx) >= self.max_batches):
+                    break
+                if len(unused_elements_ndx) == 0:
+                    break
+
+            # Add valid query to batch
+            selected_element = unused_elements_ndx.choose_random()
+            unused_elements_ndx.remove(selected_element)
+            positives = self.dataset.get_positives(selected_element)
+            if len(positives) == 0:
+                # Broken dataset element without any positives
+                continue
+
+            current_batch.append(selected_element)
