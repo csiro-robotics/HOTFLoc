@@ -109,9 +109,13 @@ class BatchHardTripletLossWithMasks:
         hard_triplets = self.miner_fn(embeddings, positives_mask, negatives_mask)
         dummy_labels = torch.arange(embeddings.shape[0]).to(embeddings.device)
         loss = self.loss_fn(embeddings, dummy_labels, hard_triplets)
+        try:  # try and get the correct attribute from PML (num_past_filter is correct for versions somewhere between 1.1.2 <= version < 1.6.2, not exactly sure when it breaks)
+            num_non_zero_triplets = self.loss_fn.reducer.num_past_filter
+        except AttributeError:
+            num_non_zero_triplets = self.loss_fn.reducer.triplets_past_filter
 
         stats = {'loss': loss.item(), 'avg_embedding_norm': self.loss_fn.distance.final_avg_query_norm,
-                 'num_non_zero_triplets': self.loss_fn.reducer.num_past_filter,
+                 'num_non_zero_triplets': num_non_zero_triplets,
                  'num_triplets': len(hard_triplets[0]),
                  'mean_pos_pair_dist': self.miner_fn.mean_pos_pair_dist,
                  'mean_neg_pair_dist': self.miner_fn.mean_neg_pair_dist,
