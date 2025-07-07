@@ -53,7 +53,8 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
         with open(p, 'rb') as f:
             query_sets = pickle.load(f)
 
-        print(f'Evaluating {location_name}:')
+        if show_progress:
+            print(f'Evaluating {location_name}:')
         temp = evaluate_dataset(model, device, params, database_sets, query_sets, location_name,
                                 log=log, model_name=model_name, show_progress=show_progress,
                                 save_embeddings=save_embeddings, load_embeddings=load_embeddings)
@@ -90,7 +91,8 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
 
     model.eval()
 
-    print(f'{"Loading" if load_embeddings else "Computing"} database embeddings:')
+    if show_progress:
+        print(f'{"Loading" if load_embeddings else "Computing"} database embeddings:')
     for ii, data_set in enumerate(database_sets):
         temp_embeddings = None
         if len(data_set) > 0:
@@ -102,7 +104,8 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
                 save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
         database_embeddings.append(temp_embeddings)
 
-    print(f'{"Loading" if load_embeddings else "Computing"} query embeddings:')
+    if show_progress:
+        print(f'{"Loading" if load_embeddings else "Computing"} query embeddings:')
     for jj, data_set in enumerate(query_sets):
         temp_embeddings = None
         if len(data_set) > 0:
