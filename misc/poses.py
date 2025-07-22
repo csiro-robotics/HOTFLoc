@@ -1,22 +1,33 @@
+from typing import Tuple
 import numpy as np
 import torch
-from typing import Tuple
+from scipy.spatial.transform import Rotation as R
 
 
-def q2r(q):
-    # Rotation matrix from Hamiltonian quaternion
-    # Source: https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
-    w, x, y, z = tuple(q)
+def xyz_quat2m(quat_transform: np.ndarray) -> np.ndarray:
+    """
+    x, y, z, qx, qy, qz, qw -> SE3 pose
+    """
+    # x, y, z, qx, qy, qz, qw format
+    xyz = quat_transform[:3]
+    quaternion = quat_transform[3:]
 
-    n = 1.0/np.sqrt(x*x+y*y+z*z+w*w)
-    x *= n
-    y *= n
-    z *= n
-    w *= n
-    r = np.array([[1.0 - 2.0*y*y - 2.0*z*z, 2.0*x*y - 2.0*z*w, 2.0*x*z + 2.0*y*w],
-                  [2.0*x*y + 2.0*z*w, 1.0 - 2.0*x*x - 2.0*z*z, 2.0*y*z - 2.0*x*w],
-                  [2.0*x*z - 2.0*y*w, 2.0*y*z + 2.0*x*w, 1.0 - 2.0*x*x - 2.0*y*y]])
-    return r
+    r = R.from_quat(quaternion)
+    rot_matrix = r.as_matrix()
+    trans = np.concatenate([rot_matrix, xyz.reshape(3,1)], axis=1)
+    trans = np.concatenate([trans, np.array([[0.,0.,0.,1.]])], axis=0)
+    return trans
+
+
+def m2xyz_quat(rot_transform: np.ndarray) -> np.ndarray:
+    """
+    SE3 pose -> x, y, z, qx, qy, qz, qw
+    """
+    # qx, qy, qz, qw format
+    r = R.from_matrix(rot_transform[:3,:3])
+    quat = r.as_quat()
+    xyz = rot_transform[:3,3]
+    return np.concatenate((xyz, quat))
 
 
 def m2ypr(m):

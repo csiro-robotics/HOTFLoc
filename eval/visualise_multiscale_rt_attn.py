@@ -16,7 +16,7 @@ import random
 from tqdm import tqdm
 import ocnn
 from ocnn.octree import Octree, Points
-from models.octree import OctreeT
+from models.octree import OctreeT, rescale_octree_points
 from sklearn.manifold import TSNE
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
@@ -25,7 +25,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import seaborn as sns
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, set_seed, rescale_octree_points
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
@@ -112,7 +113,7 @@ def plot_rt_attn_per_block_head(
     """
     num_hotf_blocks = len(feats_and_attn_maps)
     feats_and_attn_maps_block_i = feats_and_attn_maps[BLOCK_VIZ_IDX]
-    pyramid_depths = list(feats_and_attn_maps_block_i['rt_feats_pre_local'].keys())
+    pyramid_depths = octree.pyramid_depths
     B, H, N, _ = feats_and_attn_maps_block_i['rt_attn']['attn_map'].shape
     if not args.softmax:
         softmax_title_part = "maps (before softmax)"
@@ -205,7 +206,7 @@ def plot_hosa_attn_per_block_head(
     WINDOW_IDX = 0  # specify the attn window to visualise
     num_hotf_blocks = len(feats_and_attn_maps)
     feats_and_attn_maps_block_i = feats_and_attn_maps[BLOCK_VIZ_IDX]
-    pyramid_depths = list(feats_and_attn_maps_block_i['local_attn'].keys())
+    pyramid_depths = octree.pyramid_depths
     
     depth = pyramid_depths[LEVEL-1]
     B, H, N, _ = feats_and_attn_maps_block_i['local_attn'][depth]['attn_map'].shape
@@ -564,7 +565,6 @@ def process_submap(submap, model, device, params: TrainingParams):
     if not args.debug:  # BOX PLOTS
         print_token_similarity(relay_tokens_i, token_type='Relay')
         print_token_similarity(local_feats_i, token_type='Local')
-    pyramid_depths = list(relay_tokens_i.keys())
     
     # Build window octree
     window_max_depth = octree.depth - model_params.num_input_downsamples
@@ -579,6 +579,7 @@ def process_submap(submap, model, device, params: TrainingParams):
         num_pyramid_levels=model_params.num_pyramid_levels,
         num_octf_levels=model_params.num_octf_levels)
     octree.build_t()
+    pyramid_depths = octree.pyramid_depths
     
     # Compute final idx of relay tokens (minus padding) from each depth
     rt_boundary_idx, rt_boundary_idx_cumsum = get_rt_boundary_idx(

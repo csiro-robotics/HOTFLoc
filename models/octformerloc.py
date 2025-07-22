@@ -37,7 +37,7 @@ class OctFormerLoc(torch.nn.Module):
             data = octree_feature(octree)
         return data
 
-    def forward(self, batch):
+    def forward(self, batch, **kwargs):
         octree = batch['octree']
         data = self.get_input_feature(octree)
         

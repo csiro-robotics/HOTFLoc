@@ -2,7 +2,7 @@ import numpy as np
 import os
 import open3d as o3d
 
-from dataset.base_datasets import PointCloudLoader
+from misc.point_clouds import PointCloudLoader
 
 
 class AboveUnderPointCloudLoader(PointCloudLoader):

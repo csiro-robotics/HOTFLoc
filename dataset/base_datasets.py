@@ -1,6 +1,7 @@
 # Base dataset classes, inherited by dataset-specific classes
 import os
 import pickle
+import time
 from typing import List, Dict
 
 import numpy as np
@@ -9,14 +10,15 @@ from torch.utils.data import Dataset
 
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
-from dataset.point_clouds import PointCloudLoader
+from misc.point_clouds import PointCloudLoader, icp, fast_global_registration
+from misc.poses import relative_pose
 
 
 class TrainingTuple:
     # Tuple describing an element for training/validation, with optional pose for metric localisation
     def __init__(self, id: int, timestamp: float, rel_scan_filepath: str, positives: np.ndarray,
                  non_negatives: np.ndarray, position: np.ndarray, pose: np.ndarray = None,
-                 positive_poses: Dict[int, np.ndarray] = None):
+                 positives_poses: Dict[int, np.ndarray] = None):
         # id: element id (ids start from 0 and are consecutive numbers)
         # ts: timestamp
         # rel_scan_filepath: relative path to the scan
@@ -35,7 +37,7 @@ class TrainingTuple:
         self.non_negatives = non_negatives
         self.position = position
         self.pose = pose
-        self.positive_poses = positive_poses
+        self.positives_poses = positives_poses
 
 
 class EvaluationTuple:
@@ -60,25 +62,26 @@ class TrainingDataset(Dataset):
                  transform=None, set_transform=None, load_octree=False,
                  octree_depth=11, full_depth=2, coordinates='cartesian'):
         # remove_zero_points: remove points with all zero coords
-        assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
+        assert os.path.exists(dataset_path), f'Cannot access dataset path: {dataset_path}'
         self.dataset_path = dataset_path
         self.dataset_type = dataset_type
         self.query_filepath = os.path.join(dataset_path, query_filename)
-        assert os.path.exists(self.query_filepath), 'Cannot access query file: {}'.format(self.query_filepath)
+        assert os.path.exists(self.query_filepath), f'Cannot access query file: {self.query_filepath}'
         self.transform = transform
         self.set_transform = set_transform
         self.coordinates = coordinates
         self.load_octree = load_octree
         self.octree_depth = octree_depth
         self.full_depth = full_depth
+        self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
 
         # NOTE: Virga env requires 'datasets' module stored as 'dataset' to avoid
         # conflict. Below will check if a pickle was saved with the wrong module,
         # and load TrainingTuple from the correct path for this environment.
-        self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, 'rb')).load()
-        print('{} queries in the dataset'.format(len(self)))
+        self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, "rb")).load()
+        print(f'{len(self)} queries in the dataset')
 
-        self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
+        self.pc_loader = get_pointcloud_loader(self.dataset_type)
 
     def __len__(self):
         return len(self.queries)
@@ -90,19 +93,27 @@ class TrainingDataset(Dataset):
         data = torch.tensor(query_pc, dtype=torch.float)
         if self.transform is not None:
             data = self.transform(data)
-        if self.load_octree:
-            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            mask = torch.all(abs(data) <= 1.0, dim=1)
-            data = data[mask]
-            # Also ensure this will hold if converting coordinate systems
-            if self.coordinates == 'cylindrical':
-                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
-                mask = torch.all(data_norm <= 1.0, dim=1)
-                data = data[mask]
-            # elif self.coordinates == 'spherical':  # TODO: if spherical is used
-            #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
-            #     mask = torch.all(data_norm <= 1.0, dim=1)
+        if self.load_octree and self.clip_octree_points:
+            data = self.clip_points(data)
         return data, ndx
+
+    def clip_points(self, data):
+        """
+        Clip point coordinates to [-1, 1] range. Ensures this operation holds
+        for cylindrical coordinates too.
+        """
+        # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+        mask = torch.all(abs(data) <= 1.0, dim=1)
+        data = data[mask]
+        # Also ensure this will hold if converting coordinate systems
+        if self.coordinates == 'cylindrical':
+            data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+            mask = torch.all(data_norm <= 1.0, dim=1)
+            data = data[mask]
+        # elif self.coordinates == 'spherical':  # TODO: if spherical is used
+        #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
+        #     mask = torch.all(data_norm <= 1.0, dim=1)
+        return data
 
     def get_positives(self, ndx):
         return self.queries[ndx].positives
@@ -118,6 +129,7 @@ class Training6DOFDataset(TrainingDataset):
     def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
                  local_transform=None, **kwargs):
         super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
+        self.clip_octree_points = False  # We do this step after local transforms
         self.local_transform = local_transform
 
     def __getitem__(self, ndx):
@@ -129,21 +141,81 @@ class Training6DOFDataset(TrainingDataset):
 
         # get random positive
         positives = self.get_positives(ndx)
-        positive_idx = np.random.choice(positives, 1)[0]
-        positive_pc, _ = super().__getitem__(positive_idx)
+        positive_ndx = np.random.choice(positives, 1)[0]
+        positive_pc, _ = super().__getitem__(positive_ndx)
 
         # get relative pose from global poses
-        if self.queries[ndx].positive_poses is None:
-            raise ValueError("Invalid training tuple, ensure 6DOF poses are present")
-        transform = torch.tensor(self.queries[ndx].positives_poses[positive_idx].copy())
+        if self.queries[ndx].positives_poses is not None:
+            transform = torch.tensor(
+                self.queries[ndx].positives_poses[positive_ndx],
+                dtype=query_pc.dtype,
+            )
+        else:
+            transform = torch.tensor(
+                relative_pose(self.queries[ndx].pose, self.queries[positive_ndx].pose),
+                dtype=query_pc.dtype,
+            )
+
+        # TODO: Fix variable names and such after debugging is finished
+        # ensure alignment with icp
+        tic = time.time()
+        transform_fgr, fitness_fgr, inlier_rmse_fgr = fast_global_registration(
+            query_pc.numpy().astype(float),
+            positive_pc.numpy().astype(float),
+            inlier_dist_threshold=0.2,
+            max_iteration=64,
+            voxel_size=None,
+        )
+        fgr_time = time.time() - tic
+        print(f"[FGR] Fitness: {fitness_fgr:.4f} -- Inlier RMSE: {inlier_rmse_fgr:.4f} -- {fgr_time:.4f}s")
+
+        tic = time.time()
+        transform_icp, fitness_icp, inlier_rmse_icp = icp(
+            query_pc.numpy().astype(float),
+            positive_pc.numpy().astype(float),
+            transform.numpy(),
+            gicp=True,
+            inlier_dist_threshold=0.2,
+            max_iteration=200,
+            voxel_size=None,
+        )
+        icp_time = time.time() - tic
+        print(f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {icp_time:.4f}s")
         
         if self.local_transform is not None:
-            # Apply only normalization and jitter to the query point cloud
-            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
-            # Apply random transform to the positive point cloud
-            # TODO: Verify that augmented transform correctly registers to query
-            positive_pc, positive_shift_and_scale, aug_tf = self.local_transform(positive_pc)
-            transform = aug_tf @ transform
+            ######################## TEMP FOR DEBUGGING ########################
+            query_pc_orig = query_pc.clone()
+            positive_pc_orig = positive_pc.clone()
+            transform_orig = transform.clone()
+            ####################################################################
+            # # Apply only normalization and jitter to the query point cloud
+            # query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
+            # # Apply random transform to the positive point cloud
+            # # TODO: Verify that augmented transform correctly registers to query
+            # positive_pc, positive_shift_and_scale, aug_tf = self.local_transform(positive_pc)
+            # transform = aug_tf @ transform
+
+        ########################################################################
+        # VISUALISATIONS FOR DEBUGGING
+        ########################################################################
+        from misc.point_clouds import draw_registration_result
+        query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
+        positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
+        draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
+        draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
+        draw_registration_result(positive_pc_denorm, positive_pc_orig, np.linalg.inv(aug_tf))
+        draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
+        draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
+        draw_registration_result(query_pc_orig, positive_pc_orig, transform_fgr)
+        draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
+        draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
+        draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
+        ########################################################################
+
+        # Now clip point coordinates after normalization is done
+        if self.load_octree:
+            query_pc = self.clip_points(query_pc)
+            positive_pc = self.clip_points(positive_pc)
 
         return query_pc, positive_pc, transform, query_shift_and_scale, positive_shift_and_scale
 

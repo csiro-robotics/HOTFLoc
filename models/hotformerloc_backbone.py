@@ -16,7 +16,7 @@ import ocnn
 from ocnn.octree import Octree
 from typing import Optional, List, Tuple, Dict
 from torch.utils.checkpoint import checkpoint
-from misc.utils import debug_time_func
+from misc.torch_utils import debug_time_func
 from models.octree import OctreeT, pad_sequence
 from models.layers.octformer_layers import (
     MLP, CPE, RPE, ADaPE, OctreeDropPath
@@ -269,7 +269,7 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
     def forward(self, relay_token_dict: Dict[int, Tensor], octree: OctreeT):
-        pyramid_depths = list(relay_token_dict.keys())
+        pyramid_depths = octree.pyramid_depths
 
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~2.4ms with bs 128)
         # Concatenate and pad multi-scale relay tokens per batch
@@ -606,9 +606,8 @@ class HOTFormerStage(torch.nn.Module):
                 )
         return local_feat_dict, relay_token_dict
     
-    def forward(self, data: Tensor, octree: OctreeT, depth: int):
-        self.pyramid_depths = [(depth - j)
-                               for j in range(self.num_pyramid_levels)]
+    def forward(self, data: Tensor, octree: OctreeT, depth: int) -> tuple[dict, dict, list]:
+        self.pyramid_depths = octree.pyramid_depths
         feats_and_attn_maps_per_block = [{'local_qkv_std': {}} for _ in range(self.num_blocks)]
         if self.return_feats_and_attn_maps:
             [feats_and_attn_maps_per_block[i].update(
@@ -805,16 +804,19 @@ class HOTFormerBase(torch.nn.Module):
                          num_octf_levels=self.num_octf_levels)
         octree.build_t()
         octf_feats_and_attn_maps = {}  # Store feats and attn maps per octf stage
+        local_feat_dict = {}
         for i in range(self.num_octf_levels):
             data, octf_feats_and_attn_maps_i = self.octf_stage[i](data, octree, depth)
+            local_feat_dict[depth] = data
             octf_feats_and_attn_maps[depth] = octf_feats_and_attn_maps_i
             data = self.downsample[i](data, octree, depth)
             depth = depth - 1
 
         # Compute Hierarchical Octree Attention with multi-scale Relay Tokens
-        local_feat_dict, relay_token_dict, hotf_feats_and_attn_maps = (
+        hotf_local_feat_dict, relay_token_dict, hotf_feats_and_attn_maps = (
             self.hotf_stage(data, octree, depth)
         )
+        local_feat_dict.update(hotf_local_feat_dict)
         feats_and_attn_maps = {'octformer': octf_feats_and_attn_maps,
                                'hotformer': hotf_feats_and_attn_maps}
         return local_feat_dict, relay_token_dict, octree, feats_and_attn_maps

@@ -7,18 +7,19 @@ from pytorch_metric_learning import losses, reducers
 from pytorch_metric_learning.distances import LpDistance
 from misc.utils import TrainingParams
 from models.losses.truncated_smoothap import TruncatedSmoothAP
+from models.losses.geotransformer_loss import OverallLoss
 
 
 def make_losses(params: TrainingParams):
     if params.loss == 'batchhardtripletmarginloss':
         # BatchHard mining with triplet margin loss
         # Expects input: embeddings, positives_mask, negatives_mask
-        loss_fn = BatchHardTripletLossWithMasks(params.margin)
+        global_loss_fn = BatchHardTripletLossWithMasks(params.margin)
     elif params.loss == 'batchhardcontrastiveloss':
-        loss_fn = BatchHardContrastiveLossWithMasks(params.pos_margin, params.neg_margin)
+        global_loss_fn = BatchHardContrastiveLossWithMasks(params.pos_margin, params.neg_margin)
     elif params.loss == 'truncatedsmoothap':
-        loss_fn = TruncatedSmoothAP(tau1=params.tau1, similarity=params.similarity,
-                                    positives_per_query=params.positives_per_query)
+        global_loss_fn = TruncatedSmoothAP(tau1=params.tau1, similarity=params.similarity,
+                                           positives_per_query=params.positives_per_query)
     else:
         print('Unknown loss: {}'.format(params.loss))
         raise NotImplementedError
@@ -41,7 +42,12 @@ def make_losses(params: TrainingParams):
     else:
         qkv_loss_fn = None
 
-    return loss_fn, qkv_loss_fn
+    local_loss_fn = None
+    if params.enable_local:
+        # TODO: Configure params
+        local_loss_fn = OverallLoss(params)
+
+    return global_loss_fn, qkv_loss_fn, local_loss_fn
 
 
 class HardTripletMinerWithMasks:

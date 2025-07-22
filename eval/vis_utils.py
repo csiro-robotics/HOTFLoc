@@ -13,8 +13,8 @@ import ocnn
 import matplotlib.pyplot as plt
 import seaborn as sns
 from dataset.coordinate_utils import CylindricalCoordinates
-from misc.utils import TrainingParams, rescale_octree_points
-from models.octree import OctreeT
+from misc.utils import TrainingParams
+from models.octree import OctreeT, rescale_octree_points
 
 def submap_distance(q1, q2) -> float:
     """

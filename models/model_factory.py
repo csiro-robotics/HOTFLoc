@@ -7,6 +7,8 @@ from models.octformerloc import OctFormerLoc
 from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
+from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from geotransformer.modules.geotransformer import GeometricTransformer
 from misc.utils import ModelParams
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
 from models.layers.eca_block import ECABasicBlock
@@ -50,6 +52,77 @@ def model_factory(model_params: ModelParams):
             backbone=backbone,
             pooling=pooling,
             normalize_embeddings=model_params.normalize_embeddings,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+        )
+    elif 'hotformermetricloc' in model_params.model.lower():
+        in_channels = get_in_channels(model_params.input_features)
+        backbone = HOTFormer(
+            in_channels=in_channels,
+            channels=model_params.channels,
+            num_blocks=model_params.num_blocks,
+            num_heads=model_params.num_heads,
+            num_pyramid_levels=model_params.num_pyramid_levels,
+            num_octf_levels=model_params.num_octf_levels,
+            patch_size=model_params.patch_size,
+            dilation=model_params.dilation,
+            drop_path=model_params.drop_path,
+            stem_down=model_params.num_input_downsamples,
+            num_top_down=model_params.num_top_down,
+            fpn_channel=model_params.feature_size,
+            rt_size=model_params.ct_size,
+            rt_propagation=model_params.ct_propagation,
+            rt_propagation_scale=model_params.ct_propagation_scale,
+            rt_init_type=model_params.rt_init_type,
+            rt_rpe_init=model_params.ct_rpe_init,
+            disable_rt=model_params.disable_rt,
+            ADaPE_mode=model_params.ADaPE_mode,
+            grad_checkpoint=model_params.grad_checkpoint,
+            downsample_input_embeddings=model_params.downsample_input_embeddings,
+            disable_RPE=model_params.disable_RPE,
+            conv_norm=model_params.conv_norm,
+            layer_scale=model_params.layer_scale,
+            qkv_init=model_params.qkv_init,
+            xcpe=model_params.xcpe,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+        )
+        pooling = PoolingWrapper(
+            pool_method=model_params.pooling,
+            in_dim=model_params.feature_size,
+            output_dim=model_params.output_dim,
+            num_pyramid_levels=model_params.num_pyramid_levels,
+            channels=model_params.channels[model_params.num_octf_levels:],
+            k_pooled_tokens=model_params.k_pooled_tokens,
+        )
+        if model_params.disable_rt:
+            assert pooling.pooled_feats != 'relaytokens', (
+                "If relay tokens are disabled, a local feature pooling method "
+                + "must be used!"
+            )
+        hotformerloc_global = HOTFormerLoc(
+            backbone=backbone,
+            pooling=pooling,
+            normalize_embeddings=model_params.normalize_embeddings,
+            input_features=model_params.input_features,
+            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+        )
+        coarse_feat_refiner = None
+        # TODO: sort out geotransformer config
+        # coarse_feat_refiner = GeometricTransformer(
+        #     cfg.geotransformer.input_dim,
+        #     cfg.geotransformer.output_dim,
+        #     cfg.geotransformer.hidden_dim,
+        #     cfg.geotransformer.num_heads,
+        #     cfg.geotransformer.blocks,
+        #     cfg.geotransformer.sigma_d,
+        #     cfg.geotransformer.sigma_a,
+        #     cfg.geotransformer.angle_k,
+        #     reduction_a=cfg.geotransformer.reduction_a,
+        # )
+        model = HOTFormerMetricLoc(
+            hotformerloc_global=hotformerloc_global,
+            coarse_feat_refiner=coarse_feat_refiner,
+            coarse_idx=model_params.coarse_idx,
+            fine_idx=model_params.fine_idx,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'hotformerloc' in model_params.model.lower():

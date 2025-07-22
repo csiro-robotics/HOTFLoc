@@ -1,0 +1,35 @@
+[DEFAULT]
+dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.40m_rmground/
+
+[TRAIN]
+num_workers = 3
+batch_size = 256
+val_batch_size = 128
+save_freq = 10
+eval_freq = 10
+
+lr = 8e-4
+epochs = 100
+scheduler_milestones = 50
+warmup_epochs = 2
+aug_mode = 2
+set_aug_mode = 2
+random_rot_theta = 180
+normalize_points = True
+octree_depth = 7
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+mesa = 1.0
+mesa_start_ratio = 0.15
+
+dataset_name = CSWildPlaces
+skip_same_run = True
+train_file = training_queries_CSWildPlaces_baseline_v2.pickle
+val_file = test_queries_CSWildPlaces_v2.pickle
+validation = True
+
+[LOCAL]
+enable_local = True
+local_aug_mode = 1

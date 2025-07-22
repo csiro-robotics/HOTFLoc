@@ -18,8 +18,7 @@ from ocnn.octree import Octree, Points
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
-from models.octree import OctreeT
-from misc.utils import rescale_octree_points
+from models.octree import OctreeT, rescale_octree_points
 
 def main():
     binPointCloudLoader = PNVPointCloudLoader()

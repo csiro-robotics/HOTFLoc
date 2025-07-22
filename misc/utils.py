@@ -3,19 +3,17 @@
 import os
 import configparser
 import time
-import random
 import pickle
-import torch
+from typing import Union
 import numpy as np
 import matplotlib.pyplot as plt
-from ocnn.octree import Octree, Points
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
 from dataset.coordinate_utils import CylindricalCoordinates
 
 
 class ModelParams:
-    def __init__(self, model_params_path):
+    def __init__(self, model_params_path, local=False):
         config = configparser.ConfigParser()
         config.read(model_params_path)
         params = config['MODEL']
@@ -63,6 +61,11 @@ class ModelParams:
             self.k_pooled_tokens = tuple([int(e) for e in params['k_pooled_tokens'].split(',')])
         self.num_top_down = params.getint('num_top_down', 1)
         self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', True)  # outputs feats and attn maps from each block of HOTFormerLoc (or MinkLoc)
+
+        # Metric loc params
+        if local:
+            self.coarse_idx = params.getint('coarse_idx', -1)
+            self.fine_idx = params.getint('fine_idx', -3)
 
         if 'minkloc' in self.model.lower():
         #######################################################################
@@ -124,7 +127,7 @@ class ModelParams:
                 self.qkv_init = ['trunc_normal', 0.02]  # Second value is std dev, but is optional and can be different depening on initialisation parameters
             self.xcpe = params.getboolean('xCPE', False)  # Use xCPE instead of CPE (from PointTransformerV3)
 
-            if 'hotformerloc' in self.model.lower():
+            if any(model in self.model.lower() for model in ('hotformerloc', 'hotformermetricloc')):
                 #######################################################################
                 # HOTFormerLoc-specific params
                 #######################################################################
@@ -282,11 +285,17 @@ class TrainingParams:
         self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
         self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
 
+        # If running a hyperparameter search
+        self.hyperparam_search = params.getboolean('hyperparam_search', False)
+
         # Metric localisation and re-ranking parameters
+        params = config['LOCAL']
+        self.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
+        self.local_batch_size = params.getint('local_batch_size', 8)
         self.local_aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
         
         # Read model parameters
-        self.model_params = ModelParams(self.model_params_path)
+        self.model_params = ModelParams(self.model_params_path, local=self.enable_local)
         
         # Check if using octrees, load octrees instead of sparse tensor for OctFormer
         self.load_octree = any(model in self.model_params.model.lower() for model in ('octformer', 'hotformer'))
@@ -298,8 +307,6 @@ class TrainingParams:
                     print("[WARNING] Unit sphere normalization recommended for cylindrical octrees")
             else:
                 print("[WARNING] Normalization not enabled. Ensure point clouds are already normalized within unit sphere for cylindrical octrees..")
-        # If running a hyperparameter search
-        self.hyperparam_search = params.getboolean('hyperparam_search', False)
         
         self._check_params()
 
@@ -340,83 +347,6 @@ def update_params_from_dict(params, param_dict: dict):
     
 def get_datetime():
     return time.strftime("%Y%m%d_%H%M")
-
-def set_seed(seed: int = 42):
-    """
-    Enable (mostly) deterministic behaviour in PyTorch.
-    """
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    np.random.seed(seed)
-    random.seed(seed)
-    
-def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
-    """ 
-    Rescale points stored in octree to original scale.
-
-    Args:
-        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
-        depth (int): Octree depth used to rescale values
-    """
-    # rescale points to [-1, 1] since octree points are in range [0, 2^d]
-    scale = 2 ** (1 - depth)
-    points_scaled = points * scale - 1.0
-    return points_scaled
-
-def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
-    """
-    Converts averaged points in the octree to a point cloud.
-
-    Args:
-        octree (Octree): The octree to convert to a point cloud.
-        depth (int): Octree depth to query points from.
-        NOTE: CURRENTLY ONLY THE FINAL DEPTH CONTAINS POINTS
-    """
-    points = octree.points[depth]
-    points_scaled = rescale_octree_points(points, depth)
-    return points_scaled
-
-def plot_points(points: np.ndarray, show=True):
-    """
-    Plots a point cloud using matplotlib. Colormap is based on z height.
-
-    Args:
-        points (ndarray): Point cloud of shape (N, 3), with (x,y,z) coords.
-    """    
-    fig = plt.figure(figsize=(9,8))
-    ax = fig.add_subplot(1, 1, 1, projection='3d')
-    ax.scatter(*points.T, c=points.T[2])
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('z')
-    ax.set_aspect('equal', adjustable='box')
-    if show:
-        plt.show()
-
-def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
-    """Time a function's runtime with CUDA events"""
-    starter = torch.cuda.Event(enable_timing=True)
-    ender = torch.cuda.Event(enable_timing=True)
-    timings = torch.zeros((num_repetitions, 1))
-    # GPU WARMUP
-    for _ in range(10):
-        _ = func(*inputs)
-    # MEASURE PERFORMANCE
-    for rep in range(num_repetitions):
-        starter.record()
-        _ = func(*inputs)
-        ender.record()
-        # WAIT FOR GPU SYNC
-        torch.cuda.synchronize()
-        curr_time = starter.elapsed_time(ender)
-        timings[rep] = curr_time
-        
-    mean_syn = torch.sum(timings) / num_repetitions
-    std_syn = torch.std(timings)
-    print(f"{func.__class__} runtime:")
-    print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
 
 def save_pickle(data, filename):
     with open(filename, 'wb') as handle:

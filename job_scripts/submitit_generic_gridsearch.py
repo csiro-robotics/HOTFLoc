@@ -9,7 +9,8 @@ import submitit
 from sklearn.model_selection import ParameterGrid
 
 from training.trainer import NetworkTrainer
-from misc.utils import TrainingParams, set_seed
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 
 def get_hyperparam_grid(base_params: TrainingParams, gridsearch_config_file: str):
     # Load gridsearch config and generate parameter grid

@@ -7,7 +7,8 @@ import argparse
 import submitit
 
 from training.trainer import NetworkTrainer
-from misc.utils import TrainingParams, set_seed
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 
 job_config = {
     'nodes': 1, 'gpus_per_node': 1,

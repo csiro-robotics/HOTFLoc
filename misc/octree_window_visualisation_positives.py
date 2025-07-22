@@ -22,8 +22,8 @@ from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
-from models.octree import OctreeT
-from misc.utils import rescale_octree_points, set_seed
+from models.octree import OctreeT, rescale_octree_points
+from misc.torch_utils import set_seed
 
 BIN_PCL_LOADER = PNVPointCloudLoader()
 PCD_PCL_LOADER = AboveUnderPointCloudLoader()

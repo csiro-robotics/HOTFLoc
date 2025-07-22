@@ -126,6 +126,8 @@ class BatchSampler(Sampler):
                 # Broken dataset element without any positives
                 continue
 
+            # TODO: Prioritise sampling cross-source positives if available
+
             unused_positives = [e for e in positives if e in unused_elements_ndx]
             # If there're unused elements similar to selected_element, sample from them
             # otherwise sample from all similar elements
@@ -169,6 +171,8 @@ class BatchSampler6DOF(BatchSampler):
                     break
                 if len(unused_elements_ndx) == 0:
                     break
+
+            # TODO: Prioritise sampling cross-source positives if available
 
             # Add valid query to batch
             selected_element = unused_elements_ndx.choose_random()

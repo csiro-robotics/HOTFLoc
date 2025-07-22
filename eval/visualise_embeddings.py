@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as cm
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, set_seed
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize

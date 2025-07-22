@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import zCurve
-from misc.utils import set_seed
+from misc.torch_utils import set_seed
 
 set_seed()
 

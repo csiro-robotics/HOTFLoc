@@ -15,7 +15,8 @@ from tqdm import tqdm
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 
-from misc.utils import set_seed, plot_points
+from misc.point_clouds import plot_points
+from misc.torch_utils import set_seed
 
 BIN_PCL_LOADER = PNVPointCloudLoader()
 PCD_PCL_LOADER = AboveUnderPointCloudLoader()

@@ -3,6 +3,7 @@
 # Evaluation using PointNetVLAD evaluation protocol and test sets
 # Evaluation code adapted from PointNetVlad code: https://github.com/mikacuy/pointnetvlad
 # Adapted to process samples in batches by Ethan Griffiths (QUT & CSIRO Data61).
+# 24-05-2025 Further adapted to implement SpectralGV re-ranking: https://github.com/csiro-robotics/SpectralGV/blob/main
 
 from sklearn.neighbors import KDTree
 import numpy as np
@@ -11,6 +12,8 @@ import os
 import argparse
 import torch
 import MinkowskiEngine as ME
+import copy
+from time import time
 import tqdm
 import ocnn
 
@@ -19,6 +22,8 @@ from misc.utils import TrainingParams, load_pickle, save_pickle
 from misc.torch_utils import set_seed
 from dataset.dataset_utils import make_eval_dataloader
 from eval.utils import get_query_database_splits
+from eval.sgv.sgv_utils import sgv_fn
+
 
 def evaluate(model, device, params: TrainingParams, log: bool = False,
              model_name: str = 'model', show_progress: bool = False, 
@@ -88,35 +93,43 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     mrr = []
 
     database_embeddings = []
+    database_local_embeddings = []
+    database_positions = []
     query_embeddings = []
+    query_local_embeddings = []
 
     model.eval()
 
     if show_progress:
         print(f'{"Loading" if load_embeddings else "Computing"} database embeddings:')
     for ii, data_set in enumerate(database_sets):
-        temp_embeddings = None
+        temp_embeddings, temp_local_embeddings, temp_positions = [None]*3
         if len(data_set) > 0:
+            # Create array of coordinates of all db elements
+            temp_positions = np.array([(db_details['northing'], db_details['easting']) for db_details in data_set.values()])
             if load_embeddings:
-                temp_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
+                temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
             else:
-                temp_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
             if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
+                save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
         database_embeddings.append(temp_embeddings)
+        database_local_embeddings.append(temp_local_embeddings)
+        database_positions.append(temp_positions)
 
     if show_progress:
         print(f'{"Loading" if load_embeddings else "Computing"} query embeddings:')
     for jj, data_set in enumerate(query_sets):
-        temp_embeddings = None
+        temp_embeddings, temp_local_embeddings = [None]*2
         if len(data_set) > 0:
             if load_embeddings:
-                temp_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
+                temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
             else:
-                temp_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
             if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
+                save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
         query_embeddings.append(temp_embeddings)
+        query_local_embeddings.append(temp_local_embeddings)
 
     for i in range(len(database_sets)):
         for j in range(len(query_sets)):
@@ -130,9 +143,12 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
             else:
                 split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
             pair_recall, pair_opr, pair_mrr = get_recall(i, j, database_embeddings,
-                                                         query_embeddings, query_sets,
-                                                         database_sets, log=log,
-                                                         model_name=model_name)
+                                                         query_embeddings,
+                                                         database_local_embeddings,
+                                                         query_local_embeddings,
+                                                         database_positions,
+                                                         query_sets, database_sets,
+                                                         log=log, model_name=model_name)
             recall += np.array(pair_recall)
             count += 1
             one_percent_recall.append(pair_opr)
@@ -171,41 +187,50 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams,
                        show_progress: bool = False):
     # Adapted from original PointNetVLAD code
     if len(data_set) == 0:
-        return None
+        return None, None
 
     ### NOTE: Disabled so that eval can be tested during training debug mode
     # if params.debug:
-    #     embeddings = np.random.rand(len(data_set), 256)
-    #     return embeddings
+    #     global_embeddings = np.random.rand(len(data_set), 256)
+    #     local_embeddings = {4: torch.rand(len(data_set), 128, params.model_params.channels[1])}
+    #     return global_embeddings, local_embeddings
 
     # Create dataloader for data_set
     dataloader = make_eval_dataloader(params, data_set, local=False)
-    embeddings = None
+    global_embeddings = None
+    local_embeddings = []
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
         for ii, batch in enumerate(dataloader):
             batch = {e: batch[e].to(device, non_blocking=True) for e in batch}
-            temp_embedding = compute_embedding(model, batch)
-            if embeddings is None:
-                embeddings = np.zeros((len(data_set), temp_embedding.shape[1]), dtype=temp_embedding.dtype)
-            embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_embedding))] = temp_embedding
-            pbar.update(len(temp_embedding))
+            temp_global_embedding, temp_local_embedding = compute_embedding(model, batch)
+            if global_embeddings is None:
+                global_embeddings = np.zeros((len(data_set), temp_global_embedding.shape[1]), dtype=temp_global_embedding.dtype)
+            global_embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_global_embedding))] = temp_global_embedding
+            local_embeddings.append(temp_local_embedding)
+            pbar.update(len(temp_global_embedding))
     
-    return embeddings
+    return global_embeddings, local_embeddings
 
 
 def compute_embedding(model, batch):
     with torch.inference_mode():
         # Compute global descriptor
         y = model(batch)
-        embedding = y['global'].detach().cpu().numpy()
+        global_embedding = y['global'].detach().cpu().numpy()
+        # Get local descriptors for each pyramid level
+        local_embedding = {}
+        if 'local' in y:
+            for depth in y['local'].keys():
+                local_embedding[depth] = y['local'][depth].detach().cpu()
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
-    return embedding
+    return global_embedding, local_embedding
 
 
-def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
-               log=False, model_name: str = 'model'):
+def get_recall(m, n, database_vectors, query_vectors, database_local_embeddings,
+               query_local_embeddings, database_positions, query_sets, database_sets,
+               log=False, model_name: str = 'model', num_neighbors: int = 20):
     # Original PointNetVLAD code
     database_output = database_vectors[m]
     queries_output = query_vectors[n]
@@ -214,7 +239,6 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
     # nearest neighbour search results as using cosine distance
     database_nbrs = KDTree(database_output)
 
-    num_neighbors = 25
     recall = [0] * num_neighbors
     recall_idx = []
 
@@ -222,31 +246,35 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
     threshold = max(int(round(len(database_output)/100.0)), 1)
 
     num_evaluated = 0
-    for i in range(len(queries_output)):
-        # i is query element ndx
-        query_details = query_sets[n][i]    # {'query': path, 'northing': , 'easting': }
+    for query_ndx in range(len(queries_output)):
+        query_details = query_sets[n][query_ndx]    # {'query': path, 'northing': , 'easting': }
+        query_position = np.array((query_details['northing'], query_details['easting']))
         true_neighbors = query_details[m]
         if len(true_neighbors) == 0:
             continue
         num_evaluated += 1
 
         # Find nearest neightbours
-        distances, indices = database_nbrs.query(np.array([queries_output[i]]), k=num_neighbors)
+        distances, nn_indices = database_nbrs.query(np.array([queries_output[query_ndx]]), k=num_neighbors)
+
+        # Euclidean distance between the query and nn
+        delta = query_position - database_positions[m][nn_indices]       # (k, 2) array
+        euclid_dist = np.linalg.norm(delta, axis=1)     # (k,) array
 
         if log:
             # Log false positives (returned as the first element)
             # Check if there's a false positive returned as the first element
-            if indices[0][0] not in true_neighbors:
-                fp_ndx = indices[0][0]
+            if nn_indices[0][0] not in true_neighbors:
+                fp_ndx = nn_indices[0][0]
                 fp = database_sets[m][fp_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
                 fp_emb_dist = distances[0, 0]  # Distance in embedding space
                 fp_world_dist = np.sqrt((query_details['northing'] - fp['northing']) ** 2 +
                                         (query_details['easting'] - fp['easting']) ** 2)
                 # Find the first true positive
                 tp = None
-                for k in range(len(indices[0])):
-                    if indices[0][k] in true_neighbors:
-                        closest_pos_ndx = indices[0][k]
+                for k in range(len(nn_indices[0])):
+                    if nn_indices[0][k] in true_neighbors:
+                        closest_pos_ndx = nn_indices[0][k]
                         tp = database_sets[m][closest_pos_ndx]  # Database element: {'query': path, 'northing': , 'easting': }
                         tp_emb_dist = distances[0][k]
                         tp_world_dist = np.sqrt((query_details['northing'] - tp['northing']) ** 2 +
@@ -264,9 +292,9 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
 
             # Save details of 5 best matches for later visualization for 1% of queries
             s = f"{query_details['query']}, {query_details['northing']}, {query_details['easting']}"
-            for k in range(min(len(indices[0]), 5)):
-                is_match = indices[0][k] in true_neighbors
-                e_ndx = indices[0][k]
+            for k in range(min(len(nn_indices[0]), 5)):
+                is_match = nn_indices[0][k] in true_neighbors
+                e_ndx = nn_indices[0][k]
                 e = database_sets[m][e_ndx]     # Database element: {'query': path, 'northing': , 'easting': }
                 e_emb_dist = distances[0][k]
                 world_dist = np.sqrt((query_details['northing'] - e['northing']) ** 2 +
@@ -277,13 +305,45 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
             with open(out_top5_file_name, "a") as f:
                 f.write(s)
 
-        for j in range(len(indices[0])):
-            if indices[0][j] in true_neighbors:
+        # Re-Ranking with SGV
+        # TODO: Need to extract features (and keypoints) from HOTFormerLoc for SGV re-ranking
+        topk = min(num_neighbors, len(nn_indices))
+        tick = time()
+        candidate_local_embeddings = database_local_embeddings[m][nn_indices]
+        candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
+        fitness_list = sgv_fn(query_local_embeddings[n][query_ndx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
+        topk_rerank = np.flip(np.asarray(fitness_list).argsort())
+        topk_rerank_inds = copy.deepcopy(nn_indices)
+        topk_rerank_inds[:topk] = nn_indices[topk_rerank]
+        t_rerank = time() - tick
+        global_metrics['t_RR'].append(t_rerank)
+
+        delta_rerank = query_position - database_positions[m][topk_rerank_inds]
+        euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+
+        # Log cases where re-ranking is worse (causes PR failure, or is
+        #   significantly worse than the original top-candidate)
+        rr_to_nn_euclid_dist = euclid_dist_rr[0] - euclid_dist[0]
+        if (euclid_dist[0] <= self.MAX_NN_EUCLID_DIST
+                and rr_to_nn_euclid_dist > self.MAX_RR_TO_NN_EUCLID_DIST):
+            # print(f'Fail: {euclid_dist_rr[0]:.2f}m > {euclid_dist[0]:.2f}m', flush=True)
+            query_name = os.path.basename(self.eval_set.query_set[query_ndx].rel_scan_filepath)
+            nn_name = os.path.basename(self.eval_set.map_set[nn_indices[0]].rel_scan_filepath)
+            nn_rerank_name = os.path.basename(self.eval_set.map_set[topk_rerank_inds[0]].rel_scan_filepath)
+            global_metrics['rr_failures'].append((query_name, nn_name,
+                                                    nn_rerank_name,
+                                                    f'{euclid_dist[0]:.2f}',
+                                                    f'{euclid_dist_rr[0]:.2f}'))
+
+        # TODO: Compute recall and other metrics for re-ranked candidates
+
+        for j in range(len(nn_indices[0])):
+            if nn_indices[0][j] in true_neighbors:
                 recall[j] += 1
                 recall_idx.append(j+1)
                 break
 
-        if len(list(set(indices[0][0:threshold]).intersection(set(true_neighbors)))) > 0:
+        if len(list(set(nn_indices[0][0:threshold]).intersection(set(true_neighbors)))) > 0:
             one_percent_retrieved += 1
 
     one_percent_recall = (one_percent_retrieved/float(num_evaluated))*100
@@ -331,27 +391,30 @@ def pnv_write_eval_stats(file_name, prefix, stats):
         f.write(s)
 
 
-def save_embeddings_to_file(global_embeddings, model_name: str, dataset_name: str,
-                            location_name: str, set_name: str = "database"):
+def save_embeddings_to_file(global_embeddings, local_embeddings, model_name: str,
+                            dataset_name: str, location_name: str, set_name: str = "database"):
     save_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     global_embeddings_file = os.path.join(save_dir, f"{set_name}_global_embeddings.pickle")
     save_pickle(global_embeddings, global_embeddings_file)
+    local_embeddings_file = os.path.join(save_dir, f"{set_name}_local_embeddings.pickle")
+    save_pickle(local_embeddings, local_embeddings_file)
 
 
-def load_embeddings_from_file(model_name: str, dataset_name: str,
-                              location_name: str, set_name: str = "database"):
+def load_embeddings_from_file(model_name: str, dataset_name: str, location_name: str, set_name: str = "database"):
     load_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
     if not os.path.exists(load_dir):
         raise FileNotFoundError("No saved embeddings found for model. Run with --save_embeddings first.")
     else:
         global_embeddings_file = os.path.join(load_dir, f"{set_name}_global_embeddings.pickle")
         global_embeddings = load_pickle(global_embeddings_file)
-        assert (len(global_embeddings) > 0), (
+        local_embeddings_file = os.path.join(load_dir, f"{set_name}_local_embeddings.pickle")
+        local_embeddings = load_pickle(local_embeddings_file)
+        assert (len(global_embeddings) * len(local_embeddings) > 0), (
             "Saved descriptors are corrupted, rerun with `save_descriptors` enabled"
         )
-    return global_embeddings
+    return global_embeddings, local_embeddings
 
 
 if __name__ == "__main__":
@@ -363,7 +426,7 @@ if __name__ == "__main__":
     parser.set_defaults(debug=False)
     parser.add_argument('--visualize', dest='visualize', action='store_true')
     parser.set_defaults(visualize=False)
-    parser.add_argument('--log', dest='log', action='store_true', help="Log false positives and top-5 retrievals")
+    parser.add_argument('--log', dest='log', action='store_true', help='Log false positives and top-5 retrievals')
     parser.set_defaults(log=False)
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
@@ -374,6 +437,8 @@ if __name__ == "__main__":
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
     if args.weights is None:
+        if args.save_embeddings or args.load_embeddings:
+            raise ValueError('Cannot save or load embeddings for random weights')
         w = 'RANDOM WEIGHTS'
     else:
         w = args.weights
@@ -425,5 +490,3 @@ if __name__ == "__main__":
     print_eval_stats(stats)
 
     pnv_write_eval_stats(f"pnv_{params.dataset_name}_split_results.txt", prefix, stats)
-
-

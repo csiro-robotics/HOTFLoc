@@ -19,7 +19,7 @@ class MinkLoc(torch.nn.Module):
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.stats = {}
 
-    def forward(self, batch):
+    def forward(self, batch, **kwargs):
         x = ME.SparseTensor(batch['features'], coordinates=batch['coords'])
         x, logged_feature_maps = self.backbone(x)
         # x is (num_points, n_features) tensor

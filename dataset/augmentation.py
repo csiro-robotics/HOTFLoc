@@ -120,11 +120,14 @@ class Train6DOFTransform:
         #       overlap calculation (otherwise needs to be computed on the fly)
         if self.local_aug_mode == 1:
             # Augmentations with random rotation around z-axis 
-            t.extend([JitterPoints(sigma=0.001, clip=0.002)])
+            # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
+            t.extend([JitterPoints(sigma=0.1)])
             self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
                                                      axis=np.array([0, 0, 1]),
                                                      return_rotation=True)
-            self.translation_transform = RandomTranslation(max_delta=0.01,
+            # Translation only in xy plane
+            self.translation_transform = RandomTranslation(axis=np.array([1, 1, 0]),
+                                                           max_delta=5,
                                                            return_translation=True)
         elif self.local_aug_mode == 0:    # No augmentations
             pass
@@ -137,18 +140,17 @@ class Train6DOFTransform:
     def __call__(self, e, ignore_rot_and_trans=False):
         shift_and_scale = None
         aug_tf = torch.eye(4)
-        if self.normalization_transform is not None:
-            e, shift_and_scale = self.normalization_transform(e)
         if self.transform is not None:
             e = self.transform(e)
-        if ignore_rot_and_trans:
-            return e, shift_and_scale, aug_tf
-        if self.rotation_transform is not None:
-            e, rotation_matrix = self.rotation_transform(e)
-            aug_tf[:3,:3] = torch.tensor(rotation_matrix)
-        if self.translation_transform is not None:
-            e, translation_vector = self.translation_transform(e)
-            aug_tf[:3,-1] = torch.tensor(translation_vector)
+        if not ignore_rot_and_trans:
+            if self.rotation_transform is not None:
+                e, rotation_matrix = self.rotation_transform(e)
+                aug_tf[:3,:3] = torch.tensor(rotation_matrix)
+            if self.translation_transform is not None:
+                e, translation_vector = self.translation_transform(e)
+                aug_tf[:3,-1] = torch.tensor(translation_vector)
+        if self.normalization_transform is not None:
+            e, shift_and_scale = self.normalization_transform(e)
         return e, shift_and_scale, aug_tf
 
 
@@ -229,12 +231,19 @@ class RandomRotation:
 
 
 class RandomTranslation:
-    def __init__(self, max_delta=0.05, return_translation=False):
+    def __init__(self, axis: Optional[np.ndarray] = None, max_delta=0.05, return_translation=False):
+        self.axis = axis  # Axes to randomly translate
+        if self.axis is not None:
+            if self.axis.ndim == 1:
+                self.axis = self.axis.reshape(1, -1)
+            assert self.axis.shape == (1, 3)
+        else:
+            self.axis = np.ones((1, 3))
         self.max_delta = max_delta
         self.return_translation = return_translation
 
     def __call__(self, coords):
-        trans = (self.max_delta * np.random.randn(1, 3)).astype(np.float32)
+        trans = (self.max_delta * self.axis * np.random.randn(1, 3)).astype(np.float32)
         coords = coords + trans
 
         if self.return_translation:

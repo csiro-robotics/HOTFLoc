@@ -16,7 +16,7 @@ from ocnn.octree import Octree, Points
 
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
-from misc.utils import octree_to_points
+from models.octree import octree_to_points
 
 def main():
     no_vis = args.no_vis

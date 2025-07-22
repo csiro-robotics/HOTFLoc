@@ -9,7 +9,7 @@ import CSF
 import submitit
 
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
-from misc.utils import plot_points
+from misc.point_clouds import plot_points
 
 MIN_POINTS = 50
 CSF_RIGIDNESS = 2

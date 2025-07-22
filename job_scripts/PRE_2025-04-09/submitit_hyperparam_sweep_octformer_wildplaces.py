@@ -9,7 +9,8 @@ import submitit
 import nevergrad as ng
 
 from training.trainer import do_train
-from misc.utils import TrainingParams, set_seed
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 
 
 def get_hyperparam_sweep(default_params: TrainingParams):

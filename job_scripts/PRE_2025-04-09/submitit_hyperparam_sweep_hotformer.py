@@ -11,7 +11,8 @@ import nevergrad as ng
 import torch
 
 from training.trainer import do_train
-from misc.utils import TrainingParams, set_seed
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 
 def debug_function(params: TrainingParams = None, *args, **kwargs):
     # Update params with hyperparam sweep

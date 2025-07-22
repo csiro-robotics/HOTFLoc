@@ -15,7 +15,8 @@ import tqdm
 import ocnn
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, set_seed, load_pickle, save_pickle
+from misc.utils import TrainingParams, load_pickle, save_pickle
+from misc.torch_utils import set_seed
 from dataset.dataset_utils import make_eval_dataloader
 from eval.utils import get_query_database_splits
 

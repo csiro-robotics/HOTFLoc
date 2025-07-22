@@ -269,7 +269,7 @@ class PyramidAttnPoolWrapper(nn.Module):
 
     def forward(self, local_feat_dict: Dict[int, Tensor],
                 octree: OctreeT, depth: int = None):
-        pyramid_depths = list(local_feat_dict.keys())
+        pyramid_depths = octree.pyramid_depths
         # Compute attentional pooling for local features of each pyramid level
         token_attn = []
         for j, depth_j in enumerate(pyramid_depths):

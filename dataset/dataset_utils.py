@@ -3,6 +3,7 @@
 import numpy as np
 from typing import List, Sequence, Dict
 import time
+from itertools import repeat
 import torch
 from torch.utils.data import DataLoader
 import MinkowskiEngine as ME
@@ -172,10 +173,10 @@ def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: Traini
         anchor_batch = create_batch(anchor_clouds, quantizer, params)
         positive_batch = create_batch(positive_clouds, quantizer, params)
         # Concatenate point coordinates
-        anchor_xyz = torch.cat(anchor_clouds, 0, dtype=torch.float32)
-        positive_xyz = torch.cat(positive_clouds, 0, dtype=torch.float32)
+        anchor_xyz = torch.cat(anchor_clouds, dim=0)
+        positive_xyz = torch.cat(positive_clouds, dim=0)
         # Stack transforms
-        trans_batch = torch.stack(rel_transforms, 0, dtype=torch.float32)
+        trans_batch = torch.stack(rel_transforms, dim=0)
 
         # Returns:
         # Anc and pos point clouds, anc and pos batch, relative transformations, length per batch, normalization shift and scale params
@@ -199,7 +200,7 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
     """
     datasets = make_datasets(params, local=local, validation=validation)
 
-    dataloders = {}
+    dataloaders = {}
     train_sampler = BatchSampler(datasets['global_train'], batch_size=params.batch_size,
                                  batch_size_limit=params.batch_size_limit,
                                  batch_expansion_rate=params.batch_expansion_rate)
@@ -207,31 +208,35 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
     # Collate function collates items into a batch and applies a 'set transform' on the entire batch
     quantizer = params.model_params.quantizer
     train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
-    dataloders['global_train'] = DataLoader(datasets['global_train'], batch_sampler=train_sampler,
+    dataloaders['global_train'] = DataLoader(datasets['global_train'], batch_sampler=train_sampler,
                                      collate_fn=train_collate_fn, num_workers=params.num_workers,
                                      pin_memory=True)
-    if validation and 'val' in datasets:
-        val_collate_fn = make_collate_fn(datasets['val'], quantizer, params)
-        val_sampler = BatchSampler(datasets['val'], batch_size=params.val_batch_size)
+    if validation and 'global_val' in datasets:
+        val_collate_fn = make_collate_fn(datasets['global_val'], quantizer, params)
+        val_sampler = BatchSampler(datasets['global_val'], batch_size=params.val_batch_size)
         # Collate function collates items into a batch and applies a 'set transform' on the entire batch
         # Currently validation dataset has empty set_transform function, but it may change in the future
-        dataloders['val'] = DataLoader(datasets['val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
+        dataloaders['global_val'] = DataLoader(datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
                                        num_workers=params.num_workers, pin_memory=True)
 
     if local:
         train_collate_fn_loc = make_collate_fn_6DOF(datasets['local_train'], quantizer, params)
         train_sampler_loc = BatchSampler6DOF(datasets['local_train'], batch_size=params.local_batch_size)
-        dataloders['local_train'] = DataLoader(datasets['local_train'], batch_sampler=train_sampler_loc, 
-                                               collate_fn=train_collate_fn_loc,
-                                               num_workers=params.num_workers, pin_memory=True)
+        dataloaders['local_train'] = DataLoader(datasets['local_train'], batch_sampler=train_sampler_loc, 
+                                                collate_fn=train_collate_fn_loc,
+                                                num_workers=params.num_workers, pin_memory=True)
         if validation and 'local_val' in datasets:
             val_collate_fn_loc = make_collate_fn_6DOF(datasets['local_val'], quantizer, params)
             val_sampler_loc = BatchSampler6DOF(datasets['local_val'], batch_size=params.local_batch_size)
-            dataloders['local_val'] = DataLoader(datasets['local_val'], batch_sampler=val_sampler_loc,
-                                                 collate_fn=val_collate_fn_loc,
-                                                 num_workers=params.num_workers, pin_memory=True)
+            dataloaders['local_val'] = DataLoader(datasets['local_val'], batch_sampler=val_sampler_loc,
+                                                  collate_fn=val_collate_fn_loc,
+                                                  num_workers=params.num_workers, pin_memory=True)
+    else:  # Endlessly return None
+        dataloaders['local_train'] = repeat(None)
+        if validation:
+            dataloaders['local_val'] = repeat(None)
 
-    return dataloders
+    return dataloaders
 
 
 def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False):

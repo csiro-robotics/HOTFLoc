@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-from dataset.point_clouds import PointCloudLoader
+from misc.point_clouds import PointCloudLoader
 
 
 class PNVPointCloudLoader(PointCloudLoader):

@@ -14,15 +14,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from timm.utils import ModelEmaV3
 from timm.optim.lamb import Lamb
-# import wandb_osh
-# from wandb_osh.hooks import TriggerWandbSyncHook
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
-# wandb_osh.set_log_level("ERROR")
 
-from misc.utils import TrainingParams, get_datetime, set_seed, update_params_from_dict
+from misc.utils import TrainingParams, get_datetime, update_params_from_dict
+from misc.torch_utils import release_cuda, set_seed, to_device
 from models.losses.loss import make_losses, kdloss
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
+from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.octree import OctreeT
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
@@ -303,7 +302,7 @@ class NetworkTrainer:
             for i, batch_idx in enumerate(query_pos_indices):
                 pcl_type = 'query' if i == 0 else 'positive'
                 # Log the point cloud itself (in this case using the quantized point cloud)
-                pcl_orig = feature_maps[0].coordinates_at(batch_index=batch_idx).cpu().numpy()
+                pcl_orig = release_cuda(feature_maps[0].coordinates_at(batch_index=batch_idx), to_numpy=True)
                 pcl_orig_colours = colourise_points_by_height(pcl_orig) * 255.0
                 pcl_orig_combined = np.concatenate([pcl_orig, pcl_orig_colours], axis=1)
                 stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_orig_combined)
@@ -311,7 +310,7 @@ class NetworkTrainer:
                 # Log embedding similarities and colourised point cloud for each layer
                 for j, feats_j in enumerate(feature_maps):
                     pcl_j, feature_map_j = feats_j.coordinates_and_features_at(batch_index=batch_idx)
-                    pcl_j, feature_map_j = pcl_j.cpu().numpy(), feature_map_j.detach().cpu()
+                    pcl_j, feature_map_j = release_cuda(pcl_j, to_numpy=True), release_cuda(feature_map_j)
                     if i == 0:  # currently only logging similarity for one point cloud
                         temp_sim = rowwise_cosine_sim(feature_map_j, feature_map_j)
                         stats['local_token_sim_matrix'][f'layer_{j}'] = wandb.Image(create_heatmap(temp_sim, title=f'Layer {j}'))
@@ -490,7 +489,7 @@ class NetworkTrainer:
                         # Colourise by last layer embeddings if available, else by height
                         if 'local_feats' in feats_and_attn_maps[-1]:
                             local_feats_depth_j = feats_and_attn_maps[block_idx]['local_feats'][depth_j]
-                            local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
+                            local_feats_depth_j_masked = release_cuda(local_feats_depth_j[batch_mask_depth_j], to_numpy=True)
                             assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
                             pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
                                 local_feats_depth_j_masked, mode='pca', return_explained_variance=True
@@ -592,7 +591,7 @@ class NetworkTrainer:
                         # Colourise by last layer embeddings if available, else by height
                         if 'local_feats' in feats_and_attn_maps[depth_j][-1]:
                             local_feats_depth_j = feats_and_attn_maps[depth_j][block_idx]['local_feats']
-                            local_feats_depth_j_masked = local_feats_depth_j[batch_mask_depth_j].cpu().numpy()
+                            local_feats_depth_j_masked = release_cuda(local_feats_depth_j[batch_mask_depth_j], to_numpy=True)
                             assert len(local_feats_depth_j_masked) == len(pcl_depth_j_masked)
                             pcl_depth_j_colours, local_feats_depth_j_variance = colourise_points_by_similarity(
                                 local_feats_depth_j_masked, mode='pca', return_explained_variance=True
@@ -607,40 +606,33 @@ class NetworkTrainer:
 
         if 'octformer' in self.params.model_params.model.lower():
             stats = log_octformer()
-        elif 'hotformerloc' in self.params.model_params.model.lower():
+        elif 'hotformer' in self.params.model_params.model.lower():
             stats = log_hotformer()
         else:
             raise NotImplementedError
         return stats
 
-    def training_step(self, global_iter, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
+    def global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
         assert phase in ['train', 'val']
 
-        batch, positives_mask, negatives_mask = next(global_iter)
+        batch, positives_mask, negatives_mask = global_batch
+        batch = to_device(batch, self.device, non_blocking=True)
 
-        if self.params.verbose:
-            print("[INFO] Batch loaded, begin forward pass", flush=True)
-
-        batch = {e: batch[e].to(self.device, non_blocking=True) for e in batch}
-
-        if phase == 'train':
-            self.model.train()
-        else:
-            self.model.eval()
-
-        self.optimizer.zero_grad()
+        # self.optimizer.zero_grad()
 
         with torch.set_grad_enabled(phase == 'train'):
-            y = self.model(batch)
+            y = self.model(batch, global_only=True)
             stats = self.model.stats.copy() if hasattr(self.model, 'stats') else {}
 
             embeddings = y['global']
             # Log stats related to feats and attn maps
             if 'feats_and_attn_maps' in y:
+                feats_and_attn_maps = y.pop('feats_and_attn_maps')
                 if 'octree' in y:
-                    temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                    temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
                 else:  # minkloc
-                    temp_stats = self.log_feats(y['feats_and_attn_maps'])
+                    temp_stats = self.log_feats(feats_and_attn_maps)
+                del feats_and_attn_maps  # free memory from intermediate feats
                 stats.update(temp_stats)
 
             loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
@@ -650,7 +642,7 @@ class NetworkTrainer:
                 # Compute MESA loss
                 if mesa > 0.0:
                     with torch.no_grad():
-                        ema_output = self.model_ema.module(batch)['global'].detach()
+                        ema_output = self.model_ema.module(batch, global_only=True)['global'].detach()
                     kd = kdloss(embeddings, ema_output)
                     mesa_loss = mesa * kd
                     loss += mesa_loss
@@ -665,17 +657,18 @@ class NetworkTrainer:
 
                 stats['loss_total'] = loss.item()
                 loss.backward()
-                self.optimizer.step()
-                
-                if self.model_ema is not None:
-                    self.model_ema.update(self.model)
+                # self.optimizer.step()
+
+                # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step 
+                # if self.model_ema is not None:
+                #     self.model_ema.update(self.model)
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
-        return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
+        return stats, release_cuda(embeddings[:num_embeddings_logged])  # return first n embeddings for debugging
 
 
-    def multistaged_training_step(self, global_iter, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
+    def multistaged_global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
         # Training step using multistaged backpropagation algorithm as per:
         # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
         # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
@@ -684,15 +677,8 @@ class NetworkTrainer:
         if qkv_loss_fn is not None:
             raise NotImplementedError('QKV Losses not implemented for multistage backprop, set `batch_split_size` to 0')
         assert phase in ['train', 'val']
-        batch, positives_mask, negatives_mask = next(global_iter)
-        
-        if self.params.verbose:
-            print("[INFO] Batch loaded, begin forward pass", flush=True)
 
-        if phase == 'train':
-            self.model.train()
-        else:
-            self.model.eval()
+        batch, positives_mask, negatives_mask = global_batch
 
         # Stage 1 - calculate descriptors of each batch element (with gradient turned off)
         # In training phase network is in the train mode to update BatchNorm stats
@@ -701,20 +687,23 @@ class NetworkTrainer:
         stats = {}
         with torch.set_grad_enabled(False):
             for i, minibatch in enumerate(batch):
-                minibatch = {e: minibatch[e].to(self.device, non_blocking=True) for e in minibatch}
-                y = self.model(minibatch)
+                minibatch = to_device(minibatch, self.device, non_blocking=True)
+                y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
                 # Log stats related to feats and attn maps (only for first minibatch)
                 if i == 0 and 'feats_and_attn_maps' in y:
+                    feats_and_attn_maps = y.pop('feats_and_attn_maps')
                     if 'octree' in y:
-                        temp_stats = self.log_feats_and_attn_maps(y['feats_and_attn_maps'], y['octree'])
+                        temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
                     else:  # minkloc
-                        temp_stats = self.log_feats(y['feats_and_attn_maps'])
+                        temp_stats = self.log_feats(feats_and_attn_maps)
+                    del feats_and_attn_maps  # free memory from intermediate feats
                     stats.update(temp_stats)
                 # Compute MESA embeddings
                 if mesa > 0.0:
-                    ema_output = self.model_ema.module(minibatch)['global'].detach()
+                    ema_output = self.model_ema.module(minibatch, global_only=True)['global'].detach()
                     embeddings_ema_l.append(ema_output)
+            del minibatch
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
@@ -755,12 +744,12 @@ class NetworkTrainer:
         # Stage 3 - recompute descriptors with gradient enabled and compute the gradient of the loss w.r.t.
         # network parameters using cached gradient of the loss w.r.t embeddings
         if phase == 'train':
-            self.optimizer.zero_grad()
+            # self.optimizer.zero_grad()
             i = 0
             with torch.set_grad_enabled(True):
                 for minibatch in batch:
-                    minibatch = {e: minibatch[e].to(self.device, non_blocking=True) for e in minibatch}
-                    y = self.model(minibatch)
+                    minibatch = to_device(minibatch, self.device, non_blocking=True)
+                    y = self.model(minibatch, global_only=True)
                     embeddings = y['global']
                     minibatch_size = len(embeddings)
                     # Compute gradients of network params w.r.t. the loss using the chain rule (using the
@@ -768,29 +757,48 @@ class NetworkTrainer:
                     # By default gradients are accumulated
                     embeddings.backward(gradient=embeddings_grad[i: i+minibatch_size])
                     i += minibatch_size
+                del minibatch
 
-                self.optimizer.step()
-                
-                if self.model_ema is not None:
-                    self.model_ema.update(self.model)
+                # self.optimizer.step()
+
+                # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step
+                # if self.model_ema is not None:
+                #     self.model_ema.update(self.model)
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
         if embeddings is not None:
-            return stats, embeddings[:num_embeddings_logged].detach().cpu()  # return first n embeddings for debugging
+            return stats, release_cuda(embeddings[:num_embeddings_logged])  # return first n embeddings for debugging
         else:
             return stats, embeddings
 
+    def local_training_step(self, local_batch, phase, local_loss_fn):
+        assert phase in ['train', 'val']
+
+        local_batch = to_device(local_batch, self.device, non_blocking=True)
+
+        with torch.set_grad_enabled(phase == 'train'):
+            output_dict = self.model(local_batch)
+            loc_loss, loc_stats = local_loss_fn(output_dict, local_batch)
+            stats = self.tensors_to_numbers(loc_stats)
+
+        torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
+        return stats
+
     def do_train(self):        
         # set up dataloaders
-        dataloaders = make_dataloaders(self.params, validation=self.params.validation)
+        dataloaders = make_dataloaders(
+            self.params,
+            local=self.params.enable_local,
+            validation=self.params.validation
+        )
 
-        loss_fn, qkv_loss_fn = make_losses(self.params)
+        global_loss_fn, qkv_loss_fn, local_loss_fn = make_losses(self.params)
 
         if self.params.batch_split_size is None or self.params.batch_split_size == 0:
-            train_step_fn = self.training_step
+            global_train_step_fn = self.global_training_step
         else:
             # Multi-staged training approach with large batch split into multiple smaller chunks with batch_split_size elems
-            train_step_fn = self.multistaged_training_step
+            global_train_step_fn = self.multistaged_global_training_step
 
         ########################################################################
         # Initialize Weights&Biases logging service
@@ -808,18 +816,17 @@ class NetworkTrainer:
             wandb.watch(self.model, log='all', log_freq=self.params.embeddings_log_freq)
 
         ########################################################################
-        #
+        # Training Loop
         ########################################################################
 
-        # Training statistics
-        stats = {'train': [], 'eval': []}
-
-        if 'global_val' in dataloaders:
+        if self.params.validation:
             # Validation phase
             phases = ['train', 'val']
-            stats['val'] = []
         else:
             phases = ['train']
+
+        # Training statistics
+        stats = {e: [] for e in phases}
 
         for epoch in tqdm.tqdm(range(self.start_epoch, self.params.epochs + 1),
                                initial=self.start_epoch-1, total=self.params.epochs):
@@ -837,72 +844,69 @@ class NetworkTrainer:
                 epoch_embeddings = None
                 epoch_stage_gradient_magnitudes = None
 
+                # # TODO: Check if local dataloader is available, and add it to the iterable
                 if phase == 'train':
-                    global_iter = iter(dataloaders['global_train'])
+                    self.model.train()
+                    global_phase = 'global_train'
+                    local_phase = 'local_train'
+                elif phase == 'val':
+                    self.model.eval()
+                    global_phase = 'global_val'
+                    local_phase = 'local_val'
                 else:
-                    global_iter = None if dataloaders['global_val'] is None else iter(dataloaders['global_val'])
+                    raise NotImplementedError()
 
-                while True:
+                for global_batch, local_batch in zip(dataloaders[global_phase], dataloaders[local_phase]):
                     self.count_batches += 1
                     batch_stats = {}
                     if self.params.debug and self.count_batches > 2:
                         break
                     
                     if self.params.verbose:
-                        print(f"[INFO] Processing {phase} batch: {self.count_batches}",
-                            flush=True)
+                        print(f"[INFO] Processing {phase} batch: {self.count_batches}", flush=True)
 
-                    try:
-                        temp_stats, temp_embeddings = train_step_fn(
-                            global_iter, phase, loss_fn, qkv_loss_fn,
-                            self.params.num_embeddings_logged, mesa
-                        )
-                        batch_stats['global'] = temp_stats
+                    temp_global_stats, temp_global_embeddings = global_train_step_fn(
+                        global_batch, phase, global_loss_fn, qkv_loss_fn,
+                        self.params.num_embeddings_logged, mesa
+                    )
+                    batch_stats['global'] = temp_global_stats
 
-                    except StopIteration:
-                        # Terminate the epoch when one of dataloders is exhausted
-                        break
+                    # TODO: Compute local losses
+                    temp_local_stats = self.local_training_step(
+                        local_batch, phase, local_loss_fn,
+                    )
+                    batch_stats['local'] = temp_local_stats
+
+                    # TODO: Move optimizer.step to after global and local losses are computed and .backward called for each
+                    if phase == 'train':
+                        # Accumulate local losses and step optimizer
+                        loc_loss.backward()
+                        self.optimizer.step()
+                        # TODO: Verify ema update is fine here
+                        if self.model_ema is not None:
+                            self.model_ema.update(self.model)
 
                     running_stats.append(batch_stats)
                     if (epoch % self.params.embeddings_log_freq == 0
                         and self.count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
-                        epoch_embeddings = temp_embeddings
+                        epoch_embeddings = temp_global_embeddings
 
                 # Log average gradients per stage
-                if phase == 'train' and not isinstance(self.model, HOTFormerLoc):
+                if phase == 'train' and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc)):
                     # FIXME: currently broken for HOTFormerLoc
                     epoch_stage_gradient_magnitudes = self.log_stage_gradient_magnitudes(self.params.load_octree)
 
                 # Compute mean stats for the phase
-                epoch_stats = {}
-                for substep in running_stats[0]:
-                    epoch_stats[substep] = {}
-                    for key in running_stats[0][substep]:
-                        try:
-                            temp = [e[substep][key] for e in running_stats]
-                        except KeyError:  # special case when value is only logged once during training
-                            epoch_stats[substep][key] = running_stats[0][substep][key]
-                        else:
-                            if type(temp[0]) is dict:
-                                epoch_stats[substep][key] = {key: np.mean([e[key] for e in temp]) for key in temp[0]}
-                            elif type(temp[0]) is np.ndarray:
-                                # Mean value per vector element
-                                epoch_stats[substep][key] = np.mean(np.stack(temp), axis=0)
-                            else:
-                                epoch_stats[substep][key] = np.mean(temp)
+                epoch_stats = self.compute_mean_epoch_stats(running_stats)
 
                 stats[phase].append(epoch_stats)
+                # TODO: Ensure local stats are printed and logged to wandb
                 self.print_stats(phase, epoch_stats)
 
                 # Log metrics for wandb
                 metrics[phase].update(self.get_wandb_metrics(epoch_stats))
                 if epoch_stage_gradient_magnitudes is not None:
                     metrics[phase]['avg_stage_grad_mags'] = epoch_stage_gradient_magnitudes
-
-                # TODO: currently broken, need to debug why wandb isn't logging correctly
-                # if epoch_embeddings is not None:
-                #     embeddings_dataframe = pd.DataFrame(epoch_embeddings, columns=[f'D{i}' for i in range(256)])
-                #     metrics['embeddings'] = wandb.Table(dataframe=embeddings_dataframe)
 
             # ******* FINALIZE THE EPOCH *******
             self.curr_epoch += 1  # increment the epoch counter here to ensure next ckpt saves with correct epoch count
@@ -934,7 +938,6 @@ class NetworkTrainer:
 
             if not self.params.debug:
                 wandb.log(metrics)
-                # trigger_sync()
 
             if self.params.batch_expansion_th is not None:
                 # Dynamic batch size expansion based on number of non-zero triplets
@@ -953,9 +956,9 @@ class NetworkTrainer:
 
         # Evaluate the final
         # PointNetVLAD datasets evaluation protocol
-        stats = evaluate(self.model, self.device, self.params, log=False,
-                         show_progress=self.params.verbose)
-        print_eval_stats(stats)
+        final_stats = evaluate(self.model, self.device, self.params, log=False,
+                               show_progress=self.params.verbose)
+        print_eval_stats(final_stats)
 
         print('.')
 
@@ -966,11 +969,31 @@ class NetworkTrainer:
             model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
             prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
-            pnv_write_eval_stats(f"pnv_{self.params.dataset_name}_results.txt", prefix, stats)        
+            pnv_write_eval_stats(f"pnv_{self.params.dataset_name}_results.txt", prefix, final_stats)        
             # trigger_sync()
 
         # Return optimization value (to minimize)
         return (1 - self.best_avg_AR_1/100.0)
+
+    @staticmethod
+    def compute_mean_epoch_stats(running_stats):
+        epoch_stats = {}
+        for substep in running_stats[0]:
+            epoch_stats[substep] = {}
+            for key in running_stats[0][substep]:
+                try:
+                    temp = [e[substep][key] for e in running_stats]
+                except KeyError:  # special case when value is only logged once during training
+                    epoch_stats[substep][key] = running_stats[0][substep][key]
+                else:
+                    if type(temp[0]) is dict:
+                        epoch_stats[substep][key] = {key: np.mean([e[key] for e in temp]) for key in temp[0]}
+                    elif type(temp[0]) is np.ndarray:
+                        # Mean value per vector element
+                        epoch_stats[substep][key] = np.mean(np.stack(temp), axis=0)
+                    else:
+                        epoch_stats[substep][key] = np.mean(temp)
+        return epoch_stats
 
     def get_wandb_metrics(self, epoch_stats):
         metrics = {}

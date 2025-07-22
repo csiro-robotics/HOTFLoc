@@ -21,7 +21,7 @@ def concat_and_pad_rt(
     padding), and C = channel size.
     """
     if pyramid_depths is None:
-        pyramid_depths = list(relay_token_dict.keys())
+        pyramid_depths = octree.pyramid_depths
     # Split relay tokens into batches for each depth
     relay_tokens_split_per_depth = []
     for depth_j in pyramid_depths:
@@ -50,7 +50,7 @@ def unpad_and_split_rt(
     are the corresponding relay tokens in a (M, C) tensor.
     """
     if pyramid_depths is None:
-        pyramid_depths = list(relay_token_dict.keys())
+        pyramid_depths = octree.pyramid_depths
     # Remove padding
     relay_tokens_combined_list = unpad_sequence(
         padded_pyramid_relay_tokens, octree.batch_num_relay_tokens_combined,

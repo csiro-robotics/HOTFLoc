@@ -14,14 +14,15 @@ import random
 from tqdm import tqdm
 import ocnn
 from ocnn.octree import Octree, Points
-from models.octree import OctreeT
+from models.octree import OctreeT, rescale_octree_points
 from sklearn.manifold import TSNE
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
 import matplotlib.colors as cm
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, set_seed, rescale_octree_points
+from misc.utils import TrainingParams
+from misc.torch_utils import set_seed
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize

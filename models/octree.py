@@ -8,15 +8,39 @@
 # by Ethan Griffiths.
 # --------------------------------------------------------
 
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Union
 
 import torch
 import torch.nn.functional as F
 import ocnn
 from ocnn.octree import Octree
 
-from misc.utils import rescale_octree_points
 
+def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
+    """ 
+    Rescale points stored in octree to original scale.
+
+    Args:
+        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
+        depth (int): Octree depth used to rescale values
+    """
+    # rescale points to [-1, 1] since octree points are in range [0, 2^d]
+    scale = 2 ** (1 - depth)
+    points_scaled = points * scale - 1.0
+    return points_scaled
+
+def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
+    """
+    Converts averaged points in the octree to a point cloud.
+
+    Args:
+        octree (Octree): The octree to convert to a point cloud.
+        depth (int): Octree depth to query points from.
+        NOTE: CURRENTLY ONLY THE FINAL DEPTH CONTAINS POINTS
+    """
+    points = octree.points[depth]
+    points_scaled = rescale_octree_points(points, depth)
+    return points_scaled
 
 def pad_sequence(batch_list, fill_value: int = 0) -> torch.Tensor:
     """
