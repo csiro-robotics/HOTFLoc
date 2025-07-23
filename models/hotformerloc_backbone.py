@@ -10,16 +10,13 @@
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-from torch.nn.utils.rnn import unpad_sequence
-import ocnn
 
 from ocnn.octree import Octree
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Dict
 from torch.utils.checkpoint import checkpoint
-from misc.torch_utils import debug_time_func
-from models.octree import OctreeT, pad_sequence
+from models.octree import OctreeT
 from models.layers.octformer_layers import (
-    MLP, CPE, RPE, ADaPE, OctreeDropPath
+    MLP, CPE, ADaPE, OctreeDropPath
 )
 from models.octformer_backbone import (
     PatchEmbed, Downsample, OctreeAttention, OctFormerStage, OctFormerBlock
@@ -72,20 +69,18 @@ class RTAttention(torch.nn.Module):
         # qkv_std_loss = torch.mean(F.relu(1 - qkv_std))
 
         qkv = qkv.reshape(B, -1, 3, H, C // H).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]      # (B, H, K, C')
+        q, k, v = qkv[0], qkv[1], qkv[2]  # (B, H, K, C')
 
-        if torch.__version__ >= torch.torch_version.TorchVersion(2.0):
-            #### EFFICIENT IMPLEMENTATION
+        if (
+            torch.__version__ >= torch.torch_version.TorchVersion(2.0)
+            and not self.return_attn_maps
+        ):
+            #### EFFICIENT IMPLEMENTATION ####
             attn_mask = attn_mask.to(q.dtype).unsqueeze(1)
             rt = F.scaled_dot_product_attention(
                 query=q, key=k, value=v, attn_mask=attn_mask,
             ).transpose(1, 2).reshape(B, -1, C)  # (B, K, C)
             ####
-            if self.return_attn_maps:
-                q_temp = q * self.scale
-                attn_map = q_temp @ k.transpose(-2, -1)
-                attn_map = attn_map + attn_mask
-                # attn_map = self.softmax(attn_map)
         else:
             #### ORIGINAL IMPLEMENTATION ####
             q_temp = q * self.scale
