@@ -1,0 +1,60 @@
+[MODEL]
+model = HOTFormerMetricLoc-ch192-pyrmd-2lvls
+channels = 96,192,96
+num_blocks = 4,10
+num_heads = 6,12,6
+num_pyramid_levels = 2
+num_octf_levels = 1
+ct_size = 1
+ct_propagation = False
+rt_init_type = max_pool
+ADaPE_mode = cov
+patch_size = 64
+input_features = P
+downsample_input_embeddings = True
+num_input_downsamples = 2
+disable_RPE = False
+grad_checkpoint = True
+conv_norm = layernorm
+feature_size = 256
+output_dim = 256
+pooling = PyramidAttnPoolMixer
+k_pooled_tokens = 48,16
+
+coordinates = cartesian
+normalize_embeddings = True
+return_feats_and_attn_maps = False
+
+coarse_idx = -1
+fine_idx = -3
+
+[GEOTRANSFORMER]
+input_dim = 96
+hidden_dim = 128
+output_dim = 256
+num_heads = 4
+blocks = self,cross,self,cross,self,cross
+sigma_d = 4.8
+sigma_a = 15
+angle_k = 3
+activation_fn = ReLU
+reduction_a = max
+                    
+[COARSE MATCHING]
+num_targets = 128
+overlap_threshold = 0.1
+num_correspondences = 256
+dual_normalization = True
+ground_truth_matching_radius = 0.6
+num_points_in_patch = 128
+
+[FINE MATCHING]
+topk = 2
+acceptance_radius = 0.6
+mutual = True
+confidence_threshold = 0.05
+use_dustbin = False
+use_global_score = False
+correspondence_threshold = 3
+num_refinement_steps = 5
+num_sinkhorn_iterations = 100

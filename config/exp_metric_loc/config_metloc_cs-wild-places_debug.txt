@@ -5,9 +5,12 @@ dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.40m
 num_workers = 0
 batch_size = 64
 batch_split_size = 32
-val_batch_size = 64
-save_freq = 10
-eval_freq = 10
+val_batch_size = 32
+#prioritise_cross_source = True
+only_ground_aerial = True
+save_freq = 100
+eval_freq = 1
+wandb = False
 
 lr = 8e-4
 epochs = 100
@@ -27,13 +30,33 @@ mesa_start_ratio = 0.15
 
 dataset_name = CSWildPlaces
 skip_same_run = True
-train_file = /scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos10m_neg50m_eval30m/training_queries_CSWildPlaces_baseline_v3.pickle
-val_file = /scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos10m_neg50m_eval30m/test_queries_CSWildPlaces_v3.pickle
+train_file = training_queries_CSWildPlaces_baseline_v3.pickle
+val_file = test_queries_CSWildPlaces_v3.pickle
 #train_file = /scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos10m_eval30m_SMALL_DEBUG_SET/training_queries_CSWildPlaces_baseline_v3.pickle
 #val_file = /scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos10m_eval30m_SMALL_DEBUG_SET/test_queries_CSWildPlaces_v3.pickle
 validation = False
 
 [LOCAL]
 enable_local = True
-local_batch_size = 4
+local_batch_size = 8
 local_aug_mode = 1
+icp = True
+weight_coarse_loss = 1.0
+weight_fine_loss = 1.0
+
+acceptance_overlap = 0.0
+acceptance_radius = 1.0
+inlier_ratio_threshold = 0.05
+rre_threshold = 5.0
+rte_threshold = 2.0
+
+[COARSE LOSS]
+positive_margin = 0.1
+negative_margin = 1.4
+positive_optimal = 0.1
+negative_optimal = 1.4
+log_scale = 40
+positive_overlap = 0.1
+
+[FINE LOSS]
+positive_radius = 0.6
