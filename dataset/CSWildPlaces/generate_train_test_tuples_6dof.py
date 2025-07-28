@@ -39,7 +39,8 @@ random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 MARKER_SIZES = {'aerial':4, 'ground':8}
 
-VAL_SPLITS = ['Karawatha', 'Venman']   # splits to use for validation during training
+VAL_FOLDERS = ['2021_06_22_K-01_ground_sample0.5s', '2021_06_21_K-02_ground_sample0.5s',
+               '2024_07_10_aerial_sample10m']   # splits to use for validation during training
 BASELINE_SPLITS = ['Karawatha', 'Venman']  # splits in baseline train set
 
 ## NEW TEST REGIONS WHICH COVER THE ENTIRE SPLITS
@@ -181,12 +182,6 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, i
         # ICP pose refinement
         positives_poses = {}
 
-        ########################################################################
-        # NOTE: NEED TO RETHINK THE LOGIC OF THIS CAREFULLY, DOES IT MAKE SENSE
-        #       TO REMOVE NEGATIVES TOO? AND DOES THIS LOGIC WORK CORRECTLY FOR
-        #       THE VALIDATION SET, OR DOES IT NOT COMPARE GROUND/AERIAL PAIRS?
-        #       WOULD IT BE BETTER TO HANDLE THIS LOGIC IN THE BATCH SAMPLER?
-        ########################################################################
         # remove queries with no ground positives, or remove all aerial queries if creating test set
         if (test_set and 'aerial' in query) or (
             args.query_requires_ground
@@ -196,10 +191,10 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, i
             )
         ):
             num_queries_skipped[split] += 1
-            # Removing positives will prevent it being sampled as query
-            positives = np.array([])
-            negatives = np.array([])
-            non_negatives = np.array([])
+            # NOTE: Batch sampler now handles removing aerial queries
+            positives = np.setdiff1d(positives, ind_aerial)
+            negatives = np.setdiff1d(negatives, ind_aerial)
+            non_negatives = np.union1d(non_negatives, ind_aerial)
         # remove ground positives/negatives from test set
         elif test_set and 'ground' in query: 
             positives = np.setdiff1d(positives, ind_ground)
@@ -449,7 +444,7 @@ def main():
                                               GROUND_EXCLUDE_DICT[split],
                                               run_type, test_queries_tree)
                 if row_split == 'test':
-                    if split in VAL_SPLITS:  # test queries only consider certain splits, for consistency with other models (as minkloc3dv2 is the only to validate using the test query tuple)
+                    if folder in VAL_FOLDERS:  # test queries only consider certain splits, for consistency with other models (as minkloc3dv2 is the only to validate using the test query tuple)
                         df_test.loc[len(df_test)] = row
                     # test_tuple = EvaluationTuple(  # Can upgrade to EvaluationTuple class in future
                     #     timestamp=get_timestamp_from_file(row['file']),
@@ -476,7 +471,7 @@ def main():
                     all_colours[split].append([0,0,1])
                     
                 if run_type == 'aerial':    # all aerial submaps form database
-                    if split in VAL_SPLITS:
+                    if folder in VAL_FOLDERS:
                         df_test.loc[len(df_test)] = row
                     df_database.loc[len(df_database)] = row
                     # database_tuple = EvaluationTuple(  # Can upgrade to EvaluationTuple class in future
@@ -591,6 +586,9 @@ if __name__ == '__main__':
     parser.add_argument('--viz', default = False, action = 'store_true', 
                         help = 'Enable visualisations of train/test splits')
     args = parser.parse_args()
+
+    if args.query_requires_ground:
+        raise NotImplementedError("Currently disabled due to poor implementation, and is now handled in the batch sampler")
 
     if args.query_requires_ground and args.ground_aerial_positives_only:
         print("[WARNING] --ground_aerial_positives_only will supersede --query_requires_ground, thus the latter will have no effect")
