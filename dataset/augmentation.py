@@ -171,7 +171,7 @@ class Val6DOFTransform:
                                                      zero_mean=self.zero_mean,
                                                      return_shift_and_scale=True)
 
-    def __call__(self, e):
+    def __call__(self, e, ignore_rot_and_trans=False):
         shift_and_scale = None
         aug_tf = torch.eye(4)
         if self.normalization_transform is not None:
