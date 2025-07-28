@@ -43,8 +43,7 @@ def make_losses(params: TrainingParams):
         qkv_loss_fn = None
 
     local_loss_fn = None
-    if params.enable_local:
-        # TODO: Configure params
+    if params.local.enable_local:
         local_loss_fn = OverallLoss(params)
 
     return global_loss_fn, qkv_loss_fn, local_loss_fn

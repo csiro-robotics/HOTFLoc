@@ -9,55 +9,18 @@
 # --------------------------------------------------------
 
 from typing import Optional, List, Union
+import logging
 
-import torch
-import torch.nn.functional as F
 import ocnn
 from ocnn.octree import Octree
+from ocnn.octree.points import Points
+from ocnn.octree.shuffled_key import xyz2key
+from ocnn.utils import scatter_add
+import torch
+import torch.nn.functional as F
+from torch.nn.utils.rnn import unpad_sequence
 
-
-def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
-    """ 
-    Rescale points stored in octree to original scale.
-
-    Args:
-        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
-        depth (int): Octree depth used to rescale values
-    """
-    # rescale points to [-1, 1] since octree points are in range [0, 2^d]
-    scale = 2 ** (1 - depth)
-    points_scaled = points * scale - 1.0
-    return points_scaled
-
-def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
-    """
-    Converts averaged points in the octree to a point cloud.
-
-    Args:
-        octree (Octree): The octree to convert to a point cloud.
-        depth (int): Octree depth to query points from.
-        NOTE: CURRENTLY ONLY THE FINAL DEPTH CONTAINS POINTS
-    """
-    points = octree.points[depth]
-    points_scaled = rescale_octree_points(points, depth)
-    return points_scaled
-
-def pad_sequence(batch_list, fill_value: int = 0) -> torch.Tensor:
-    """
-    Collate list of different size tensors into a batch via padding. I found
-    this implementation faster than torch.nn.utils.rnn.pad_sequence().
-    """
-    data_padded_list = []
-    max_size = max([row.size(0) for row in batch_list])
-    for row in batch_list:
-        data_padded_list.append(
-            F.pad(
-                row, pad=(0, 0, 0, max_size - row.size(0)), value=fill_value
-            )
-        )
-    data_padded = torch.stack(data_padded_list)
-    return data_padded
-
+from dataset.coordinate_utils import CoordinateSystem
 
 class OctreeT(Octree):
     """
@@ -384,6 +347,49 @@ class OctreeT(Octree):
             data = data.view(-1, self.dilation,
                              self.patch_size, C).transpose(1, 2).reshape(-1, C)
         return self.patch_reverse(data, depth)
+
+    def split_and_pad_data(self, data: torch.Tensor, depth: int,
+                           fill_value: float = 0.0, return_mask=False):
+        """
+        Convert octree data from concat format to stacked (and padded) format.
+
+        Args:
+            data: Octree data, which must have shape (M, C)
+            depth: Octree depth of data
+            fill_value: Value to pad tensor with (defaults to zero-padding)
+            return_mask: Return a mask for the data to filter out padding
+
+        Returns:
+            Padded octree data of shape (B, N, C), where N is the size of the largest batch element,
+            and (optionally) corresponding boolean mask for padding of shape (B, N)
+            (True is ignored, False is preserved).
+        """
+        batch_lengths = self.batch_nnum_nempty[depth].tolist()
+        data_split = data.split(batch_lengths)
+        data_padded = pad_sequence(data_split, fill_value=fill_value)
+        if return_mask:
+            batch_id_split = self.batch_id(depth, self.nempty)[:, None].split(batch_lengths)
+            batch_id_padded = pad_sequence(batch_id_split, fill_value=self.batch_size).squeeze(dim=-1)
+            padding_mask = batch_id_padded != torch.arange(self.batch_size, device=self.device)[:, None]
+            return data_padded, padding_mask
+        return data_padded
+
+    def unpad_and_concat_data(self, data_padded: torch.Tensor, depth: int):
+        """
+        Convert split and padded octree data back to concat form.
+
+        Args:
+            data_padded: Padded octree data, which must have shape (B, N, C)
+            depth: Octree depth of data
+
+        Returns:
+            Octree data of shape (M, C)
+        """
+        batch_lengths = self.batch_nnum_nempty[depth]
+        data_split = unpad_sequence(data_padded, batch_lengths, batch_first=True)
+        data = torch.concat(data_split, dim=0)
+        return data
+        
     
     def to(self, device: Union[torch.device, str], non_blocking: bool = False):
         r""" Moves the octree to a specified device. Adapted from `ocnn.octree`.
@@ -394,8 +400,9 @@ class OctreeT(Octree):
             the copy will be asynchronous with respect to the host. Otherwise,
             the argument has no effect. Default: False.
         """
-        print("[WARNING] .to() is not currently verified for OctreeT, use with"
-              " caution as not all class variables may be transferred correctly.")
+        msg = (".to() is not currently verified for OctreeT, use with caution"
+               " as not all class variables may be transferred correctly.")
+        logging.warning(msg)
         if isinstance(device, str):
             device = torch.device(device)
             
@@ -438,3 +445,116 @@ class OctreeT(Octree):
         octree.dilate_pos = list_to_device(self.dilate_pos)
         octree.window_stats = list_to_device(self.window_stats)
         return octree
+
+
+def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
+    """ 
+    Rescale points stored in octree to original scale.
+
+    Args:
+        points (Tensor): Points in [0, 2^d] range, where d is octree depth.
+        depth (int): Octree depth used to rescale values
+    """
+    # rescale points to [-1, 1] since octree points are in range [0, 2^d]
+    scale = 2 ** (1 - depth)
+    points_scaled = points * scale - 1.0
+    return points_scaled
+
+def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
+    """
+    Converts averaged points in the octree to a point cloud.
+
+    Args:
+        octree (Octree): The octree to convert to a point cloud.
+        depth (int): Octree depth to query points from.
+        NOTE: CURRENTLY ONLY THE FINAL DEPTH CONTAINS POINTS
+    """
+    points = octree.points[depth]
+    points_scaled = rescale_octree_points(points, depth)
+    return points_scaled
+
+def get_octant_centroids_from_points(point_cloud: Points, depth: int, quantizer: Optional[CoordinateSystem]) -> torch.Tensor:
+    """
+    For a given octree depth, determine the 'centre of mass' of each octant.
+    Provides more accurate points than simply taking the centroid of octants.
+    Requires the (normalized) point cloud as input (can have batch_size > 1),
+    as the Octree structure only stores the averaged points from the last
+    Octree depth. Returns the octant centroids in Cartesian coordinates.
+    """
+    
+    # normalize points from [-1, 1] to [0, 2^depth]. #[L:Scale]
+    assert torch.all(torch.abs(point_cloud.points) <= 1.0), "Point cloud must be normalized"
+    scale = 2 ** (depth - 1)
+    points = (point_cloud.points + 1.0) * scale
+
+    # Assign each point to an octant, and compute the centroid of each non empty octant
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+    b = None if point_cloud.batch_size == 1 else point_cloud.batch_id.view(-1)
+    key = xyz2key(x, y, z, b, depth)
+    _, idx, counts = torch.unique(
+        key, sorted=True, return_inverse=True, return_counts=True)
+    points = scatter_add(points, idx, dim=0)  # points is rescaled in [L:Scale]
+    points = points / counts.unsqueeze(1)
+
+    # Undo normalization
+    points = (points / scale) - 1.0
+
+    # Undo cylindrical projection
+    if quantizer is not None:
+        points = quantizer.undo_conversion(points.cpu()).to(device=points.device)
+    
+    return points
+
+def get_octree_points_and_windows(query_octree: OctreeT, depth: int, quantizer: Optional[CoordinateSystem]):
+    """
+    For a given octree depth, returns the octree points, octree points reshaped
+    to windows, and a tensor containing the idx of each window. 
+    """
+    x, y, z, _ = query_octree.xyzb(depth, nempty=True)
+    xyz = torch.stack([x, y, z], dim=1)
+    # Convert octree point coords to original scale
+    points_octree = rescale_octree_points(xyz, depth)
+    # Undo cylindrical projection
+    if quantizer is not None:
+        points_octree = quantizer.undo_conversion(points_octree.cpu()).to(device=points_octree.device)
+    # Create window partitions and get idx
+    points_octree_windows = query_octree.data_to_windows(points_octree, depth, False)
+    windows_idx = torch.zeros(points_octree_windows.shape[:-1],
+                              dtype=torch.int32)
+    num_windows = len(windows_idx)
+    # generate idx of windows
+    idx_values = torch.arange(num_windows, dtype=torch.int32).unsqueeze(-1)
+    windows_idx += idx_values
+    # Reverse patch operation and remove padding
+    windows_idx = windows_idx.reshape(-1)
+    windows_idx = query_octree.patch_reverse(windows_idx, depth)
+    return points_octree, points_octree_windows, windows_idx
+
+def pad_sequence(batch_list, fill_value: float = 0.) -> torch.Tensor:
+    """
+    Collate list of different size tensors into a batch via padding. I found
+    this implementation faster than torch.nn.utils.rnn.pad_sequence().
+
+    Args:
+        batch_list (list[Tensor]): List of tensors of shape (N, *)
+    """
+    data_padded_list = []
+    max_size = max([row.size(0) for row in batch_list])
+    for row in batch_list:
+        data_padded_list.append(
+            F.pad(
+                row, pad=(0, 0, 0, max_size - row.size(0)), value=fill_value
+            )
+        )
+    data_padded = torch.stack(data_padded_list)
+    return data_padded
+
+@torch.no_grad()
+def batch_construct_octree_neigh(batch: dict) -> dict:
+    """
+    Constructs octree neighbours if batch contains octree. Much faster if called
+    after octree is moved to GPU.
+    """
+    if 'octree' in batch:
+        batch['octree'].construct_all_neigh()
+    return batch

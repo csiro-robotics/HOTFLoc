@@ -33,14 +33,14 @@ def test_unnormalize_no_centering():
 def test_unnormalize_negative_scale():
     norm = Normalize(return_shift_and_scale=True)
     dummy_points_norm, shift_and_scale = norm(dummy_points)
-    shift_and_scale = (shift_and_scale[0], -100.)
+    shift_and_scale[3] = -100.
     with pytest.raises(ValueError, match='Invalid scaling factor'):
         norm.unnormalize(dummy_points_norm, shift_and_scale)
 
 def test_unnormalize_zero_scale():
     norm = Normalize(return_shift_and_scale=True)
     dummy_points_norm, shift_and_scale = norm(dummy_points)
-    shift_and_scale = (shift_and_scale[0], 0.)
+    shift_and_scale[3] = 0.
     with pytest.raises(ValueError, match='Invalid scaling factor'):
         norm.unnormalize(dummy_points_norm, shift_and_scale)
 

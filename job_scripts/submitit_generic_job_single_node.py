@@ -33,11 +33,13 @@ if __name__ == "__main__":
     parser.add_argument('--job_days', type=float, default=7.0,
                         help='Number of days to request a job for. Accepts decimal values, min 2 hours')
     parser.add_argument('--job_cpus', type=int, default=4,
-                        help='Number of cpus requested per gpu')
+                        help='Number of cpus (cores) requested per gpu')
     parser.add_argument('--job_mem', type=str, default='200gb',
                         help='Memory requested per job, 280gb to prevent 2 jobs entering the same node (and causing shm overflow)')
     parser.add_argument('--job_max_num_timeouts', type=int, default=5,
                         help='Max number of times to resubmit job.')
+    parser.add_argument('--job_omp_num_threads', type=int, default=None,
+                        help='Max number of times to number of OMP threads to request (defaults to num cpus)')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode, submit jobs on local device')
     parser.add_argument('--verbose', action='store_true',
@@ -52,6 +54,9 @@ if __name__ == "__main__":
     print('CPUs (per node) requested: {}'.format(args.job_cpus))
     print('Mem requested: {}'.format(args.job_mem))
     print('Max num timeouts: {}'.format(args.job_max_num_timeouts))
+    if args.job_omp_num_threads is None:
+        args.job_omp_num_threads = args.job_cpus
+    print('OMP num threads: {}'.format(args.job_omp_num_threads))
     print('Debug: {}'.format(args.debug))
     print('Verbose: {}'.format(args.verbose))
 
@@ -59,6 +64,7 @@ if __name__ == "__main__":
     job_config['timeout_min'] = round(args.job_days*24*60)
     job_config['cpus_per_task'] = args.job_cpus
     job_config['slurm_mem'] = args.job_mem
+    job_config['slurm_setup'] = [f"export OMP_NUM_THREADS={args.job_omp_num_threads}"]
     
     # Seed RNG
     set_seed()

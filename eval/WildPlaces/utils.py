@@ -48,7 +48,7 @@ def compute_embedding(model, pc, device, params: TrainingParams):
         batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
 
         # Compute global descriptor
-        y = model(batch)
+        y = model(batch, global_only=True)
         embedding = y['global'].detach().cpu().numpy()
 
     return embedding

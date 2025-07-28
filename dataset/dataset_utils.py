@@ -1,14 +1,16 @@
 # Warsaw University of Technology
 
-import numpy as np
-from typing import List, Sequence, Dict
 import time
+import logging
+from typing import List, Sequence, Dict
 from itertools import repeat
+
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
-import MinkowskiEngine as ME
-from sklearn.neighbors import KDTree
 import ocnn
+import MinkowskiEngine as ME
+from torch.utils.data import DataLoader
+from sklearn.neighbors import KDTree
 from ocnn.octree import Octree, Points
 
 from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset
@@ -31,7 +33,9 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
         params.dataset_folder, params.dataset_name, params.train_file, transform=train_transform,
         set_transform=train_set_transform, load_octree=params.load_octree,
         octree_depth=params.octree_depth, full_depth=params.full_depth,
-        coordinates=params.model_params.coordinates
+        coordinates=params.model_params.coordinates,
+        is_cross_source_dataset=params.is_cross_source_dataset,
+        prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
     )
     if validation:
         val_transform = ValTransform(
@@ -41,18 +45,22 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
         datasets['global_val'] = TrainingDataset(
             params.dataset_folder, params.dataset_name, params.val_file, transform=val_transform,
             load_octree=params.load_octree, octree_depth=params.octree_depth,
-            full_depth=params.full_depth, coordinates=params.model_params.coordinates
+            full_depth=params.full_depth, coordinates=params.model_params.coordinates,
+            is_cross_source_dataset=params.is_cross_source_dataset,
+            prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
         )
     if local:
         local_train_transform = Train6DOFTransform(
-            params.local_aug_mode, normalize_points=params.normalize_points,
+            params.local.aug_mode, normalize_points=params.normalize_points,
             scale_factor=params.scale_factor, unit_sphere_norm=params.unit_sphere_norm,
             zero_mean=params.zero_mean, random_rot_theta=params.random_rot_theta
         )
         datasets['local_train'] = Training6DOFDataset(
             params.dataset_folder, params.dataset_name, params.train_file, local_transform=local_train_transform,
-            load_octree=params.load_octree, octree_depth=params.octree_depth,
-            full_depth=params.full_depth, coordinates=params.model_params.coordinates
+            icp=params.local.icp, load_octree=params.load_octree, octree_depth=params.octree_depth,
+            full_depth=params.full_depth, coordinates=params.model_params.coordinates,
+            is_cross_source_dataset=params.is_cross_source_dataset,
+            prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
         )
         if validation:
             local_val_transform = Val6DOFTransform(
@@ -61,8 +69,10 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
             )
             datasets['local_val'] = Training6DOFDataset(
                 params.dataset_folder, params.dataset_name, params.val_file, local_transform=local_val_transform,
-                load_octree=params.load_octree, octree_depth=params.octree_depth,
-                full_depth=params.full_depth, coordinates=params.model_params.coordinates
+                icp=params.local.icp, load_octree=params.load_octree, octree_depth=params.octree_depth,
+                full_depth=params.full_depth, coordinates=params.model_params.coordinates,
+                is_cross_source_dataset=params.is_cross_source_dataset,
+                prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
             )
 
     return datasets
@@ -90,8 +100,8 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
             octree.build_octree(cloud_points_obj)
             octrees.append(octree)                        
         octrees_merged = ocnn.octree.merge_octrees(octrees)
-        # NOTE: remember to construct the neighbor indices
-        octrees_merged.construct_all_neigh()
+        # NOTE: remember to construct the neighbor indices before processing (much faster on GPU)
+        # octrees_merged.construct_all_neigh()
         batch = {'octree': octrees_merged}
     else:
         coords = [quantizer(e)[0] for e in clouds]
@@ -101,14 +111,12 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
         batch = {'coords': coords, 'features': feats}
     return batch
 
-
 def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams):
     # quantizer: converts to polar (when polar coords are used) and quantizes
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
     # octree: if True, loads octree in batch instead of sparse tensor
     def collate_fn(data_list):
-        if params.verbose:
-            tic = time.time()
+        tic = time.time()
 
         # Constructs a batch object
         clouds = [e[0] for e in data_list]
@@ -139,9 +147,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
                 minibatch = create_batch(temp, quantizer, params)
                 batch.append(minibatch)
 
-        if params.verbose:
-            toc = time.time()
-            print(f"[INFO] Collating batch done in {toc-tic:.2f}s for {dataset.query_filepath}", flush=True)
+        logging.debug(f"Collating global batch done in {time.time()-tic:.2f}s")
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
@@ -157,33 +163,42 @@ def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: Traini
     normalization shift and scale parameters.
     """
     def collate_fn(data_list):
+        tic = time.time()
+
         # Constructs a batch object
         anchor_clouds = [e[0] for e in data_list]
         positive_clouds = [e[1] for e in data_list]
         rel_transforms = [e[2] for e in data_list]
         anchor_shift_and_scale = [e[3] for e in data_list]
         positive_shift_and_scale = [e[4] for e in data_list]
-        len_batch = []
-        for batch_id, _ in enumerate(anchor_clouds):
-            N1 = anchor_clouds[batch_id].shape[0]
-            N2 = positive_clouds[batch_id].shape[0]
-            len_batch.append([N1, N2])
 
         # Generate anchor and positive batches
         anchor_batch = create_batch(anchor_clouds, quantizer, params)
         positive_batch = create_batch(positive_clouds, quantizer, params)
-        # Concatenate point coordinates
-        anchor_xyz = torch.cat(anchor_clouds, dim=0)
-        positive_xyz = torch.cat(positive_clouds, dim=0)
-        # Stack transforms
+
+        # Batch raw points together
+        if quantizer is not None:
+            anchor_pts_list = [Points(quantizer(cloud)) for cloud in anchor_clouds]
+            positive_pts_list = [Points(quantizer(cloud)) for cloud in positive_clouds]
+        else:
+            anchor_pts_list = [Points(cloud) for cloud in anchor_clouds]
+            positive_pts_list = [Points(cloud) for cloud in positive_clouds]
+        anchor_pts = ocnn.octree.merge_points(anchor_pts_list)
+        positive_pts = ocnn.octree.merge_points(positive_pts_list)
+
+        # Stack transforms and shift/scales
         trans_batch = torch.stack(rel_transforms, dim=0)
+        anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
+        positive_shift_and_scale_batch = torch.stack(positive_shift_and_scale, dim=0)
+
+        logging.debug(f"Collating local batch done in {time.time()-tic:.2f}s")
 
         # Returns:
-        # Anc and pos point clouds, anc and pos batch, relative transformations, length per batch, normalization shift and scale params
+        # Anc and pos point clouds, anc and pos batch, relative transformations, normalization shift and scale params
         return {
-            "anc_pcd": anchor_xyz, "pos_pcd": positive_xyz, "anc_batch": anchor_batch,
-            "pos_batch": positive_batch, "T_gt": trans_batch, "len_batch": len_batch,
-            "anc_shift_and_scale": anchor_shift_and_scale, "pos_shift_and_scale": positive_shift_and_scale
+            "anc_points": anchor_pts, "pos_points": positive_pts, "anc_batch": anchor_batch,
+            "pos_batch": positive_batch, "transform": trans_batch,
+            "anc_shift_and_scale": anchor_shift_and_scale_batch, "pos_shift_and_scale": positive_shift_and_scale_batch
         }
 
     return collate_fn
@@ -201,37 +216,57 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
     datasets = make_datasets(params, local=local, validation=validation)
 
     dataloaders = {}
-    train_sampler = BatchSampler(datasets['global_train'], batch_size=params.batch_size,
-                                 batch_size_limit=params.batch_size_limit,
-                                 batch_expansion_rate=params.batch_expansion_rate)
+    train_sampler = BatchSampler(
+        datasets["global_train"],
+        batch_size=params.batch_size,
+        batch_size_limit=params.batch_size_limit,
+        batch_expansion_rate=params.batch_expansion_rate,
+        only_ground_aerial=params.only_ground_aerial,
+    )
 
     # Collate function collates items into a batch and applies a 'set transform' on the entire batch
     quantizer = params.model_params.quantizer
-    train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
-    dataloaders['global_train'] = DataLoader(datasets['global_train'], batch_sampler=train_sampler,
-                                     collate_fn=train_collate_fn, num_workers=params.num_workers,
-                                     pin_memory=True)
+    train_collate_fn = make_collate_fn(datasets["global_train"], quantizer, params)
+    dataloaders["global_train"] = DataLoader(
+        datasets["global_train"], batch_sampler=train_sampler,
+        collate_fn=train_collate_fn, num_workers=params.num_workers, pin_memory=True,
+    )
     if validation and 'global_val' in datasets:
         val_collate_fn = make_collate_fn(datasets['global_val'], quantizer, params)
-        val_sampler = BatchSampler(datasets['global_val'], batch_size=params.val_batch_size)
+        val_sampler = BatchSampler(
+            datasets["global_val"], batch_size=params.val_batch_size,
+            only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
+        )
         # Collate function collates items into a batch and applies a 'set transform' on the entire batch
         # Currently validation dataset has empty set_transform function, but it may change in the future
-        dataloaders['global_val'] = DataLoader(datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
-                                       num_workers=params.num_workers, pin_memory=True)
+        dataloaders["global_val"] = DataLoader(
+            datasets["global_val"], batch_sampler=val_sampler, collate_fn=val_collate_fn,
+            num_workers=params.num_workers, pin_memory=True,
+        )
 
     if local:
         train_collate_fn_loc = make_collate_fn_6DOF(datasets['local_train'], quantizer, params)
-        train_sampler_loc = BatchSampler6DOF(datasets['local_train'], batch_size=params.local_batch_size)
-        dataloaders['local_train'] = DataLoader(datasets['local_train'], batch_sampler=train_sampler_loc, 
-                                                collate_fn=train_collate_fn_loc,
-                                                num_workers=params.num_workers, pin_memory=True)
+        train_sampler_loc = BatchSampler6DOF(
+            datasets["local_train"], batch_size=params.local.batch_size,
+            only_ground_aerial=params.only_ground_aerial,
+        )
+        dataloaders["local_train"] = DataLoader(
+            datasets["local_train"], batch_sampler=train_sampler_loc,
+            collate_fn=train_collate_fn_loc, num_workers=params.num_workers,
+            pin_memory=True,
+        )
         if validation and 'local_val' in datasets:
             val_collate_fn_loc = make_collate_fn_6DOF(datasets['local_val'], quantizer, params)
-            val_sampler_loc = BatchSampler6DOF(datasets['local_val'], batch_size=params.local_batch_size)
-            dataloaders['local_val'] = DataLoader(datasets['local_val'], batch_sampler=val_sampler_loc,
-                                                  collate_fn=val_collate_fn_loc,
-                                                  num_workers=params.num_workers, pin_memory=True)
-    else:  # Endlessly return None
+            val_sampler_loc = BatchSampler6DOF(
+                datasets["local_val"], batch_size=params.local.batch_size,
+                only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
+            )
+            dataloaders["local_val"] = DataLoader(
+                datasets["local_val"], batch_sampler=val_sampler_loc,
+                collate_fn=val_collate_fn_loc, num_workers=params.num_workers,
+                pin_memory=True,
+            )
+    else:  # Endlessly return None for local dataloader
         dataloaders['local_train'] = repeat(None)
         if validation:
             dataloaders['local_val'] = repeat(None)
@@ -264,15 +299,12 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
     Custom collate function for evaluation dataloader. Only returns batches.
     """
     def collate_fn(data_list):
-        if params.verbose:
-            tic = time.time()
+        tic = time.time()
 
         # Generate batches in correct format for MinkLoc/OctFormer
         batch = create_batch(data_list, quantizer, params)
 
-        if params.verbose:
-            toc = time.time()
-            print(f"[INFO] Collating batch done in {toc-tic:.2f}s", flush=True)
+        logging.debug(f"Collating eval batch done in {time.time()-tic:.2f}s")
 
         return batch
 

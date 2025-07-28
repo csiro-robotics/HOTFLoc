@@ -6,13 +6,20 @@ CSIRO Data61
 Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
 by Peng-Shuai Wang.
 """
+import time
+import logging
+from typing import Optional, List
 
 import torch
 import torch.nn.functional as F
-import ocnn
+from ocnn.octree import Points
 
-from models.octree import OctreeT
+from dataset.augmentation import Normalize
+from dataset.coordinate_utils import CoordinateSystem
+from models.octree import OctreeT, get_octant_centroids_from_points
 from models.hotformerloc import HOTFormerLoc
+from misc.utils import ModelParams
+from misc.torch_utils import release_cuda
 from geotransformer.modules.ops import point_to_node_partition, index_select
 from geotransformer.modules.registration import get_node_correspondences
 from geotransformer.modules.sinkhorn import LearnableLogOptimalTransport
@@ -22,17 +29,27 @@ from geotransformer.modules.geotransformer import (
     SuperPointTargetGenerator,
     LocalGlobalRegistration,
 )
+from geotransformer.utils.visualization import (
+    draw_point_to_node,
+    draw_node_correspondences,
+    get_colors_with_tsne
+)
 
+VIZ = False
+SAVE_VIZ_PCL = True
+SAVE_DIR = './node_coloring_pcls'
 
 # TODO: Adapt for metric localisation (using existing HOTFormerLoc wrapper)
 class HOTFormerMetricLoc(torch.nn.Module):
     def __init__(
         self,
         hotformerloc_global: HOTFormerLoc,
-        coarse_feat_refiner: torch.nn.Module,
+        coarse_feat_refiner: GeometricTransformer,
+        model_params: ModelParams,
         coarse_idx: int = -1,
         fine_idx: int = -3,
-        return_feats_and_attn_maps: bool = False
+        quantizer: Optional[CoordinateSystem] = None,
+        return_feats_and_attn_maps: bool = False,
     ):
         """
         Class for HOTFormerLoc-based metric localisation, with coarse-to-fine
@@ -41,35 +58,86 @@ class HOTFormerMetricLoc(torch.nn.Module):
         Args:
             hotformerloc_global (nn.Module): HOTFormerLoc instance for extracting local features and global descriptor for place rec.
             coarse_feat_refiner (nn.Module): GeoTransformer (or other) instance for refining coarse features and correspondences.
+            model_params (ModelParams): Model parameters instance.
             coarse_idx (int): Index corresponding to depth of coarse features, ranging from [0, num_pyramid_levels)
                               (sorted from finest to coarsest). Supports negative indices.
             fine_idx (int): Index corresponding to depth of fine features, ranging from [0, num_pyramid_levels)
                             (sorted from finest to coarsest). Supports negative indices.
+            quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
             return_feats_and_attn_maps (bool): Returns intermediate features and attention maps from the backbone.
 
         Returns:
-            model_out (dict): Dict containing outputs for local and global stages
+            model_out (dict): Dict containing outputs from local and global stages
 
         """
         super().__init__()
         self.hotformerloc_global = hotformerloc_global
         self.coarse_feat_refiner = coarse_feat_refiner
+        self.model_params = model_params
         self.coarse_idx = coarse_idx
         self.fine_idx = fine_idx
+        self.quantizer = quantizer
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
+        self.unnormalize = Normalize.unnormalize
+        self.point_padding = 1e10
+
+        self.coarse_target = SuperPointTargetGenerator(
+            model_params.coarse_matching.num_targets,
+            model_params.coarse_matching.overlap_threshold,
+        )
+
+        self.coarse_matching = SuperPointMatching(
+            model_params.coarse_matching.num_correspondences,
+            model_params.coarse_matching.dual_normalization,
+        )
+        self.num_points_in_patch = model_params.coarse_matching.num_points_in_patch
+        self.matching_radius = model_params.coarse_matching.ground_truth_matching_radius
+
+        self.fine_matching = LocalGlobalRegistration(
+            model_params.fine_matching.topk,
+            model_params.fine_matching.acceptance_radius,
+            mutual=model_params.fine_matching.mutual,
+            confidence_threshold=model_params.fine_matching.confidence_threshold,
+            use_dustbin=model_params.fine_matching.use_dustbin,
+            use_global_score=model_params.fine_matching.use_global_score,
+            correspondence_threshold=model_params.fine_matching.correspondence_threshold,
+            correspondence_limit=model_params.fine_matching.correspondence_limit,
+            num_refinement_steps=model_params.fine_matching.num_refinement_steps,
+        )
+
+        self.optimal_transport = LearnableLogOptimalTransport(
+            model_params.fine_matching.num_sinkhorn_iterations
+        )
         
-    def forward(self, batch, global_only=False, **kwargs):
-        output_dict = {}
+    def forward(self, batch, global_only=False, **kwargs) -> List[dict]:
+        """
+        Batched implementation not finished. Currently processes the coarse features
+        in batched mode, then just loops through each batch elem for coarse matching
+        and fine registration. Returns a list of output dicts with len == batch_size.
+        """
+        # NOTE: anc = anchor, pos = positive
+        tic_start = time.time()
+        time_dict = {}
 
         # 1. Extract global and local descriptors with HOTFormerLoc
-        # TODO: process src and tgt in same batch or need to process separately
-        global_out = self.hotformerloc_global(batch)
-        output_dict.update(global_out)
         if global_only:
-            return output_dict
+            global_out = self.hotformerloc_global(batch)
+            time_dict['global backbone forward'] = time.time() - tic_start
+            self.log_time_dict(time_dict)
+            return global_out
 
-        octree = output_dict['octree']
-        local_depths = global_out['local'].keys()
+        # TODO: Process anchor and positive batch in single forward pass
+        anc_global_out = self.hotformerloc_global(batch['anc_batch'])
+        pos_global_out = self.hotformerloc_global(batch['pos_batch'])
+        time_dict['local backbone forward'] = time.time() - tic_start
+
+        anc_octree: OctreeT = anc_global_out['octree']
+        pos_octree: OctreeT = pos_global_out['octree']
+        anc_points: Points = batch['anc_points']
+        pos_points: Points = batch['pos_points']
+
+        output_dicts = [{} for _ in range(anc_octree.batch_size)]
+        local_depths = list(anc_global_out['local'].keys())
         depth_coarse = local_depths[self.coarse_idx]
         depth_fine = local_depths[self.fine_idx]
         if depth_coarse >= depth_fine:
@@ -77,174 +145,296 @@ class HOTFormerMetricLoc(torch.nn.Module):
                        ' feature depth, check idx parameters.')
             raise ValueError(err_str)
 
-        # TODO: Get coarse and fine feat point coords
-        points_coarse = None
-        points_fine = None
-        feats_coarse = global_out['local'][depth_coarse]
-        feats_fine = global_out['local'][depth_fine]
-
-        # TODO: Separate reference and source feats/points, and process in GeoTrans
-        ref_feats_coarse, src_feats_coarse = self.coarse_feat_refiner(
-            ref_points_coarse,
-            src_points_coarse,
-            ref_feats_coarse,
-            src_feats_coarse,
-        )
-        ref_feats_coarse_norm = F.normalize(ref_feats_coarse.squeeze(0), p=2, dim=1)
-        src_feats_coarse_norm = F.normalize(src_feats_coarse.squeeze(0), p=2, dim=1)
-
-        output_dict['ref_feats_coarse'] = ref_feats_coarse_norm
-        output_dict['src_feats_coarse'] = src_feats_coarse_norm
+        # Get coarse and fine feats and points
+        tic = time.time()
+        anc_feats_coarse = anc_global_out['local'][depth_coarse]
+        anc_feats_fine = anc_global_out['local'][depth_fine]
+        pos_feats_coarse = pos_global_out['local'][depth_coarse]
+        pos_feats_fine = pos_global_out['local'][depth_fine]
+        anc_points_coarse = get_octant_centroids_from_points(anc_points, depth_coarse, self.quantizer)
+        pos_points_coarse = get_octant_centroids_from_points(pos_points, depth_coarse, self.quantizer)
+        anc_points_fine = get_octant_centroids_from_points(anc_points, depth_fine, self.quantizer)
+        pos_points_fine = get_octant_centroids_from_points(pos_points, depth_fine, self.quantizer)
+        time_dict['compute centroids'] = time.time() - tic
 
         ########################################################################
-        # GeoTransformer Code
+        # DEBUGGING - VISUALISING COARSE AND FINE POINTS
         ########################################################################
-        
-        # NOTE: step 2 should be achievable just from octree indices alone
-        # 2. Generate ground truth node correspondences
-        ref_point_to_node, ref_node_masks, ref_node_knn_indices, ref_node_knn_masks = point_to_node_partition(
-            ref_points_fine, ref_points_coarse, self.num_points_in_patch
-        )
-        # if VIZ:
-        #     save_filename = f'{SAVE_DIR}/seq{data_dict['seq_id']}-frame{data_dict['ref_frame']}' if SAVE_VIZ_PCL else None
-        #     draw_point_to_node(ref_points_fine.detach().cpu().numpy(),
-        #                        ref_points_coarse.detach().cpu().numpy(),
-        #                        ref_point_to_node.detach().cpu().numpy(),
-        #                        save_basepath=save_filename,
-        #                        viz=not SAVE_VIZ_PCL)
+        # from misc.point_clouds import plot_points
+        # from misc.torch_utils import release_cuda
+        # plot_batch_id = 0
+        # plot_points(release_cuda(anc_points_coarse[anc_octree.batch_id(depth_coarse, nempty=True) == plot_batch_id], to_numpy=True))
+        # plot_points(release_cuda(pos_points_coarse[pos_octree.batch_id(depth_coarse, nempty=True) == plot_batch_id], to_numpy=True))
+        # plot_points(release_cuda(anc_points_fine[anc_octree.batch_id(depth_fine, nempty=True) == plot_batch_id], to_numpy=True))
+        # plot_points(release_cuda(pos_points_fine[pos_octree.batch_id(depth_fine, nempty=True) == plot_batch_id], to_numpy=True))
+        ########################################################################
 
-        src_point_to_node, src_node_masks, src_node_knn_indices, src_node_knn_masks = point_to_node_partition(
-            src_points_fine, src_points_coarse, self.num_points_in_patch
-        )
-        # if VIZ:
-        #     draw_point_to_node(src_points_f.detach().cpu().numpy(),
-        #                        src_points_c.detach().cpu().numpy(),
-        #                        src_point_to_node.detach().cpu().numpy())
+        # 2. Separate anchor and positive feats/points, and process in GeoTrans
+        # TODO: Add check here for eval, as in eval, we will pass one anchor and N positives
+        if anc_octree.batch_size == 1 and pos_octree.batch_size > 1:
+            raise NotImplementedError('Eval not implemented')
 
-        ref_padded_points_f = torch.cat([ref_points_fine, torch.zeros_like(ref_points_fine[:1])], dim=0)
-        src_padded_points_f = torch.cat([src_points_fine, torch.zeros_like(src_points_fine[:1])], dim=0)
-        ref_node_knn_points = index_select(ref_padded_points_f, ref_node_knn_indices, dim=0)
-        src_node_knn_points = index_select(src_padded_points_f, src_node_knn_indices, dim=0)
-
-        gt_node_corr_indices, gt_node_corr_overlaps = get_node_correspondences(
-            ref_points_coarse,
-            src_points_coarse,
-            ref_node_knn_points,
-            src_node_knn_points,
-            transform,
-            self.matching_radius,
-            ref_masks=ref_node_masks,
-            src_masks=src_node_masks,
-            ref_knn_masks=ref_node_knn_masks,
-            src_knn_masks=src_node_knn_masks,
-        )
-
-        output_dict['gt_node_corr_indices'] = gt_node_corr_indices
-        output_dict['gt_node_corr_overlaps'] = gt_node_corr_overlaps
-
-        # NOTE: This is done before step 2 now.
-        # # 3. Conditional Transformer
-        # ref_feats_c = feats_c[:ref_length_c]
-        # src_feats_c = feats_c[ref_length_c:]
-        # ref_feats_c, src_feats_c = self.transformer(
-        #     ref_points_coarse.unsqueeze(0),
-        #     src_points_coarse.unsqueeze(0),
-        #     ref_feats_c.unsqueeze(0),
-        #     src_feats_c.unsqueeze(0),
-        # )
-        # ref_feats_c_norm = F.normalize(ref_feats_c.squeeze(0), p=2, dim=1)
-        # src_feats_c_norm = F.normalize(src_feats_c.squeeze(0), p=2, dim=1)
-
-        # output_dict['ref_feats_c'] = ref_feats_c_norm
-        # output_dict['src_feats_c'] = src_feats_c_norm
-
-        # 5. Head for fine level matching
-        ref_feats_f = feats_f[:ref_length_f]
-        src_feats_f = feats_f[ref_length_f:]
-        output_dict['ref_feats_f'] = ref_feats_f
-        output_dict['src_feats_f'] = src_feats_f
-
-        # 6. Select topk nearest node correspondences
-        with torch.no_grad():
-            ref_node_corr_indices, src_node_corr_indices, node_corr_scores = self.coarse_matching(
-                ref_feats_coarse_norm, src_feats_coarse_norm, ref_node_masks, src_node_masks
+        # Undo normalization so points are in metric scale
+        tic = time.time()
+        if batch['anc_shift_and_scale'] is not None:
+            anc_points_coarse = self.batch_unnormalize(
+                anc_points_coarse, batch['anc_shift_and_scale'], anc_octree, depth_coarse
             )
+            anc_points_fine = self.batch_unnormalize(
+                anc_points_fine, batch['anc_shift_and_scale'], anc_octree, depth_fine
+            )
+        if batch['pos_shift_and_scale'] is not None:
+            pos_points_coarse = self.batch_unnormalize(
+                pos_points_coarse, batch['pos_shift_and_scale'], pos_octree, depth_coarse
+            )
+            pos_points_fine = self.batch_unnormalize(
+                pos_points_fine, batch['pos_shift_and_scale'], pos_octree, depth_fine
+            )
+        time_dict['unnormalize'] = time.time() - tic
 
-            output_dict['ref_node_corr_indices'] = ref_node_corr_indices
-            output_dict['src_node_corr_indices'] = src_node_corr_indices
+        # Pad batched tensors and create attn mask
+        #   (pad points with large value to prevent interactions with distance embedding)
+        anc_points_coarse_padded = anc_octree.split_and_pad_data(
+            anc_points_coarse, depth_coarse, fill_value=self.point_padding,
+        )
+        pos_points_coarse_padded = pos_octree.split_and_pad_data(
+            pos_points_coarse, depth_coarse, fill_value=self.point_padding,
+        )
+        anc_feats_coarse_padded, anc_coarse_mask = anc_octree.split_and_pad_data(
+            anc_feats_coarse, depth_coarse, fill_value=0., return_mask=True,
+        )
+        pos_feats_coarse_padded, pos_coarse_mask = pos_octree.split_and_pad_data(
+            pos_feats_coarse, depth_coarse, fill_value=0., return_mask=True,
+        )
 
-            # 7 Random select ground truth node correspondences during training
-            if self.training:
-                ref_node_corr_indices, src_node_corr_indices, node_corr_scores = self.coarse_target(
-                    gt_node_corr_indices, gt_node_corr_overlaps
+        # NOTE: Padding does change the output slightly, as it softens the softmax
+        #       output, but is a difference on the order of 0.01-0.1 on average.
+        tic = time.time()
+        anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
+            anc_points_coarse_padded,
+            pos_points_coarse_padded,
+            anc_feats_coarse_padded,
+            pos_feats_coarse_padded,
+            anc_coarse_mask,
+            pos_coarse_mask,
+        )
+        anc_feats_coarse_norm_padded = F.normalize(anc_feats_coarse_padded.squeeze(0), p=2, dim=1)
+        pos_feats_coarse_norm_padded = F.normalize(pos_feats_coarse_padded.squeeze(0), p=2, dim=1)
+        time_dict['geotrans forward'] = time.time() - tic
+
+        # Convert feats back to concatenated form
+        anc_feats_coarse_norm = anc_octree.unpad_and_concat_data(
+            anc_feats_coarse_norm_padded, depth_coarse
+        )
+        pos_feats_coarse_norm = pos_octree.unpad_and_concat_data(
+            pos_feats_coarse_norm_padded, depth_coarse
+        )
+        
+        tic = time.time()
+        # TODO: Add check here for eval and duplicate query for each batch
+        # TODO: Convert coarse matching to work in batches (may require zero padding or selecting k coarse points)
+        for batch_idx in range(pos_octree.batch_size):
+            anc_batch_mask_coarse = anc_octree.batch_id(depth_coarse, nempty=True) == batch_idx
+            pos_batch_mask_coarse = pos_octree.batch_id(depth_coarse, nempty=True) == batch_idx
+            anc_batch_mask_fine = anc_octree.batch_id(depth_fine, nempty=True) == batch_idx
+            pos_batch_mask_fine = pos_octree.batch_id(depth_fine, nempty=True) == batch_idx
+            anc_points_coarse_ii = anc_points_coarse[anc_batch_mask_coarse]
+            pos_points_coarse_ii = pos_points_coarse[pos_batch_mask_coarse]
+            anc_feats_coarse_norm_ii = anc_feats_coarse_norm[anc_batch_mask_coarse]
+            pos_feats_coarse_norm_ii = pos_feats_coarse_norm[pos_batch_mask_coarse]
+            anc_points_fine_ii = anc_points_fine[anc_batch_mask_fine]
+            pos_points_fine_ii = pos_points_fine[pos_batch_mask_fine]
+            anc_feats_fine_ii = anc_feats_fine[anc_batch_mask_fine]
+            pos_feats_fine_ii = pos_feats_fine[pos_batch_mask_fine]
+            transform_ii = batch['transform'][batch_idx]
+
+            # Separate dict for each batch item
+            output_dicts[batch_idx]['anc_feats_coarse'] = anc_feats_coarse_norm_ii
+            output_dicts[batch_idx]['pos_feats_coarse'] = pos_feats_coarse_norm_ii
+            output_dicts[batch_idx]['anc_feats_fine'] = anc_feats_fine_ii
+            output_dicts[batch_idx]['pos_feats_fine'] = pos_feats_fine_ii
+            output_dicts[batch_idx]['anc_points_coarse'] = anc_points_coarse_ii
+            output_dicts[batch_idx]['pos_points_coarse'] = pos_points_coarse_ii
+            output_dicts[batch_idx]['anc_points_fine'] = anc_points_fine_ii
+            output_dicts[batch_idx]['pos_points_fine'] = pos_points_fine_ii
+
+            # 3. Generate ground truth node correspondences
+            # NOTE: step 3 should be achievable just from octree indices alone
+            anc_point_to_node_ii, anc_node_masks_ii, anc_node_knn_indices_ii, anc_node_knn_masks_ii = point_to_node_partition(
+                anc_points_fine_ii, anc_points_coarse_ii, self.num_points_in_patch
+            )
+            pos_point_to_node_ii, pos_node_masks_ii, pos_node_knn_indices_ii, pos_node_knn_masks_ii = point_to_node_partition(
+                pos_points_fine_ii, pos_points_coarse_ii, self.num_points_in_patch
+            )
+            if VIZ:
+                save_filename = f'{SAVE_DIR}/superpoints-{batch_idx}' if SAVE_VIZ_PCL else None
+                draw_point_to_node(release_cuda(anc_points_fine_ii, to_numpy=True),
+                                   release_cuda(anc_points_coarse_ii, to_numpy=True),
+                                   release_cuda(anc_point_to_node_ii, to_numpy=True),
+                                   save_basepath=save_filename,
+                                   viz=not SAVE_VIZ_PCL)
+
+            anc_padded_points_fine_ii = torch.cat([anc_points_fine_ii, torch.zeros_like(anc_points_fine_ii[:1])], dim=0)
+            pos_padded_points_fine_ii = torch.cat([pos_points_fine_ii, torch.zeros_like(pos_points_fine_ii[:1])], dim=0)
+            anc_node_knn_points_ii = index_select(anc_padded_points_fine_ii, anc_node_knn_indices_ii, dim=0)
+            pos_node_knn_points_ii = index_select(pos_padded_points_fine_ii, pos_node_knn_indices_ii, dim=0)
+
+            gt_node_corr_indices_ii, gt_node_corr_overlaps_ii = get_node_correspondences(
+                anc_points_coarse_ii,
+                pos_points_coarse_ii,
+                anc_node_knn_points_ii,
+                pos_node_knn_points_ii,
+                torch.inverse(transform_ii),  # NOTE: GeoTrans expects transform from src (pos) to ref (anc)
+                self.matching_radius,
+                ref_masks=anc_node_masks_ii,
+                src_masks=pos_node_masks_ii,
+                ref_knn_masks=anc_node_knn_masks_ii,
+                src_knn_masks=pos_node_knn_masks_ii,
+            )
+            # if VIZ:
+            #     draw_node_correspondences(
+            #         release_cuda(anc_points_fine_ii), release_cuda(anc_points_coarse_ii),
+            #         release_cuda(anc_point_to_node_ii), release_cuda(pos_points_fine_ii),
+            #         release_cuda(pos_points_coarse_ii), release_cuda(pos_point_to_node_ii),
+            #         'pos', offsets=(0, 200, 0),
+            #     )
+
+            # TODO: Check if these should be combined and passed after loop
+            output_dicts[batch_idx]['gt_node_corr_indices'] = gt_node_corr_indices_ii
+            output_dicts[batch_idx]['gt_node_corr_overlaps'] = gt_node_corr_overlaps_ii
+
+            # 4. Select topk nearest node correspondences
+            with torch.no_grad():
+                anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_matching(
+                    anc_feats_coarse_norm, pos_feats_coarse_norm, anc_node_masks_ii, pos_node_masks_ii
                 )
 
-        # 7.2 Generate batched node points & feats
-        ref_node_corr_knn_indices = ref_node_knn_indices[ref_node_corr_indices]  # (P, K)
-        src_node_corr_knn_indices = src_node_knn_indices[src_node_corr_indices]  # (P, K)
-        ref_node_corr_knn_masks = ref_node_knn_masks[ref_node_corr_indices]  # (P, K)
-        src_node_corr_knn_masks = src_node_knn_masks[src_node_corr_indices]  # (P, K)
-        ref_node_corr_knn_points = ref_node_knn_points[ref_node_corr_indices]  # (P, K, 3)
-        src_node_corr_knn_points = src_node_knn_points[src_node_corr_indices]  # (P, K, 3)
+                output_dicts[batch_idx]['anc_node_corr_indices'] = anc_node_corr_indices_ii
+                output_dicts[batch_idx]['pos_node_corr_indices'] = pos_node_corr_indices_ii
 
-        ref_padded_feats_f = torch.cat([ref_feats_f, torch.zeros_like(ref_feats_f[:1])], dim=0)
-        src_padded_feats_f = torch.cat([src_feats_f, torch.zeros_like(src_feats_f[:1])], dim=0)
-        ref_node_corr_knn_feats = index_select(ref_padded_feats_f, ref_node_corr_knn_indices, dim=0)  # (P, K, C)
-        src_node_corr_knn_feats = index_select(src_padded_feats_f, src_node_corr_knn_indices, dim=0)  # (P, K, C)
+                # 4.1 Randomly select ground truth node correspondences during training
+                if self.training:
+                    anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_target(
+                        gt_node_corr_indices_ii, gt_node_corr_overlaps_ii
+                    )
 
-        output_dict['ref_node_corr_knn_points'] = ref_node_corr_knn_points
-        output_dict['src_node_corr_knn_points'] = src_node_corr_knn_points
-        output_dict['ref_node_corr_knn_masks'] = ref_node_corr_knn_masks
-        output_dict['src_node_corr_knn_masks'] = src_node_corr_knn_masks
+        # # TODO: CONTINUE LOOP FROM HERE, BUT THINK ABOUT HOW TO HANDLE EVAL
 
-        # 8. Optimal transport
-        matching_scores = torch.einsum('bnd,bmd->bnm', ref_node_corr_knn_feats, src_node_corr_knn_feats)  # (P, K, K)
-        matching_scores = matching_scores / feats_f.shape[1] ** 0.5
-        matching_scores = self.optimal_transport(matching_scores, ref_node_corr_knn_masks, src_node_corr_knn_masks)
+        # # TODO: Implement SpectralGV re-ranking based on refined coarse correspondences 
+        # if not self.training:
+        #     with torch.no_grad():
+        #         pass
 
-        output_dict['matching_scores'] = matching_scores
+        # NOTE: Temporarily just placing this inside the previous for loop, just
+        #       to get training running
+        # # 5 Generate batched node points & feats
+        # for batch_idx in range(pos_octree.batch_size):
+            anc_node_corr_knn_indices_ii = anc_node_knn_indices_ii[anc_node_corr_indices_ii]  # (P, K)
+            pos_node_corr_knn_indices_ii = pos_node_knn_indices_ii[pos_node_corr_indices_ii]  # (P, K)
+            anc_node_corr_knn_masks_ii = anc_node_knn_masks_ii[anc_node_corr_indices_ii]  # (P, K)
+            pos_node_corr_knn_masks_ii = pos_node_knn_masks_ii[pos_node_corr_indices_ii]  # (P, K)
+            anc_node_corr_knn_points_ii = anc_node_knn_points_ii[anc_node_corr_indices_ii]  # (P, K, 3)
+            pos_node_corr_knn_points_ii = pos_node_knn_points_ii[pos_node_corr_indices_ii]  # (P, K, 3)
 
-        # 9. Generate final correspondences during testing
-        with torch.no_grad():
-            if not self.fine_matching.use_dustbin:
-                matching_scores = matching_scores[:, :-1, :-1]
+            anc_padded_feats_fine_ii = torch.cat([anc_feats_fine_ii, torch.zeros_like(anc_feats_fine_ii[:1])], dim=0)
+            pos_padded_feats_fine_ii = torch.cat([pos_feats_fine_ii, torch.zeros_like(pos_feats_fine_ii[:1])], dim=0)
+            anc_node_corr_knn_feats_ii = index_select(anc_padded_feats_fine_ii, anc_node_corr_knn_indices_ii, dim=0)  # (P, K, C)
+            pos_node_corr_knn_feats_ii = index_select(pos_padded_feats_fine_ii, pos_node_corr_knn_indices_ii, dim=0)  # (P, K, C)
 
-            ref_corr_points, src_corr_points, corr_scores, estimated_transform = self.fine_matching(
-                ref_node_corr_knn_points,
-                src_node_corr_knn_points,
-                ref_node_corr_knn_masks,
-                src_node_corr_knn_masks,
-                matching_scores,
-                node_corr_scores,
+            output_dicts[batch_idx]['anc_node_corr_knn_points'] = anc_node_corr_knn_points_ii
+            output_dicts[batch_idx]['pos_node_corr_knn_points'] = pos_node_corr_knn_points_ii
+            output_dicts[batch_idx]['anc_node_corr_knn_masks'] = anc_node_corr_knn_masks_ii
+            output_dicts[batch_idx]['pos_node_corr_knn_masks'] = pos_node_corr_knn_masks_ii
+
+            # 6. Optimal transport
+            matching_scores_ii = torch.einsum('bnd,bmd->bnm', anc_node_corr_knn_feats_ii, pos_node_corr_knn_feats_ii)  # (P, K, K)
+            matching_scores_ii = matching_scores_ii / anc_feats_fine_ii.shape[-1] ** 0.5
+            matching_scores_ii = self.optimal_transport(matching_scores_ii, anc_node_corr_knn_masks_ii, pos_node_corr_knn_masks_ii)
+
+            output_dicts[batch_idx]['matching_scores'] = matching_scores_ii
+
+            # 7. Generate final correspondences during testing
+            with torch.no_grad():
+                if not self.fine_matching.use_dustbin:
+                    matching_scores_ii = matching_scores_ii[:, :-1, :-1]
+
+                # NOTE: estimated transform is from pos to anc
+                anc_corr_points_ii, pos_corr_points_ii, corr_scores_ii, estimated_transform_ii = self.fine_matching(
+                    anc_node_corr_knn_points_ii,
+                    pos_node_corr_knn_points_ii,
+                    anc_node_corr_knn_masks_ii,
+                    pos_node_corr_knn_masks_ii,
+                    matching_scores_ii,
+                    node_corr_scores_ii,
+                )
+
+                output_dicts[batch_idx]['anc_corr_points'] = anc_corr_points_ii
+                output_dicts[batch_idx]['pos_corr_points'] = pos_corr_points_ii
+                output_dicts[batch_idx]['corr_scores'] = corr_scores_ii
+                # Ensure estimated transform is from anc to pos, not vice-versa
+                output_dicts[batch_idx]['estimated_transform'] = torch.inverse(estimated_transform_ii)
+
+        toc = time.time()
+        time_dict['local global reg'] = toc - tic
+        time_dict['TOTAL'] = toc - tic_start
+        self.log_time_dict(time_dict)
+        return output_dicts
+
+    def batch_unnormalize(
+        self,
+        points: torch.Tensor,
+        batch_shift_and_scale: torch.Tensor,
+        octree: OctreeT,
+        depth: int,
+    ):
+        """
+        Undo normalization for a batch of points. 
+        """
+        assert points.size(0) == octree.batch_id(depth, nempty=True).size(0), (
+            f"Points must correspond to the octree at depth {depth}"
+        )
+        # TODO: Implement vectorised form of this
+        for batch_idx in range(octree.batch_size):
+            batch_mask = octree.batch_id(depth, nempty=True) == batch_idx
+            points[batch_mask] = self.unnormalize(
+                points[batch_mask],
+                batch_shift_and_scale[batch_idx],
             )
+        return points
 
-            output_dict['ref_corr_points'] = ref_corr_points
-            output_dict['src_corr_points'] = src_corr_points
-            output_dict['corr_scores'] = corr_scores
-            output_dict['estimated_transform'] = estimated_transform
-
-        return output_dict
+    def log_time_dict(self, time_dict: dict):
+        time_str = 'Model forward pass:  '
+        for name, process_time in time_dict.items():
+            if name == 'TOTAL':
+                time_str += f'TOTAL: {process_time:.4f}s'
+            else:
+                time_str += f'{name}: {process_time:.4f}s,  '
+        logging.debug(time_str)
+        
 
     # TODO: fix for hotformermetricloc
     def print_info(self):
         print('Model class: HOTFormerMetricLoc')
         n_params = sum([param.nelement() for param in self.parameters()])
         print(f'Total parameters: {n_params}')
-        n_params = sum([param.nelement() for param in self.hotformerloc_global.backbone.parameters()])
         # Backbone
-        print(f'Backbone: {type(self.hotformerloc_global.backbone).__name__}\t#parameters: {n_params}')
+        n_params = sum([param.nelement() for param in self.hotformerloc_global.backbone.parameters()])
+        print(f'Backbone: {type(self.hotformerloc_global.backbone).__name__}\t# parameters: {n_params}')
         base_model = self.hotformerloc_global.backbone.backbone
         n_params = sum([param.nelement() for param in base_model.patch_embed.parameters()])
-        print(f"  ConvEmbed:\t#parameters: {n_params}")
+        print(f"  ConvEmbed:\t# parameters: {n_params}")
         n_params = sum([param.nelement() for param in base_model.octf_stage.parameters()])
         n_params += sum([param.nelement() for param in base_model.downsample.parameters()])
-        print(f"  OctF Layers:\t#parameters: {n_params}")
+        print(f"  OctF Layers:\t# parameters: {n_params}")
         n_params = sum([param.nelement() for param in base_model.hotf_stage.parameters()])
-        print(f"  HOTF Layers:\t#parameters: {n_params}")    
+        print(f"  HOTF Layers:\t# parameters: {n_params}")
         # Pooling
         n_params = sum([param.nelement() for param in self.hotformerloc_global.pooling.parameters()])
-        print(f'Pooling method: {self.hotformerloc_global.pooling.pool_method}\t#parameters: {n_params}')
-        print('# channels from the backbone: {}'.format(self.hotformerloc_global.pooling.in_dim))
-        print('# output channels : {}'.format(self.hotformerloc_global.pooling.output_dim))
-        print(f'Embedding normalization: {self.hotformerloc_global.normalize_embeddings}')
-        print('TODO: Print params for metric loc branch')
+        print(f'Pooling method: {self.hotformerloc_global.pooling.pool_method}\t# parameters: {n_params}')
+        print('  # channels from the backbone: {}'.format(self.hotformerloc_global.pooling.in_dim))
+        print('  # output channels : {}'.format(self.hotformerloc_global.pooling.output_dim))
+        print(f'  Embedding normalization: {self.hotformerloc_global.normalize_embeddings}')
+        # Metric Loc Head
+        print('Metric Localisation Head:')
+        n_params = sum([param.nelement() for param in self.coarse_feat_refiner.parameters()])
+        print(f'  Coarse Feat Refiner: {type(self.coarse_feat_refiner).__name__}\t# parameters: {n_params}')

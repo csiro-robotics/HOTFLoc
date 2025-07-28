@@ -9,12 +9,9 @@ import torch
 from torch import Tensor
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
-import ocnn
 import matplotlib.pyplot as plt
 import seaborn as sns
-from dataset.coordinate_utils import CylindricalCoordinates
-from misc.utils import TrainingParams
-from models.octree import OctreeT, rescale_octree_points
+from models.octree import OctreeT
 
 def submap_distance(q1, q2) -> float:
     """
@@ -44,33 +41,6 @@ def off_diagonal(x: Tensor):
     n, m = x.shape
     assert n == m
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
-
-def get_octree_points_and_windows(query_octree: OctreeT, depth: int, params: TrainingParams):
-    """
-    For a given octree depth, returns the octree points, octree points reshaped
-    to windows, and a tensor containing the idx of each window. 
-    """
-    key = query_octree.key(depth, nempty=True)
-    x, y, z, _ = ocnn.octree.key2xyz(key, depth)
-    xyz = torch.stack([x, y, z], dim=1)
-    # Convert octree point coords to original scale
-    points_octree = rescale_octree_points(xyz, depth)
-    # Undo cylindrical projection
-    if params.model_params.coordinates == 'cylindrical':
-        coord_converter = CylindricalCoordinates(use_octree=True)
-        points_octree = coord_converter.undo_conversion(points_octree)        
-    # Create window partitions and get idx
-    points_octree_windows = query_octree.data_to_windows(points_octree, depth, False)
-    windows_idx = torch.zeros(points_octree_windows.shape[:-1],
-                              dtype=torch.int32)
-    num_windows = len(windows_idx)
-    # generate idx of windows
-    idx_values = torch.arange(num_windows, dtype=torch.int32).unsqueeze(-1)
-    windows_idx += idx_values
-    # Reverse patch operation and remove padding
-    windows_idx = windows_idx.reshape(-1)
-    windows_idx = query_octree.patch_reverse(windows_idx, depth)
-    return points_octree, points_octree_windows, windows_idx
 
 def print_token_similarity(token_dict, token_type: str = 'Local'):
     """

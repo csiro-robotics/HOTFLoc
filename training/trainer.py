@@ -3,6 +3,7 @@
 
 import os
 import numpy as np
+import time
 import torch
 import torch.nn.functional as F
 import tqdm
@@ -14,20 +15,27 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from timm.utils import ModelEmaV3
 from timm.optim.lamb import Lamb
-os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
+import wandb_osh
+from wandb_osh.hooks import TriggerWandbSyncHook
 
 from misc.utils import TrainingParams, get_datetime, update_params_from_dict
 from misc.torch_utils import release_cuda, set_seed, to_device
+from misc.logger import Logger
 from models.losses.loss import make_losses, kdloss
+from models.losses.loss_utils import metrics_mean
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
-from models.octree import OctreeT
+from models.octree import OctreeT, get_octant_centroids_from_points, batch_construct_octree_neigh
 from dataset.dataset_utils import make_dataloaders
-from eval.pnv_evaluate import evaluate, print_eval_stats, pnv_write_eval_stats
+from eval.pnv_evaluate_splits import evaluate, print_eval_stats, pnv_write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
-    get_octree_points_and_windows, colourise_points_by_height, colourise_points_by_similarity, \
+    colourise_points_by_height, colourise_points_by_similarity, \
         create_heatmap
+
+os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
+WANDB_OFFLINE = False  # Use wandb in offline mode with sync hooks running on login node
+wandb_osh.set_log_level("ERROR")
 
 class NetworkTrainer:
     """
@@ -75,6 +83,7 @@ class NetworkTrainer:
                 assert kwargs != {}, 'No valid hyperparams were provided for search'
                 self.params = update_params_from_dict(self.params, kwargs)
         self.params.print()
+        print(f'OMP NUM THREADS: {os.getenv("OMP_NUM_THREADS")}')
         
         # Seed RNG
         set_seed()
@@ -118,6 +127,10 @@ class NetworkTrainer:
             n_params = sum([param.nelement() for param in self.model.parameters()])
             print('Number of model parameters: {}'.format(n_params))
                     
+        # Initialise the logger
+        logging_level = 'DEBUG' if self.params.verbose else 'INFO'
+        self.logger = Logger(log_file=None, logging_level=logging_level, local_rank=-1)
+
         # Begin train loop
         self.do_train()
 
@@ -127,6 +140,8 @@ class NetworkTrainer:
         out. Dumps the current model state to disk and returns a
         DelayedSubmission to resubmit the job.
         """
+        if WANDB_OFFLINE:
+            self.trigger_sync()
         checkpoint_path = self.model_pathname + self.checkpoint_extension
         print(f'Training interupted at epoch {self.curr_epoch}. '
               f'Saving ckpt to {checkpoint_path} and resubmitting.')
@@ -215,7 +230,7 @@ class NetworkTrainer:
         return stats
 
     def print_global_stats(self, phase, stats):
-        s = f"{phase}  total loss: {stats['loss_total']:.4f}   PR loss: {stats['loss']:.4f}   "
+        s = f"{phase}:  total loss: {stats['loss_total']:.4f}   PR loss: {stats['loss']:.4f}   "
         if 'loss_mesa' in stats:
             s += f"MESA loss: {stats['loss_mesa']:.4f}   "
         if 'local_qkv_std_loss' in stats:
@@ -236,11 +251,30 @@ class NetworkTrainer:
             s += f"Recall@1: {stats['recall'][1]:.4f}   "
         if 'ap' in stats:
             s += f"AP: {stats['ap']:.4f}   "
+        print(s, flush=True)
 
+    def print_local_stats(self, phase, stats):
+        s = f"{phase}:  local loss: {stats['loss']:.4f}   "
+        if 'coarse_loss' in stats:
+            s += f"coarse loss: {stats['coarse_loss']:.4f}   "
+        if 'fine_loss' in stats:
+            s += f"fine loss: {stats['fine_loss']:.4f}   "
+        if 'PIR' in stats:
+            s += f"PIR: {stats['PIR']:.4f}   "
+        if 'IR' in stats:
+            s += f"IR: {stats['IR']:.4f}   "
+        if 'RRE' in stats:
+            s += f"RRE: {stats['RRE']:.4f}   "
+        if 'RTE' in stats:
+            s += f"RTE: {stats['RTE']:.4f}   "
+        if 'RR' in stats:
+            s += f"RR: {stats['RR']:.4f}   "
         print(s, flush=True)
 
     def print_stats(self, phase, stats):
         self.print_global_stats(phase, stats['global'])
+        if self.params.local.enable_local:
+            self.print_local_stats(phase, stats['local'])
     
     def create_weights_folder(self, dataset_name : str):
         # Create a folder to save weights of trained models
@@ -277,16 +311,21 @@ class NetworkTrainer:
     def log_eval_stats(self, stats):
         eval_stats = {}
         for database_name in stats:
-            eval_stats[database_name] = {}
-            eval_stats[database_name]['recall@1%'] = stats[database_name]['ave_one_percent_recall']
-            eval_stats[database_name]['recall@1'] = stats[database_name]['ave_recall'][0]
-            eval_stats[database_name]['MRR'] = stats[database_name]['ave_mrr']
+            for split in stats[database_name]:
+                split_log_key = split
+                if split == 'average':
+                    split_log_key = database_name
+                eval_stats[split_log_key] = {}
+                eval_stats[split_log_key]['recall@1%'] = stats[database_name][split]['ave_one_percent_recall']
+                eval_stats[split_log_key]['recall@1'] = stats[database_name][split]['ave_recall'][0]
+                eval_stats[split_log_key]['MRR'] = stats[database_name][split]['ave_mrr']
         return eval_stats
 
     def log_feats(self, feature_maps: tp.List) -> tp.Dict:
         """
         Logs feature maps coming from MinkLoc.
         """
+        tic = time.time()
         BATCH_IDX = 0  # only look at one batch element
         # Only log once per epoch
         if self.count_batches > 1:
@@ -326,6 +365,7 @@ class NetworkTrainer:
                     stats['pointcloud'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_combined)
                     stats['pca_variance'][f'{pcl_type}_layer_{j}'] = wandb.Histogram(feature_map_j_variance)
                 
+        self.logger.debug(f'Logged feats in {time.time() - tic:.4f}s')
         return stats
 
     def log_feats_and_attn_maps(self, feats_and_attn_maps: tp.List, octree: OctreeT,
@@ -333,6 +373,7 @@ class NetworkTrainer:
         """
         Logs various things including attention maps, average token similarity.
         """
+        tic = time.time()
         VIZ_BLOCKS = 5
         VIZ_HEADS = 2
         VIZ_LOCAL_WINDOWS = 1
@@ -467,8 +508,9 @@ class NetworkTrainer:
 
                 # Log the point cloud itself
                 octree_local = octree.cpu()
-                pcl_max_depth, _, _ = get_octree_points_and_windows(
-                    octree_local, depth=self.params.octree_depth, params=self.params
+                octree_points_local = octree_local.to_points()
+                pcl_max_depth = get_octant_centroids_from_points(
+                    octree_points_local, depth=self.params.octree_depth, quantizer=self.params.model_params.quantizer
                 )
                 # Log query and positive (queries and positives are neighbour pairs within the batch)
                 assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
@@ -481,8 +523,8 @@ class NetworkTrainer:
                     pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
                     stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
                     for j, depth_j in enumerate(octree_local.pyramid_depths):
-                        pcl_depth_j, _, _ = get_octree_points_and_windows(
-                            octree_local, depth=depth_j, params=self.params
+                        pcl_depth_j = get_octant_centroids_from_points(
+                            octree_points_local, depth=depth_j, quantizer=self.params.model_params.quantizer
                         )
                         batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == batch_idx
                         pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
@@ -569,8 +611,9 @@ class NetworkTrainer:
 
                 # Log the point cloud itself
                 octree_local = octree.cpu()
-                pcl_max_depth, _, _ = get_octree_points_and_windows(
-                    octree_local, depth=self.params.octree_depth, params=self.params
+                octree_points_local = octree_local.to_points()
+                pcl_max_depth = get_octant_centroids_from_points(
+                    octree_points_local, depth=self.params.octree_depth, quantizer=self.params.model_params.quantizer
                 )
                 # Log query and positive (queries and positives are neighbour pairs within the batch)
                 assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
@@ -583,8 +626,8 @@ class NetworkTrainer:
                     pcl_max_depth_combined = np.concatenate([pcl_max_depth_masked, pcl_max_depth_colours], axis=1)
                     stats['pointcloud'][f'{pcl_type}_depth_orig'] = wandb.Object3D(pcl_max_depth_combined)
                     for j, depth_j in enumerate(feats_and_attn_maps.keys()):
-                        pcl_depth_j, _, _ = get_octree_points_and_windows(
-                            octree_local, depth=depth_j, params=self.params
+                        pcl_depth_j = get_octant_centroids_from_points(
+                            octree_points_local, depth=depth_j, quantizer=self.params.model_params.quantizer
                         )
                         batch_mask_depth_j = octree_local.batch_id(depth_j, octree_local.nempty) == batch_idx
                         pcl_depth_j_masked = pcl_depth_j[batch_mask_depth_j].numpy()
@@ -610,6 +653,7 @@ class NetworkTrainer:
             stats = log_hotformer()
         else:
             raise NotImplementedError
+        self.logger.debug(f'Logged feats and attn maps in {time.time() - tic:.4f}s')
         return stats
 
     def global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
@@ -618,15 +662,13 @@ class NetworkTrainer:
         batch, positives_mask, negatives_mask = global_batch
         batch = to_device(batch, self.device, non_blocking=True)
 
-        # self.optimizer.zero_grad()
-
         with torch.set_grad_enabled(phase == 'train'):
             y = self.model(batch, global_only=True)
             stats = self.model.stats.copy() if hasattr(self.model, 'stats') else {}
 
             embeddings = y['global']
             # Log stats related to feats and attn maps
-            if 'feats_and_attn_maps' in y:
+            if phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
                 feats_and_attn_maps = y.pop('feats_and_attn_maps')
                 if 'octree' in y:
                     temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
@@ -657,7 +699,6 @@ class NetworkTrainer:
 
                 stats['loss_total'] = loss.item()
                 loss.backward()
-                # self.optimizer.step()
 
                 # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step 
                 # if self.model_ema is not None:
@@ -691,7 +732,7 @@ class NetworkTrainer:
                 y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
                 # Log stats related to feats and attn maps (only for first minibatch)
-                if i == 0 and 'feats_and_attn_maps' in y:
+                if i == 0 and phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
                     feats_and_attn_maps = y.pop('feats_and_attn_maps')
                     if 'octree' in y:
                         temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
@@ -703,7 +744,7 @@ class NetworkTrainer:
                 if mesa > 0.0:
                     ema_output = self.model_ema.module(minibatch, global_only=True)['global'].detach()
                     embeddings_ema_l.append(ema_output)
-            del minibatch
+                del minibatch, y
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
@@ -744,7 +785,6 @@ class NetworkTrainer:
         # Stage 3 - recompute descriptors with gradient enabled and compute the gradient of the loss w.r.t.
         # network parameters using cached gradient of the loss w.r.t embeddings
         if phase == 'train':
-            # self.optimizer.zero_grad()
             i = 0
             with torch.set_grad_enabled(True):
                 for minibatch in batch:
@@ -757,9 +797,7 @@ class NetworkTrainer:
                     # By default gradients are accumulated
                     embeddings.backward(gradient=embeddings_grad[i: i+minibatch_size])
                     i += minibatch_size
-                del minibatch
-
-                # self.optimizer.step()
+                    del minibatch, y
 
                 # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step
                 # if self.model_ema is not None:
@@ -777,18 +815,32 @@ class NetworkTrainer:
         local_batch = to_device(local_batch, self.device, non_blocking=True)
 
         with torch.set_grad_enabled(phase == 'train'):
-            output_dict = self.model(local_batch)
-            loc_loss, loc_stats = local_loss_fn(output_dict, local_batch)
-            stats = self.tensors_to_numbers(loc_stats)
+            output_dicts = self.model(local_batch)
+            batch_local_loss = []
+            batch_metrics = []
+            # Compute loss for each batch item
+            for ii, output_dict in enumerate(output_dicts):
+                local_batch_ii = {'transform': local_batch['transform'][ii]}  # temp fix since loss func expects a single batch item
+                temp_local_loss, local_metrics = local_loss_fn(output_dict, local_batch_ii)
+                batch_local_loss.append(temp_local_loss)
+                local_metrics = self.tensors_to_numbers(local_metrics)
+                batch_metrics.append(local_metrics)
+
+            # Average loss and metrics
+            batch_local_loss = torch.stack(batch_local_loss).mean()
+            batch_metrics = metrics_mean(batch_metrics)
+
+        if phase == 'train':
+            batch_local_loss.backward()
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
-        return stats
+        return batch_metrics
 
     def do_train(self):        
         # set up dataloaders
         dataloaders = make_dataloaders(
             self.params,
-            local=self.params.enable_local,
+            local=self.params.local.enable_local,
             validation=self.params.validation
         )
 
@@ -809,8 +861,9 @@ class NetworkTrainer:
         params_dict.update(model_params_dict)
         n_params = sum([param.nelement() for param in self.model.parameters()])
         params_dict['num_params'] = n_params
-        if not self.params.debug:
-            # trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
+        if self.params.wandb and not self.params.debug:
+            if WANDB_OFFLINE:
+                self.trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
             wandb.init(project='HOTFormerLoc', config=params_dict, id=self.wandb_id, resume="allow")
             self.wandb_id = wandb.run.id
             wandb.watch(self.model, log='all', log_freq=self.params.embeddings_log_freq)
@@ -837,14 +890,12 @@ class NetworkTrainer:
                 mesa = 0.0
             
             for phase in phases:
-                if self.params.verbose:
-                    print(f"[INFO] Begin {phase} phase", flush=True)
+                self.logger.info(f"Begin {phase} phase")
                 running_stats = []  # running stats for the current epoch and phase
                 self.count_batches = 0
                 epoch_embeddings = None
                 epoch_stage_gradient_magnitudes = None
 
-                # # TODO: Check if local dataloader is available, and add it to the iterable
                 if phase == 'train':
                     self.model.train()
                     global_phase = 'global_train'
@@ -862,27 +913,27 @@ class NetworkTrainer:
                     if self.params.debug and self.count_batches > 2:
                         break
                     
-                    if self.params.verbose:
-                        print(f"[INFO] Processing {phase} batch: {self.count_batches}", flush=True)
-
+                    self.logger.debug(f"Global batch {self.count_batches} start")
                     temp_global_stats, temp_global_embeddings = global_train_step_fn(
                         global_batch, phase, global_loss_fn, qkv_loss_fn,
                         self.params.num_embeddings_logged, mesa
                     )
+                    self.logger.debug(f"Global batch {self.count_batches} end")
                     batch_stats['global'] = temp_global_stats
+                    
+                    self.logger.debug(f"Local batch {self.count_batches} start")
+                    if self.params.local.enable_local:
+                        temp_local_stats = self.local_training_step(
+                            local_batch, phase, local_loss_fn,
+                        )
+                        batch_stats['local'] = temp_local_stats
+                    self.logger.debug(f"Local batch {self.count_batches} end")
 
-                    # TODO: Compute local losses
-                    temp_local_stats = self.local_training_step(
-                        local_batch, phase, local_loss_fn,
-                    )
-                    batch_stats['local'] = temp_local_stats
-
-                    # TODO: Move optimizer.step to after global and local losses are computed and .backward called for each
                     if phase == 'train':
-                        # Accumulate local losses and step optimizer
-                        loc_loss.backward()
+                        # Step optimizer after .backward called for global and local losses
                         self.optimizer.step()
-                        # TODO: Verify ema update is fine here
+                        self.optimizer.zero_grad()
+                        # Update EMA of model params for MESA loss
                         if self.model_ema is not None:
                             self.model_ema.update(self.model)
 
@@ -900,7 +951,6 @@ class NetworkTrainer:
                 epoch_stats = self.compute_mean_epoch_stats(running_stats)
 
                 stats[phase].append(epoch_stats)
-                # TODO: Ensure local stats are printed and logged to wandb
                 self.print_stats(phase, epoch_stats)
 
                 # Log metrics for wandb
@@ -936,8 +986,10 @@ class NetworkTrainer:
                         best_model_pathname = f"{self.model_pathname}_best.ckpt"
                         self.save_checkpoint(best_model_pathname)
 
-            if not self.params.debug:
+            if self.params.wandb and not self.params.debug:
                 wandb.log(metrics)
+                if WANDB_OFFLINE:
+                    self.trigger_sync()
 
             if self.params.batch_expansion_th is not None:
                 # Dynamic batch size expansion based on number of non-zero triplets
@@ -970,7 +1022,9 @@ class NetworkTrainer:
             prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
             pnv_write_eval_stats(f"pnv_{self.params.dataset_name}_results.txt", prefix, final_stats)        
-            # trigger_sync()
+
+            if self.params.wandb and WANDB_OFFLINE:
+                self.trigger_sync()
 
         # Return optimization value (to minimize)
         return (1 - self.best_avg_AR_1/100.0)
@@ -995,8 +1049,9 @@ class NetworkTrainer:
                         epoch_stats[substep][key] = np.mean(temp)
         return epoch_stats
 
-    def get_wandb_metrics(self, epoch_stats):
+    def get_wandb_metrics(self, epoch_stats: tp.Dict[str, tp.Dict]) -> tp.Dict:
         metrics = {}
+        # Global Metrics
         metrics['loss1'] = epoch_stats['global']['loss']
         metrics['loss_total'] = epoch_stats['global']['loss_total']
         if 'num_non_zero_triplets' in epoch_stats['global']:
@@ -1039,4 +1094,62 @@ class NetworkTrainer:
             metrics['pointcloud'] = epoch_stats['global']['pointcloud']
         if 'pca_variance' in epoch_stats['global']:
             metrics['pca_variance'] = epoch_stats['global']['pca_variance']
+        # Local Metrics
+        if not self.params.local.enable_local:
+            return metrics
+        metrics['local'] = {}
+        if 'loss' in epoch_stats['local']:
+            metrics['local']['loss'] = epoch_stats['local']['loss']
+        if 'coarse_loss' in epoch_stats['local']:
+            metrics['local']['coarse_loss'] = epoch_stats['local']['coarse_loss']
+        if 'fine_loss' in epoch_stats['local']:
+            metrics['local']['fine_loss'] = epoch_stats['local']['fine_loss']
+        if 'PIR' in epoch_stats['local']:
+            metrics['local']['coarse_IR'] = epoch_stats['local']['PIR']
+        if 'IR' in epoch_stats['local']:
+            metrics['local']['fine_IR'] = epoch_stats['local']['IR']
+        if 'RRE' in epoch_stats['local']:
+            metrics['local']['RRE'] = epoch_stats['local']['RRE']
+        if 'RTE' in epoch_stats['local']:
+            metrics['local']['RTE'] = epoch_stats['local']['RTE']
+        if 'RR' in epoch_stats['local']:
+            metrics['local']['RR'] = epoch_stats['local']['RR']
         return metrics
+
+    # def get_wandb_metrics(self, epoch_stats: tp.Dict[str, tp.Dict]) -> tp.Dict:
+    #     metrics = {}
+    #     # Global Metrics
+    #     metrics['loss1'] = epoch_stats['global'].get('loss')
+    #     metrics['loss_total'] = epoch_stats['global'].get('loss_total')
+    #     metrics['active_triplets1'] = epoch_stats['global'].get('num_non_zero_triplets')
+    #     metrics['positive_ranking'] = epoch_stats['global'].get('positive_ranking')
+    #     if 'recall' in epoch_stats['global']:
+    #         metrics['recall@1'] = epoch_stats['global']['recall'][1]
+    #     metrics['AP'] = epoch_stats['global'].get('ap')
+    #     metrics['loss_mesa'] = epoch_stats['global'].get('loss_mesa')
+    #     metrics['local_qkv_std_loss'] = epoch_stats['global'].get('local_qkv_std_loss')
+    #     metrics['local_qkv_std'] = epoch_stats['global'].get('local_qkv_std')
+    #     metrics['rt_qkv_std_loss'] = epoch_stats['global'].get('rt_qkv_std_loss')
+    #     metrics['rt_qkv_std'] = epoch_stats['global'].get('rt_qkv_std')
+    #     metrics['qkv_weight_norm_loss'] = epoch_stats['global'].get('qkv_weight_norm_loss')
+    #     metrics['qkv_weight_norm'] = epoch_stats['global'].get('qkv_weight_norm')
+    #     metrics['rt_attn_map'] = epoch_stats['global'].get('rt_attn_map')
+    #     metrics['local_attn_map'] = epoch_stats['global'].get('local_attn_map')
+    #     metrics['local_rpe'] = epoch_stats['global'].get('local_rpe')
+    #     metrics['rt_token_unique_sim'] = epoch_stats['global'].get('rt_token_unique_sim')
+    #     metrics['local_token_unique_sim'] = epoch_stats['global'].get('local_token_unique_sim')
+    #     metrics['rt_token_sim_matrix'] = epoch_stats['global'].get('rt_token_sim_matrix')
+    #     metrics['local_token_sim_matrix'] = epoch_stats['global'].get('local_token_sim_matrix')
+    #     metrics['pointcloud'] = epoch_stats['global'].get('pointcloud')
+    #     metrics['pca_variance'] = epoch_stats['global'].get('pca_variance')
+    #     # Local Metrics
+    #     metrics['local'] = {}
+    #     metrics['local']['loss'] = epoch_stats['local'].get('loss')
+    #     metrics['local']['coarse_loss'] = epoch_stats['local'].get('coarse_loss')
+    #     metrics['local']['fine_loss'] = epoch_stats['local'].get('fine_loss')
+    #     metrics['local']['coarse_IR'] = epoch_stats['local'].get('PIR')
+    #     metrics['local']['fine_IR'] = epoch_stats['local'].get('IR')
+    #     metrics['local']['RRE'] = epoch_stats['local'].get('RRE')
+    #     metrics['local']['RTE'] = epoch_stats['local'].get('RTE')
+    #     metrics['local']['RR'] = epoch_stats['local'].get('RR')
+    #     return metrics

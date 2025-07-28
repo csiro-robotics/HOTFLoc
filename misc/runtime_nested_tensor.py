@@ -97,11 +97,11 @@ if __name__ == "__main__":
         with torch.inference_mode():
             # GPU WARMUP
             for _ in range(10):
-                _ = model(input)
+                _ = model(input, global_only=True)
             # MEASURE PERFORMANCE
             for rep in range(repetitions):
                 starter.record()
-                _ = model(input)
+                _ = model(input, global_only=True)
                 ender.record()
                 # WAIT FOR GPU SYNC
                 torch.cuda.synchronize()
@@ -120,5 +120,5 @@ if __name__ == "__main__":
         #     record_shapes=True, profile_memory=True
         # ) as prof:
         #     with record_function("model_inference"):
-        #         model(input)
+        #         model(input, global_only=True)
         # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))

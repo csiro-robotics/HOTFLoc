@@ -11,7 +11,7 @@ from sklearn.neighbors import KDTree
 
 from eval.WildPlaces.utils import load_from_pickle
 # from eval.WildPlaces.utils import load_from_pickle, get_latent_vectors
-from eval.pnv_evaluate import get_latent_vectors
+from eval.pnv_evaluate_splits import get_latent_vectors
 from models.model_factory import model_factory
 from misc.utils import TrainingParams
 from misc.torch_utils import set_seed

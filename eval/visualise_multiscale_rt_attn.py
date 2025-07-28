@@ -16,7 +16,7 @@ import random
 from tqdm import tqdm
 import ocnn
 from ocnn.octree import Octree, Points
-from models.octree import OctreeT, rescale_octree_points
+from models.octree import OctreeT, get_octree_points_and_windows, rescale_octree_points
 from sklearn.manifold import TSNE
 from sklearn.neighbors import KDTree
 import matplotlib.pyplot as plt
@@ -32,8 +32,7 @@ from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
-from eval.vis_utils import submap_distance, get_octree_points_and_windows, \
-    print_token_similarity, remove_rt_attn_padding, get_rt_boundary_idx
+from eval.vis_utils import submap_distance, print_token_similarity, remove_rt_attn_padding, get_rt_boundary_idx
 
 SMALL_SIZE = 14
 MEDIUM_SIZE = 16
@@ -340,7 +339,7 @@ def plot_rt_attn_in_octree(
     windows_idx_per_depth = []
     for depth_j in pyramid_depths:
         points_octree, points_octree_windows, windows_idx = (
-            get_octree_points_and_windows(octree, depth_j, params)
+            get_octree_points_and_windows(octree, depth_j, params.model_params.quantizer)
         )
         points_octree_per_depth.append(points_octree)
         windows_idx_per_depth.append(windows_idx)
@@ -534,7 +533,7 @@ def process_submap(submap, model, device, params: TrainingParams):
     batch = {'octree': octree.to(device)}
     with torch.no_grad():        
         # Pass through model to get attn map
-        out = model(batch)
+        out = model(batch, global_only=True)
         feats_and_attn_maps = out['feats_and_attn_maps']
     num_hotf_blocks = len(feats_and_attn_maps)
     feats_and_attn_maps_block_i = feats_and_attn_maps[BLOCK_VIZ_IDX]
@@ -679,7 +678,7 @@ def process_submap(submap, model, device, params: TrainingParams):
     
     # for i, depth in enumerate(feats_and_attn_maps.keys()):
     #     points_octree, points_octree_windows, windows_idx = \
-    #         get_octree_points_and_windows(octree, depth, params)
+    #         get_octree_points_and_windows(octree, depth, params.model_params.quantizer)
     #     num_windows = len(points_octree_windows)
     #     num_blocks = len(feats_and_attn_maps[depth])
 

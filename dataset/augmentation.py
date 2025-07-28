@@ -379,51 +379,52 @@ class Normalize:
             self.scale_factor = scale_factor
 
     def __call__(self, coords: torch.Tensor):
-        current_shift, current_scale = (torch.zeros(3, dtype=coords.dtype), 0)
+        current_shift_and_scale = torch.zeros(4, dtype=coords.dtype)  # (shift_x, shift_y, shift_z, scale)
         if not self.unit_sphere_norm:                
             bbmin = coords.min(dim=0).values
             bbmax = coords.max(dim=0).values
             if self.zero_mean:
                 center = (bbmin + bbmax) * 0.5
                 coords = (coords - center)
-                current_shift = center
+                current_shift_and_scale[:3] = center
             if self.scale_factor is not None:
                 coords_normalized = coords / self.scale_factor
-                current_scale = self.scale_factor
+                current_shift_and_scale[3] = self.scale_factor
             else:
                 box_size = (bbmax - bbmin).max() + 1.0e-6
-                current_scale = 1 / (2.0 * self.norm_range / box_size)
-                coords_normalized = coords / current_scale
+                current_shift_and_scale[3] = 1 / (2.0 * self.norm_range / box_size)
+                coords_normalized = coords / current_shift_and_scale[3]
         else:
             # UNIT SPHERE NORMALIZATION:
             if self.zero_mean:
                 centroid = torch.mean(coords, axis=0)
                 coords = coords - centroid
-                current_shift = centroid
+                current_shift_and_scale[:3] = centroid
             if self.scale_factor is not None:
                 max_distance = self.scale_factor
             else:
                 # max_distance = torch.max(abs(coords_normalized)) / self.norm_range  ## INCORRECT, DOES NOT CONSIDER RADIAL DISTANCE
                 max_distance = torch.max(torch.linalg.norm(coords, dim=1)) / self.norm_range
             coords_normalized = coords / max_distance        
-            current_scale = max_distance
+            current_shift_and_scale[3] = max_distance
         
-        if current_scale <= 0:
+        if current_shift_and_scale[3] <= 0:
             raise ValueError("Invalid scaling factor")
         if self.return_shift_and_scale:
-            return coords_normalized, (current_shift, current_scale)
+            return coords_normalized, current_shift_and_scale
         else:
             return coords_normalized
 
     @staticmethod
-    def unnormalize(coords: torch.Tensor, shift_and_scale: tuple[torch.Tensor, float]):
+    def unnormalize(coords: torch.Tensor, shift_and_scale: torch.Tensor):
         """
         Undo normalization using shift and scale output from Normalize(). Note
         that this function will not verify that you have provided the correct
         shift and scale parameters for the given set of points.
         """
-        shift, scale = shift_and_scale
-        if scale <= 0:
+        assert coords.ndim == 2
+        assert shift_and_scale.shape == (4,)
+        if shift_and_scale[3] <= 0:
             raise ValueError("Invalid scaling factor")
-        coords_unnormalized = coords * scale + shift
+        coords_unnormalized = coords * shift_and_scale[3] + shift_and_scale[:3]
         return coords_unnormalized

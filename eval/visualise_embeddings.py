@@ -201,7 +201,7 @@ def get_latent_vectors(model, data_list: list[str], device, params: TrainingPara
 def compute_embedding(model, batch):
     with torch.inference_mode():
         # Compute global descriptor
-        y = model(batch)
+        y = model(batch, global_only=True)
         embedding = y['global'].detach().cpu().numpy()
     return embedding
 

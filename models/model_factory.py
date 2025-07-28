@@ -105,24 +105,25 @@ def model_factory(model_params: ModelParams):
             input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
-        coarse_feat_refiner = None
-        # TODO: sort out geotransformer config
-        # coarse_feat_refiner = GeometricTransformer(
-        #     cfg.geotransformer.input_dim,
-        #     cfg.geotransformer.output_dim,
-        #     cfg.geotransformer.hidden_dim,
-        #     cfg.geotransformer.num_heads,
-        #     cfg.geotransformer.blocks,
-        #     cfg.geotransformer.sigma_d,
-        #     cfg.geotransformer.sigma_a,
-        #     cfg.geotransformer.angle_k,
-        #     reduction_a=cfg.geotransformer.reduction_a,
-        # )
+        coarse_feat_refiner = GeometricTransformer(
+            input_dim=model_params.geotransformer.input_dim,
+            output_dim=model_params.geotransformer.output_dim,
+            hidden_dim=model_params.geotransformer.hidden_dim,
+            num_heads=model_params.geotransformer.num_heads,
+            blocks=model_params.geotransformer.blocks,
+            sigma_d=model_params.geotransformer.sigma_d,
+            sigma_a=model_params.geotransformer.sigma_a,
+            angle_k=model_params.geotransformer.angle_k,
+            activation_fn=model_params.geotransformer.activation_fn,
+            reduction_a=model_params.geotransformer.reduction_a,
+        )
         model = HOTFormerMetricLoc(
             hotformerloc_global=hotformerloc_global,
             coarse_feat_refiner=coarse_feat_refiner,
+            model_params=model_params,
             coarse_idx=model_params.coarse_idx,
             fine_idx=model_params.fine_idx,
+            quantizer=model_params.quantizer,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'hotformerloc' in model_params.model.lower():

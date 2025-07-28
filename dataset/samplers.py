@@ -2,6 +2,8 @@
 
 import random
 import copy
+import logging
+from typing import List
 from torch.utils.data import Sampler
 
 from dataset.base_datasets import TrainingDataset
@@ -48,10 +50,21 @@ class BatchSampler(Sampler):
     """
     Sampler returning list of indices to form a mini-batch.  
     Samples elements in groups consisting of k=2 similar elements (positives).   
-    Batch has the following structure: item1_1, ..., item1_k, item2_1, ... item2_k, itemn_1, ..., itemn_k
+    Batch has the following structure: item1_1, ..., item1_k, item2_1, ... item2_k, itemn_1, ..., itemn_k.  
+    Can optionally prioritise sampling cross-source samples (i.e. ground/aerial pairs),
+    or only sample ground queries and aerial positives to prevent same-source positive pairs being sampled.
     """
-    def __init__(self, dataset: TrainingDataset, batch_size: int, batch_size_limit: int = None,
-                 batch_expansion_rate: float = None, max_batches: int = None, local: bool = False):
+
+    def __init__(
+        self,
+        dataset: TrainingDataset,
+        batch_size: int,
+        batch_size_limit: int = None,
+        batch_expansion_rate: float = None,
+        max_batches: int = None,
+        only_ground_aerial: bool = False,
+        local: bool = False,
+    ):
         if batch_expansion_rate is not None:
             assert batch_expansion_rate > 1., 'batch_expansion_rate must be greater than 1'
             assert batch_size <= batch_size_limit, 'batch_size_limit must be greater or equal to batch_size'
@@ -60,16 +73,20 @@ class BatchSampler(Sampler):
         self.batch_size_limit = batch_size_limit
         self.batch_expansion_rate = batch_expansion_rate
         self.max_batches = max_batches
+        self.only_ground_aerial = only_ground_aerial
         self.dataset = dataset
         self.local = local
         self.k = 2  # Number of positive examples per group must be 2
         if not self.local and self.batch_size < 2 * self.k:
             self.batch_size = 2 * self.k
-            print('WARNING: Batch too small. Batch size increased to {}.'.format(self.batch_size))
+            logging.warning('Batch too small. Batch size increased to {}.'.format(self.batch_size))
 
         self.batch_idx = []     # Index of elements in each batch (re-generated every epoch)
-        self.elems_ndx = list(self.dataset.queries)    # List of point cloud indexes
-
+        if self.only_ground_aerial:
+            self.elems_ndx = list(self.dataset.ground_ndx)
+        else:
+            self.elems_ndx = list(self.dataset.queries)    # List of point cloud indexes
+            
     def __iter__(self):
         # Re-generate batches every epoch
         self.generate_batches()
@@ -81,7 +98,7 @@ class BatchSampler(Sampler):
 
     def expand_batch(self):
         if self.batch_expansion_rate is None:
-            print('WARNING: batch_expansion_rate is None')
+            logging.warning('batch_expansion_rate is None')
             return
 
         if self.batch_size >= self.batch_size_limit:
@@ -90,7 +107,7 @@ class BatchSampler(Sampler):
         old_batch_size = self.batch_size
         self.batch_size = int(self.batch_size * self.batch_expansion_rate)
         self.batch_size = min(self.batch_size, self.batch_size_limit)
-        print('=> Batch size increased from: {} to {}'.format(old_batch_size, self.batch_size))
+        logging.info('=> Batch size increased from: {} to {}'.format(old_batch_size, self.batch_size))
 
     def generate_batches(self):
         # Generate training/evaluation batches.
@@ -98,6 +115,8 @@ class BatchSampler(Sampler):
         self.batch_idx = []
 
         unused_elements_ndx = ListDict(self.elems_ndx)
+        if self.only_ground_aerial:
+            unused_aerial_elements_ndx = ListDict(list(self.dataset.aerial_ndx))
         current_batch = []
 
         if not self.local:
@@ -125,15 +144,26 @@ class BatchSampler(Sampler):
             if len(positives) == 0:
                 # Broken dataset element without any positives
                 continue
-
-            # TODO: Prioritise sampling cross-source positives if available
-
-            unused_positives = [e for e in positives if e in unused_elements_ndx]
+            if self.only_ground_aerial:
+                unused_positives = [e for e in positives if e in unused_aerial_elements_ndx]
+            else:
+                unused_positives = [e for e in positives if e in unused_elements_ndx]
+            
             # If there're unused elements similar to selected_element, sample from them
             # otherwise sample from all similar elements
             if len(unused_positives) > 0:
+                # Prioritise sampling cross-source positives if available
+                if self.dataset.prioritise_cross_source and not self.only_ground_aerial:
+                    unused_cross_source_positives = self.dataset.get_cross_source_positives(
+                        selected_element, unused_positives
+                    )
+                    if len(unused_cross_source_positives) > 0:
+                        unused_positives = unused_cross_source_positives
                 second_positive = random.choice(unused_positives)
-                unused_elements_ndx.remove(second_positive)
+                if self.only_ground_aerial:
+                    unused_aerial_elements_ndx.remove(second_positive)
+                else:
+                    unused_elements_ndx.remove(second_positive)
             else:
                 second_positive = random.choice(list(positives))
 
@@ -148,10 +178,25 @@ class BatchSampler6DOF(BatchSampler):
     Sampler returning list of indices to form a mini-batch.  
     Samples elements, only selecting valid queries with positives.
     """
-    def __init__(self, dataset: TrainingDataset, batch_size: int, batch_size_limit: int = None,
-                 batch_expansion_rate: float = None, max_batches: int = None):
-        super().__init__(dataset, batch_size, batch_size_limit, batch_expansion_rate,
-                         max_batches, local = True)
+
+    def __init__(
+        self,
+        dataset: TrainingDataset,
+        batch_size: int,
+        batch_size_limit: int = None,
+        batch_expansion_rate: float = None,
+        max_batches: int = None,
+        only_ground_aerial: bool = False,
+    ):
+        super().__init__(
+            dataset,
+            batch_size,
+            batch_size_limit,
+            batch_expansion_rate,
+            max_batches,
+            only_ground_aerial,
+            local=True,
+        )
 
     def generate_batches(self):
         # Generate training/evaluation batches.
@@ -171,8 +216,6 @@ class BatchSampler6DOF(BatchSampler):
                     break
                 if len(unused_elements_ndx) == 0:
                     break
-
-            # TODO: Prioritise sampling cross-source positives if available
 
             # Add valid query to batch
             selected_element = unused_elements_ndx.choose_random()

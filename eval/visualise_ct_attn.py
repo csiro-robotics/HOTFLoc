@@ -152,7 +152,7 @@ def main(model, device, params: TrainingParams):
     batch = {'octree': query_octree.to(device)}
     with torch.no_grad():        
         # Pass through model to get attn map
-        out = model(batch)
+        out = model(batch, global_only=True)
         feats_and_attn_maps = out['feats_and_attn_maps']
 
     # TODO: Need to visualise two things. 
@@ -175,7 +175,7 @@ def main(model, device, params: TrainingParams):
     
     for i, depth in enumerate(feats_and_attn_maps.keys()):
         points_octree, points_octree_windows, windows_idx = \
-            get_octree_points_and_windows(query_octree, depth, params)
+            get_octree_points_and_windows(query_octree, depth, params.model_params.quantizer)
         num_windows = len(points_octree_windows)
         num_blocks = len(feats_and_attn_maps[depth])
 

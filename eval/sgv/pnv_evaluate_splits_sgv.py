@@ -19,7 +19,7 @@ import ocnn
 
 from models.model_factory import model_factory
 from misc.utils import TrainingParams, load_pickle, save_pickle
-from misc.torch_utils import set_seed
+from misc.torch_utils import set_seed, to_device, release_cuda
 from dataset.dataset_utils import make_eval_dataloader
 from eval.utils import get_query_database_splits
 from eval.sgv.sgv_utils import sgv_fn
@@ -168,21 +168,6 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     return stats
 
 
-def collate_batch(data, device, params: TrainingParams):
-    if params.load_octree:
-        octrees = ocnn.octree.merge_octrees(data)
-        # NOTE: remember to construct the neighbor indices
-        octrees.construct_all_neigh()
-        batch = {'octree': octrees.to(device)}
-    else:
-        coords = [params.model_params.quantizer(e)[0] for e in data]
-        bcoords = ME.utils.batched_coordinates(coords)
-        # Assign a dummy feature equal to 1 to each point
-        feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32)
-        batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
-    return batch
-
-
 def get_latent_vectors(model, data_set, device, params: TrainingParams,
                        show_progress: bool = False):
     # Adapted from original PointNetVLAD code
@@ -202,7 +187,7 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams,
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
         for ii, batch in enumerate(dataloader):
-            batch = {e: batch[e].to(device, non_blocking=True) for e in batch}
+            batch = to_device(batch, device, non_blocking=True)
             temp_global_embedding, temp_local_embedding = compute_embedding(model, batch)
             if global_embeddings is None:
                 global_embeddings = np.zeros((len(data_set), temp_global_embedding.shape[1]), dtype=temp_global_embedding.dtype)
@@ -217,12 +202,12 @@ def compute_embedding(model, batch):
     with torch.inference_mode():
         # Compute global descriptor
         y = model(batch)
-        global_embedding = y['global'].detach().cpu().numpy()
+        global_embedding = release_cuda(y['global'], to_numpy=True)
         # Get local descriptors for each pyramid level
         local_embedding = {}
         if 'local' in y:
             for depth in y['local'].keys():
-                local_embedding[depth] = y['local'][depth].detach().cpu()
+                local_embedding[depth] = release_cuda(y['local'][depth])
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     return global_embedding, local_embedding

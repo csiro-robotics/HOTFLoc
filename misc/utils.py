@@ -1,12 +1,13 @@
 # Warsaw University of Technology
+#
+# Adapted for HOTFormerLoc by Ethan Griffiths
 
 import os
 import configparser
 import time
 import pickle
-from typing import Union
-import numpy as np
-import matplotlib.pyplot as plt
+
+from easydict import EasyDict as edict
 
 from dataset.quantization import PolarQuantizer, CartesianQuantizer
 from dataset.coordinate_utils import CylindricalCoordinates
@@ -134,6 +135,53 @@ class ModelParams:
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
+                if any(model in self.model.lower() for model in ('hotformermetricloc')):
+                    #######################################################################
+                    # HOTFormerMetricLoc-specific params
+                    #######################################################################
+                    if 'GEOTRANSFORMER' in config:
+                        params = config['GEOTRANSFORMER']
+                        self.geotransformer = edict()
+                        self.geotransformer.input_dim = params.getint('input_dim', 2048)
+                        self.geotransformer.hidden_dim = params.getint('hidden_dim', 128)
+                        self.geotransformer.output_dim = params.getint('output_dim', 256)
+                        self.geotransformer.num_heads = params.getint('num_heads', 4)
+                        if 'blocks' in params:
+                            self.geotransformer.blocks = tuple([e.strip() for e in params['blocks'].split(',')])
+                        else:
+                            self.geotransformer.blocks = tuple(['self', 'cross', 'self', 'cross', 'self', 'cross'])
+                        self.geotransformer.sigma_d = params.getfloat('sigma_d', 4.8)
+                        self.geotransformer.sigma_a = params.getfloat('sigma_a', 15)
+                        self.geotransformer.angle_k = params.getint('angle_k', 3)
+                        self.geotransformer.activation_fn = params.get('activation_fn', 'ReLU')
+                        self.geotransformer.reduction_a = params.get('reduction_a', 'max')
+
+                    # model - Coarse Matching
+                    if 'COARSE MATCHING' in config:
+                        params = config['COARSE MATCHING']
+                        self.coarse_matching = edict()
+                        self.coarse_matching.num_targets = params.getint('num_targets', 128)
+                        self.coarse_matching.overlap_threshold = params.getfloat('overlap_threshold', 0.1)
+                        self.coarse_matching.num_correspondences = params.getint('num_correspondences', 256)
+                        self.coarse_matching.dual_normalization = params.getboolean('dual_normalization', True)
+                        self.coarse_matching.ground_truth_matching_radius = params.getfloat('ground_truth_matching_radius', 0.6)
+                        self.coarse_matching.num_points_in_patch = params.getint('num_points_in_patch', 128)
+
+                    # model - Fine Matching
+                    if 'FINE MATCHING' in config:
+                        params = config['FINE MATCHING']
+                        self.fine_matching = edict()
+                        self.fine_matching.topk = params.getint('topk', 2)
+                        self.fine_matching.acceptance_radius = params.getfloat('acceptance_radius', 0.6)
+                        self.fine_matching.mutual = params.getboolean('mutual', True)
+                        self.fine_matching.confidence_threshold = params.getfloat('confidence_threshold', 0.05)
+                        self.fine_matching.use_dustbin = params.getboolean('use_dustbin', False)
+                        self.fine_matching.use_global_score = params.getboolean('use_global_score', False)
+                        self.fine_matching.correspondence_threshold = params.getint('correspondence_threshold', 3)
+                        self.fine_matching.correspondence_limit = params.getint('correspondence_limit', None)
+                        self.fine_matching.num_refinement_steps = params.getint('num_refinement_steps', 5)
+                        self.fine_matching.num_sinkhorn_iterations = params.getint('num_sinkhorn_iterations', 100)
+
             else:
                 if 'ct_layers' in params:  # using carrier token attention per stage
                     self.ct_layers = tuple([e == 'True' for e in params['ct_layers'].split(',')])
@@ -188,6 +236,7 @@ class TrainingParams:
         self.embeddings_log_freq = params.getint('embeddings_log_freq', 5)  # Embeddings logging frequency (in epochs)
         self.num_embeddings_logged = params.getint('num_embeddings_logged', 20)  # Number of embeddings to log at each epoch
         self.num_workers = params.getint('num_workers', 0)
+        self.wandb = params.getboolean('wandb', True)  # enable wandb logging
 
         # Initial batch size for global descriptors (for both main and secondary dataset)
         self.batch_size = params.getint('batch_size', 64)
@@ -208,6 +257,12 @@ class TrainingParams:
             self.batch_expansion_rate = None
 
         self.val_batch_size = params.getint('val_batch_size', self.batch_size_limit)
+
+        # Prioritise sampling of ground/aerial pairs, if available
+        self.prioritise_cross_source = params.getboolean('prioritise_cross_source', False)
+        # Only sample ground queries and aerial positives for train and val
+        #   (but still considers intra-source positives/negatives within the batch)
+        self.only_ground_aerial = params.getboolean('only_ground_aerial', False)
 
         self.lr = params.getfloat('lr', 1e-3)
         self.epochs = params.getint('epochs', 20)
@@ -281,6 +336,7 @@ class TrainingParams:
         self.validation = params.getboolean('validation', True)
         self.test_file = params.get('test_file', None)
         self.dataset_name = params.get('dataset_name', None)
+        self.is_cross_source_dataset = 'CSWildPlaces' in self.dataset_name  # flag for dataset with ground-aerial pairs
         self.skip_same_run = params.getboolean('skip_same_run', True)
         self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
         self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
@@ -289,13 +345,41 @@ class TrainingParams:
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
 
         # Metric localisation and re-ranking parameters
-        params = config['LOCAL']
-        self.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
-        self.local_batch_size = params.getint('local_batch_size', 8)
-        self.local_aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
-        
+        self.local = edict({'enable_local': False})
+        if 'LOCAL' in config:
+            params = config['LOCAL']
+            self.local.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
+            self.local.batch_size = params.getint('local_batch_size', 8)
+            self.local.aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
+            self.local.icp = params.getboolean('icp', False)
+            self.local.weight_coarse_loss = params.getfloat('weight_coarse_loss', 1.0)
+            self.local.weight_fine_loss = params.getfloat('weight_coarse_loss', 1.0)
+            # eval config
+            self.local.acceptance_overlap = params.getfloat('acceptance_overlap', 0.0)
+            self.local.acceptance_radius = params.getfloat('acceptance_radius', 1.0)
+            self.local.inlier_ratio_threshold = params.getfloat('inlier_ratio_threshold', 0.05)
+            self.local.rre_threshold = params.getfloat('rre_threshold', 5.0)
+            self.local.rte_threshold = params.getfloat('rte_threshold', 2.0)
+
+        # loss - Coarse level
+        if 'COARSE LOSS' in config:
+            params = config['COARSE LOSS']
+            self.coarse_loss = edict()
+            self.coarse_loss.positive_margin = params.getfloat('positive_margin', 0.1)
+            self.coarse_loss.negative_margin = params.getfloat('negative_margin', 1.4)
+            self.coarse_loss.positive_optimal = params.getfloat('positive_optimal', 0.1)
+            self.coarse_loss.negative_optimal = params.getfloat('negative_optimal', 1.4)
+            self.coarse_loss.log_scale = params.getfloat('log_scale', 40)
+            self.coarse_loss.positive_overlap = params.getfloat('positive_overlap', 0.1)
+
+        # loss - Fine level
+        if 'FINE LOSS' in config:
+            params = config['FINE LOSS']
+            self.fine_loss = edict()
+            self.fine_loss.positive_radius = 0.6
+
         # Read model parameters
-        self.model_params = ModelParams(self.model_params_path, local=self.enable_local)
+        self.model_params = ModelParams(self.model_params_path, local=self.local.enable_local)
         
         # Check if using octrees, load octrees instead of sparse tensor for OctFormer
         self.load_octree = any(model in self.model_params.model.lower() for model in ('octformer', 'hotformer'))

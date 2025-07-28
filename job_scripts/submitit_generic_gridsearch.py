@@ -39,9 +39,11 @@ if __name__ == "__main__":
     parser.add_argument('--job_days', type=float, default=7.0,
                         help='Number of days to request a job for. Accepts decimal values, min 2 hours')
     parser.add_argument('--job_cpus', type=int, default=4,
-                        help='Number of cpus requested per gpu')
+                        help='Number of cpus (cores) requested per gpu')
     parser.add_argument('--job_mem', type=str, default='200gb',
                         help='Memory requested per job, 280gb to prevent 2 jobs entering the same node (and causing shm overflow)')
+    parser.add_argument('--job_omp_num_threads', type=int, default=None,
+                        help='Max number of times to number of OMP threads to request (defaults to num cpus)')
     parser.add_argument('--num_workers', type=int, default=30,
                         help='Num jobs that can run in parallel at once')
     parser.add_argument('--debug', action='store_true',
@@ -55,6 +57,9 @@ if __name__ == "__main__":
     print('Days requested: {}'.format(args.job_days))
     print('CPUs (per node) requested: {}'.format(args.job_cpus))
     print('Mem requested: {}'.format(args.job_mem))
+    if args.job_omp_num_threads is None:
+        args.job_omp_num_threads = args.job_cpus
+    print('OMP num threads: {}'.format(args.job_omp_num_threads))
     print('Debug: {}'.format(args.debug))
     print('Verbose: {}'.format(args.verbose))
 
@@ -64,6 +69,7 @@ if __name__ == "__main__":
         'timeout_min': round(args.job_days*24*60) , 'slurm_mail_user': 'ethan.griffiths@data61.csiro.au',
         'slurm_mail_type': 'FAIL,END',  
         'slurm_array_parallelism': args.num_workers,
+        'slurm_setup': [f"export OMP_NUM_THREADS={args.job_omp_num_threads}"],
         # 'slurm_gres': 'one:1',
         # 'slurm_exclude': 'g088',
         # 'slurm_dependency': 'afterany:356389'

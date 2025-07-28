@@ -6,10 +6,10 @@ from torch import Tensor
 EPS = 1e-5
 
 
-def metrics_mean(l):
+def metrics_mean(metrics_list: list):
     # Compute the mean and return as Python number
     metrics = {}
-    for e in l:
+    for e in metrics_list:
         for metric_name in e:
             if metric_name not in metrics:
                 metrics[metric_name] = []

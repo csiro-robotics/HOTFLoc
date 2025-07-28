@@ -2,7 +2,8 @@
 import os
 import pickle
 import time
-from typing import List, Dict
+import logging
+from typing import List, Dict, Optional
 
 import numpy as np
 import torch
@@ -60,7 +61,8 @@ class EvaluationTuple:
 class TrainingDataset(Dataset):
     def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
                  transform=None, set_transform=None, load_octree=False,
-                 octree_depth=11, full_depth=2, coordinates='cartesian'):
+                 octree_depth=11, full_depth=2, coordinates='cartesian',
+                 is_cross_source_dataset=False, prioritise_cross_source=False):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), f'Cannot access dataset path: {dataset_path}'
         self.dataset_path = dataset_path
@@ -73,13 +75,23 @@ class TrainingDataset(Dataset):
         self.load_octree = load_octree
         self.octree_depth = octree_depth
         self.full_depth = full_depth
+        if prioritise_cross_source:
+            assert is_cross_source_dataset
+        self.is_cross_source_dataset = is_cross_source_dataset
+        self.prioritise_cross_source = prioritise_cross_source
         self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
 
         # NOTE: Virga env requires 'datasets' module stored as 'dataset' to avoid
         # conflict. Below will check if a pickle was saved with the wrong module,
         # and load TrainingTuple from the correct path for this environment.
         self.queries: Dict[int, TrainingTuple] = CustomUnpickler(open(self.query_filepath, "rb")).load()
-        print(f'{len(self)} queries in the dataset')
+        message = f'{len(self)} queries in the dataset'
+        # Pre-compute ground and aerial indices
+        if self.is_cross_source_dataset:
+            self.ground_ndx = {idx for idx, elem in self.queries.items() if 'ground' in elem.rel_scan_filepath}
+            self.aerial_ndx = {idx for idx, elem in self.queries.items() if 'aerial' in elem.rel_scan_filepath}
+            message += f' ({len(self.ground_ndx)} ground, {len(self.aerial_ndx)} aerial)'
+        logging.info(message)
 
         self.pc_loader = get_pointcloud_loader(self.dataset_type)
 
@@ -121,16 +133,33 @@ class TrainingDataset(Dataset):
     def get_non_negatives(self, ndx):
         return self.queries[ndx].non_negatives
 
+    def get_cross_source_positives(
+        self,
+        ndx: int,
+        positives: Optional[List[int]],
+    ) -> List[int]:
+        """Returns list of positives captured from a different source to the query."""
+        if positives is None:
+            positives = self.get_positives(ndx)
+        if 'ground' in self.queries[ndx].rel_scan_filepath:
+            cross_source_positives = self.aerial_ndx.intersection(positives)
+        elif 'aerial' in self.queries[ndx].rel_scan_filepath:
+            cross_source_positives = self.ground_ndx.intersection(positives)
+        else:
+            raise ValueError('Dataset does not support ground/aerial cross-source')
+        return list(cross_source_positives)
+
 
 class Training6DOFDataset(TrainingDataset):
     """
     Dataset wrapper for for 6dof estimation.
     """
     def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
-                 local_transform=None, **kwargs):
+                 local_transform=None, icp=False, **kwargs):
         super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
         self.clip_octree_points = False  # We do this step after local transforms
         self.local_transform = local_transform
+        self.icp = icp
 
     def __getitem__(self, ndx):
         # TODO: Consider adding gravity alignment as a step here
@@ -141,6 +170,10 @@ class Training6DOFDataset(TrainingDataset):
 
         # get random positive
         positives = self.get_positives(ndx)
+        if self.prioritise_cross_source:
+            cross_source_positives = self.get_cross_source_positives(ndx, positives)
+            if len(cross_source_positives) > 0:
+                positives = cross_source_positives
         positive_ndx = np.random.choice(positives, 1)[0]
         positive_pc, _ = super().__getitem__(positive_ndx)
 
@@ -156,60 +189,51 @@ class Training6DOFDataset(TrainingDataset):
                 dtype=query_pc.dtype,
             )
 
-        # TODO: Fix variable names and such after debugging is finished
-        # ensure alignment with icp
-        tic = time.time()
-        transform_fgr, fitness_fgr, inlier_rmse_fgr = fast_global_registration(
-            query_pc.numpy().astype(float),
-            positive_pc.numpy().astype(float),
-            inlier_dist_threshold=0.2,
-            max_iteration=64,
-            voxel_size=None,
-        )
-        fgr_time = time.time() - tic
-        print(f"[FGR] Fitness: {fitness_fgr:.4f} -- Inlier RMSE: {inlier_rmse_fgr:.4f} -- {fgr_time:.4f}s")
+        # ######################## TEMP FOR DEBUGGING ########################
+        # query_pc_orig = query_pc.clone()
+        # positive_pc_orig = positive_pc.clone()
+        # transform_orig = transform.clone()
+        # ####################################################################
 
-        tic = time.time()
-        transform_icp, fitness_icp, inlier_rmse_icp = icp(
-            query_pc.numpy().astype(float),
-            positive_pc.numpy().astype(float),
-            transform.numpy(),
-            gicp=True,
-            inlier_dist_threshold=0.2,
-            max_iteration=200,
-            voxel_size=None,
-        )
-        icp_time = time.time() - tic
-        print(f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {icp_time:.4f}s")
+        # Ensure alignment with icp
+        if self.icp:
+            # tic = time.time()
+            transform_icp, fitness_icp, inlier_rmse_icp = icp(
+                query_pc.numpy().astype(float),
+                positive_pc.numpy().astype(float),
+                transform.numpy(),
+                gicp=True,
+                inlier_dist_threshold=0.2,
+                max_iteration=100,
+                voxel_size=None,
+            )
+            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
+            # logging.debug(msg)
+            transform = torch.tensor(transform_icp, dtype=transform.dtype)
         
         if self.local_transform is not None:
-            ######################## TEMP FOR DEBUGGING ########################
-            query_pc_orig = query_pc.clone()
-            positive_pc_orig = positive_pc.clone()
-            transform_orig = transform.clone()
-            ####################################################################
-            # # Apply only normalization and jitter to the query point cloud
-            # query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
-            # # Apply random transform to the positive point cloud
-            # # TODO: Verify that augmented transform correctly registers to query
-            # positive_pc, positive_shift_and_scale, aug_tf = self.local_transform(positive_pc)
-            # transform = aug_tf @ transform
+            # Apply only normalization and jitter to the query point cloud
+            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
+            # Apply random transform to the positive point cloud
+            positive_pc, positive_shift_and_scale, aug_tf = self.local_transform(positive_pc)
+            transform = aug_tf @ transform
 
         ########################################################################
         # VISUALISATIONS FOR DEBUGGING
         ########################################################################
-        from misc.point_clouds import draw_registration_result
-        query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
-        positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
-        draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
-        draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
-        draw_registration_result(positive_pc_denorm, positive_pc_orig, np.linalg.inv(aug_tf))
-        draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
-        draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
-        draw_registration_result(query_pc_orig, positive_pc_orig, transform_fgr)
-        draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
-        draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
-        draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
+        # from misc.point_clouds import draw_registration_result
+        # # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
+        # # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
+        # # draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
+        # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
+        # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.linalg.inv(aug_tf))
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
+        # # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_fgr)
+        # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, aug_tf @ transform_icp)
         ########################################################################
 
         # Now clip point coordinates after normalization is done

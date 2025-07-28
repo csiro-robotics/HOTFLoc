@@ -10,15 +10,17 @@ import pickle
 import os
 import argparse
 import torch
-import MinkowskiEngine as ME
 import tqdm
-import ocnn
 
 from models.model_factory import model_factory
-from misc.utils import TrainingParams, load_pickle, save_pickle
+from misc.utils import TrainingParams
 from misc.torch_utils import set_seed
-from dataset.dataset_utils import make_eval_dataloader
 from eval.utils import get_query_database_splits
+from eval.pnv_evaluate import (
+    get_latent_vectors,
+    save_embeddings_to_file,
+    load_embeddings_from_file,
+)
 
 def evaluate(model, device, params: TrainingParams, log: bool = False,
              model_name: str = 'model', show_progress: bool = False, 
@@ -60,14 +62,9 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
                                 log=log, model_name=model_name, show_progress=show_progress,
                                 save_embeddings=save_embeddings, load_embeddings=load_embeddings)
         stats[location_name] = temp
-        # 'average' key only exists when more than one split exists
-        if 'average' in temp:
-            ave_key = 'average'
-        else:
-            ave_key = next(iter(temp))
-        ave_one_percent_recall.append(temp[ave_key]['ave_one_percent_recall'])
-        ave_recall.append(temp[ave_key]['ave_recall'])
-        ave_mrr.append(temp[ave_key]['ave_mrr'])
+        ave_one_percent_recall.append(temp['average']['ave_one_percent_recall'])
+        ave_recall.append(temp['average']['ave_recall'])
+        ave_mrr.append(temp['average']['ave_mrr'])
         
     # Compute average stats
     stats['average'] = {'average': {'ave_one_percent_recall': np.mean(ave_one_percent_recall),
@@ -142,66 +139,13 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
             stats[split_name] = {'ave_one_percent_recall': pair_opr,
                                  'ave_recall': pair_recall,
                                  'ave_mrr': pair_mrr}
-    if count > 1:
-        ave_recall = recall / count
-        ave_one_percent_recall = np.mean(one_percent_recall)
-        ave_mrr = np.mean(mrr)
-        stats['average'] = {'ave_one_percent_recall': ave_one_percent_recall,
-                            'ave_recall': ave_recall,
-                            'ave_mrr': ave_mrr}
+    ave_recall = recall / count
+    ave_one_percent_recall = np.mean(one_percent_recall)
+    ave_mrr = np.mean(mrr)
+    stats['average'] = {'ave_one_percent_recall': ave_one_percent_recall,
+                        'ave_recall': ave_recall,
+                        'ave_mrr': ave_mrr}
     return stats
-
-
-def collate_batch(data, device, params: TrainingParams):
-    if params.load_octree:
-        octrees = ocnn.octree.merge_octrees(data)
-        # NOTE: remember to construct the neighbor indices
-        octrees.construct_all_neigh()
-        batch = {'octree': octrees.to(device)}
-    else:
-        coords = [params.model_params.quantizer(e)[0] for e in data]
-        bcoords = ME.utils.batched_coordinates(coords)
-        # Assign a dummy feature equal to 1 to each point
-        feats = torch.ones((bcoords.shape[0], 1), dtype=torch.float32)
-        batch = {'coords': bcoords.to(device), 'features': feats.to(device)}
-    return batch
-
-
-def get_latent_vectors(model, data_set, device, params: TrainingParams,
-                       show_progress: bool = False):
-    # Adapted from original PointNetVLAD code
-    if len(data_set) == 0:
-        return None
-
-    ### NOTE: Disabled so that eval can be tested during training debug mode
-    # if params.debug:
-    #     embeddings = np.random.rand(len(data_set), 256)
-    #     return embeddings
-
-    # Create dataloader for data_set
-    dataloader = make_eval_dataloader(params, data_set, local=False)
-    embeddings = None
-    model.eval()
-    with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
-        for ii, batch in enumerate(dataloader):
-            batch = {e: batch[e].to(device, non_blocking=True) for e in batch}
-            temp_embedding = compute_embedding(model, batch)
-            if embeddings is None:
-                embeddings = np.zeros((len(data_set), temp_embedding.shape[1]), dtype=temp_embedding.dtype)
-            embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_embedding))] = temp_embedding
-            pbar.update(len(temp_embedding))
-    
-    return embeddings
-
-
-def compute_embedding(model, batch):
-    with torch.inference_mode():
-        # Compute global descriptor
-        y = model(batch)
-        embedding = y['global'].detach().cpu().numpy()
-        torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
-
-    return embedding
 
 
 def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
@@ -329,29 +273,6 @@ def pnv_write_eval_stats(file_name, prefix, stats):
         # s += "\n\nMean AR@1%: {:0.2f}, Mean AR@1: {:0.2f}\n\n".format(mean_1p_recall, mean_recall)
         s += "\n------------------------------------------------------------------------\n\n"
         f.write(s)
-
-
-def save_embeddings_to_file(global_embeddings, model_name: str, dataset_name: str,
-                            location_name: str, set_name: str = "database"):
-    save_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    global_embeddings_file = os.path.join(save_dir, f"{set_name}_global_embeddings.pickle")
-    save_pickle(global_embeddings, global_embeddings_file)
-
-
-def load_embeddings_from_file(model_name: str, dataset_name: str,
-                              location_name: str, set_name: str = "database"):
-    load_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
-    if not os.path.exists(load_dir):
-        raise FileNotFoundError("No saved embeddings found for model. Run with --save_embeddings first.")
-    else:
-        global_embeddings_file = os.path.join(load_dir, f"{set_name}_global_embeddings.pickle")
-        global_embeddings = load_pickle(global_embeddings_file)
-        assert (len(global_embeddings) > 0), (
-            "Saved descriptors are corrupted, rerun with `save_descriptors` enabled"
-        )
-    return global_embeddings
 
 
 if __name__ == "__main__":
