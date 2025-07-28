@@ -3,7 +3,7 @@ dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.40m
 
 [TRAIN]
 num_workers = 4
-batch-size = 2048
+batch_size = 2048
 batch_split_size = 160
 val_batch_size = 160
 #prioritise_cross_source = True
