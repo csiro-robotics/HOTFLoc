@@ -24,10 +24,10 @@ class CoordinateSystem(ABC):
         self.use_octree = use_octree
 
     @abstractmethod
-    def __call__(self, pc):
+    def __call__(self, pc: torch.Tensor) -> torch.Tensor:
         pass
 
-    def cartesian_to_cylindrical(self, pc: torch.Tensor):
+    def cartesian_to_cylindrical(self, pc: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pc (torch.Tensor): (N, 3) point cloud with Cartesian coordinates
@@ -45,7 +45,7 @@ class CoordinateSystem(ABC):
         cylindrical_pc = torch.stack([rho, phi, z], dim=1)
         return cylindrical_pc
     
-    def cylindrical_to_cartesian(self, pc: torch.Tensor):
+    def cylindrical_to_cartesian(self, pc: torch.Tensor) -> torch.Tensor:
         """
         Args:
             cylindrical_pc (torch.Tensor): (N, 3) point cloud with Cylindrical
@@ -61,11 +61,16 @@ class CoordinateSystem(ABC):
         cartesian_pc = torch.stack([x, y, z], dim=1)
         return cartesian_pc
 
+    @abstractmethod
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
+        pass
+
+
 class CylindricalCoordinates(CoordinateSystem):
     def __init__(self, use_octree: bool, *args, **kwargs):
         super().__init__(use_octree, *args, **kwargs)
         
-    def __call__(self, pc: torch.Tensor):
+    def __call__(self, pc: torch.Tensor) -> torch.Tensor:
         """
         Converts point cloud to cylindrical coordinates and returns it.
         Args:
@@ -90,7 +95,7 @@ class CylindricalCoordinates(CoordinateSystem):
             cylindrical_pc = torch.clamp(cylindrical_pc, -1.0, 1.0)
         return cylindrical_pc
 
-    def undo_conversion(self, pc: torch.Tensor):
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
         """
         Undo the operation done when this class is called.
         """
@@ -135,5 +140,8 @@ class CartesianCoordinates(CoordinateSystem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-    def __call__(self, pc):
+    def __call__(self, pc: torch.Tensor) -> torch.Tensor:
+        return pc
+
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
         return pc
