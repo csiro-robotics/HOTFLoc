@@ -15,7 +15,7 @@ def release_cuda(x, to_numpy=False):
     if isinstance(x, list):
         x = [release_cuda(item, to_numpy) for item in x]
     elif isinstance(x, tuple):
-        x = (release_cuda(item, to_numpy) for item in x)
+        x = tuple(release_cuda(item, to_numpy) for item in x)
     elif isinstance(x, dict):
         x = {key: release_cuda(value, to_numpy) for key, value in x.items()}
     elif isinstance(x, Octree):
@@ -40,7 +40,7 @@ def to_device(x, device: Union[torch.device, str], non_blocking=True,
     if isinstance(x, list):
         x = [to_device(item, device, non_blocking) for item in x]
     elif isinstance(x, tuple):
-        x = (to_device(item, device, non_blocking) for item in x)
+        x = tuple(to_device(item, device, non_blocking) for item in x)
     elif isinstance(x, dict):
         x = {key: to_device(value, device, non_blocking) for key, value in x.items()}
     elif isinstance(x, torch.Tensor):
