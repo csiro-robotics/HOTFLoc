@@ -35,7 +35,7 @@ validation = True
 
 [LOCAL]
 enable_local = True
-local_batch_size = 32
+local_batch_size = 24
 local_aug_mode = 1
 icp = False
 weight_coarse_loss = 1.0
