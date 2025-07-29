@@ -121,6 +121,8 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
                 save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
         query_embeddings.append(temp_embeddings)
 
+    if show_progress:
+        print('Running evaluation')
     for i in range(len(database_sets)):
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:

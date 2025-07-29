@@ -280,6 +280,11 @@ def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False):
     """
     if local:
         raise NotImplementedError()
+        val_transform = Val6DOFTransform(
+            normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+        )
+        dataset = None
     else:
         val_transform = ValTransform(
             normalize_points=params.normalize_points, scale_factor=params.scale_factor,

@@ -9,10 +9,12 @@ import numpy as np
 import pickle
 import os
 import argparse
+import logging
 import torch
 import tqdm
 
 from models.model_factory import model_factory
+from misc.logger import create_logger
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from misc.torch_utils import set_seed, to_device, release_cuda
 from dataset.dataset_utils import make_eval_dataloader
@@ -57,7 +59,7 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
             query_sets = pickle.load(f)
 
         if show_progress:
-            print(f'Evaluating {location_name}:')
+            logging.info(f'Evaluating: {location_name}')
         temp = evaluate_dataset(model, device, params, database_sets, query_sets, location_name,
                                 log=log, model_name=model_name, show_progress=show_progress,
                                 save_embeddings=save_embeddings, load_embeddings=load_embeddings)
@@ -89,7 +91,7 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
     model.eval()
 
     if show_progress:
-        print(f'{"Loading" if load_embeddings else "Computing"} database embeddings:')
+        logging.info(f'{"Loading" if load_embeddings else "Computing"} database embeddings')
     for ii, data_set in enumerate(database_sets):
         temp_embeddings = None
         if len(data_set) > 0:
@@ -102,7 +104,7 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
         database_embeddings.append(temp_embeddings)
 
     if show_progress:
-        print(f'{"Loading" if load_embeddings else "Computing"} query embeddings:')
+        logging.info(f'{"Loading" if load_embeddings else "Computing"} query embeddings')
     for jj, data_set in enumerate(query_sets):
         temp_embeddings = None
         if len(data_set) > 0:
@@ -114,6 +116,8 @@ def evaluate_dataset(model, device, params: TrainingParams, database_sets, query
                 save_embeddings_to_file(temp_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
         query_embeddings.append(temp_embeddings)
 
+    if show_progress:
+        logging.info('Running evaluation')
     for i in range(len(database_sets)):
         for j in range(len(query_sets)):
             if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
@@ -266,12 +270,16 @@ def get_recall(m, n, database_vectors, query_vectors, query_sets, database_sets,
 
 
 def print_eval_stats(stats):
+    msg = 'Eval Results'
     for database_name in stats:
-        print('Dataset: {}'.format(database_name))
-        t = 'Avg. top 1% recall: {:.2f}   Avg. MRR: {:.2f}   Avg. recall @N:'
-        print(t.format(stats[database_name]['ave_one_percent_recall'],
-                       stats[database_name]['ave_mrr']))
-        print(stats[database_name]['ave_recall'])
+        msg += '\nDataset: {}\n'.format(database_name)
+        t = 'Avg. top 1% recall: {:.2f}   Avg. MRR: {:.2f}   Avg. recall @N:\n'
+        msg += t.format(
+            stats[database_name]["ave_one_percent_recall"],
+            stats[database_name]["ave_mrr"],
+        )
+        msg += (stats[database_name]['ave_recall'])
+    logging.info(msg)
 
 
 def pnv_write_eval_stats(file_name, prefix, stats):
@@ -383,6 +391,9 @@ if __name__ == "__main__":
         model_name = w
 
     model.to(device)
+
+    logging_level = 'DEBUG' if params.debug else 'INFO'
+    create_logger(log_file=None, logging_level=logging_level)
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
