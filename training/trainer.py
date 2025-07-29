@@ -26,7 +26,7 @@ from models.losses.loss_utils import metrics_mean
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
-from models.octree import OctreeT, get_octant_centroids_from_points, batch_construct_octree_neigh
+from models.octree import OctreeT, get_octant_centroids_from_points
 from dataset.dataset_utils import make_dataloaders
 from eval.pnv_evaluate_splits import evaluate, print_eval_stats, pnv_write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
