@@ -660,7 +660,7 @@ class NetworkTrainer:
         assert phase in ['train', 'val']
 
         batch, positives_mask, negatives_mask = global_batch
-        batch = to_device(batch, self.device, non_blocking=True)
+        batch = to_device(batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
         with torch.set_grad_enabled(phase == 'train'):
             y = self.model(batch, global_only=True)
@@ -728,7 +728,7 @@ class NetworkTrainer:
         stats = {}
         with torch.set_grad_enabled(False):
             for i, minibatch in enumerate(batch):
-                minibatch = to_device(minibatch, self.device, non_blocking=True)
+                minibatch = to_device(minibatch, self.device, non_blocking=True, construct_octree_neigh=True)
                 y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
                 # Log stats related to feats and attn maps (only for first minibatch)
@@ -788,7 +788,7 @@ class NetworkTrainer:
             i = 0
             with torch.set_grad_enabled(True):
                 for minibatch in batch:
-                    minibatch = to_device(minibatch, self.device, non_blocking=True)
+                    minibatch = to_device(minibatch, self.device, non_blocking=True, construct_octree_neigh=True)
                     y = self.model(minibatch, global_only=True)
                     embeddings = y['global']
                     minibatch_size = len(embeddings)
@@ -812,7 +812,7 @@ class NetworkTrainer:
     def local_training_step(self, local_batch, phase, local_loss_fn):
         assert phase in ['train', 'val']
 
-        local_batch = to_device(local_batch, self.device, non_blocking=True)
+        local_batch = to_device(local_batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
         with torch.set_grad_enabled(phase == 'train'):
             output_dicts = self.model(local_batch)

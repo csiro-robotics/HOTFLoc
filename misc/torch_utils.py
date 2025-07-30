@@ -34,8 +34,8 @@ def release_cuda(x, to_numpy=False):
     return x
 
 
-def to_device(x, device: Union[torch.device, str], non_blocking=True,
-              construct_octree_neigh=True):
+def to_device(x, device: Union[torch.device, str], non_blocking=False,
+              construct_octree_neigh=False):
     """Move all tensors to device."""
     if isinstance(x, list):
         x = [to_device(item, device, non_blocking) for item in x]
