@@ -38,11 +38,11 @@ def to_device(x, device: Union[torch.device, str], non_blocking=False,
               construct_octree_neigh=False):
     """Move all tensors to device."""
     if isinstance(x, list):
-        x = [to_device(item, device, non_blocking) for item in x]
+        x = [to_device(item, device, non_blocking, construct_octree_neigh) for item in x]
     elif isinstance(x, tuple):
-        x = tuple(to_device(item, device, non_blocking) for item in x)
+        x = tuple(to_device(item, device, non_blocking, construct_octree_neigh) for item in x)
     elif isinstance(x, dict):
-        x = {key: to_device(value, device, non_blocking) for key, value in x.items()}
+        x = {key: to_device(value, device, non_blocking, construct_octree_neigh) for key, value in x.items()}
     elif isinstance(x, torch.Tensor):
         x = x.to(device=device, non_blocking=non_blocking)
     elif isinstance(x, Octree):
