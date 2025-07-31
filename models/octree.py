@@ -33,6 +33,7 @@ class OctreeT(Octree):
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
                  ct_size: int = 0, ADaPE_mode: Optional[str] = None,
+                 ADaPE_use_accurate_point_stats: bool = False,
                  num_pyramid_levels: int = 0, num_octf_levels: int = 0,
                  **kwargs):
         super().__init__(octree.depth, octree.full_depth)
@@ -54,6 +55,7 @@ class OctreeT(Octree):
         self.invalid_mask_value = -1e3
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = self.ADaPE_mode is not None
+        self.ADaPE_use_accurate_point_stats = ADaPE_use_accurate_point_stats
         if self.ADaPE_mode == "cov":
             self.cov_idx = torch.triu_indices(3, 3, device=self.device)
         assert self.start_depth >= 1, "Octree not deep enough for model depth"
@@ -270,11 +272,19 @@ class OctreeT(Octree):
         mode_num_feat_dict = {'pos': 3, 'var': 6, 'cov': 9}
         # Num feats = 3 (μx,μy,μz) + 6 (upper tri of cov matrix: σx, σxy, σxz, σy, σyz, σz)
         C = mode_num_feat_dict[self.ADaPE_mode]
-        # Get points for current depth
-        x, y, z, _ = self.xyzb(depth, self.nempty)
-        points = torch.stack((x,y,z), dim=1).to(torch.float32)
-        # Rescale to [-1, 1] and put into windows
-        points = rescale_octree_points(points, depth)
+        if not self.ADaPE_use_accurate_point_stats:
+            # Get points for current depth
+            x, y, z, _ = self.xyzb(depth, self.nempty)
+            points = torch.stack((x,y,z), dim=1).to(torch.float32)
+            # Rescale to [-1, 1] and put into windows
+            points = rescale_octree_points(points, depth)
+        else:
+            # Compute more accurate points for current depth by averaging deepest points
+            # NOTE: This still relies on averaged points from the deepest octree layer,
+            #       so it is not the true distribution, but will be much closer than
+            #       the default method. Fixing would require also passing the
+            #       original points during OctreeT construction.
+            points = get_octant_centroids_from_points(self.to_points(), depth)
         points = self.data_to_windows(points, depth, dilated_windows=False)
         mask = self.ct_init_mask[depth]
         window_stats = torch.zeros(N, C, device=self.device)
@@ -424,8 +434,9 @@ class OctreeT(Octree):
         # Construct new OctreeT and copy objects over
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          self.max_depth, self.start_depth, self.ct_layers,
-                         self.ct_size, self.ADaPE_mode, self.num_pyramid_levels,
-                         self.num_octf_levels)
+                         self.ct_size, self.ADaPE_mode,
+                         self.ADaPE_use_accurate_point_stats,
+                         self.num_pyramid_levels, self.num_octf_levels)
         octree.batch_idx = list_to_device(self.batch_idx)
         octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
         octree.ct_batch_idx = list_to_device(self.ct_batch_idx)
@@ -473,7 +484,9 @@ def octree_to_points(octree: Octree, depth: int) -> torch.Tensor:
     points_scaled = rescale_octree_points(points, depth)
     return points_scaled
 
-def get_octant_centroids_from_points(point_cloud: Points, depth: int, quantizer: Optional[CoordinateSystem]) -> torch.Tensor:
+def get_octant_centroids_from_points(
+    point_cloud: Points, depth: int, quantizer: Optional[CoordinateSystem] = None
+) -> torch.Tensor:
     """
     For a given octree depth, determine the 'centre of mass' of each octant.
     Provides more accurate points than simply taking the centroid of octants.
@@ -505,7 +518,9 @@ def get_octant_centroids_from_points(point_cloud: Points, depth: int, quantizer:
     
     return points
 
-def get_octree_points_and_windows(query_octree: OctreeT, depth: int, quantizer: Optional[CoordinateSystem]):
+def get_octree_points_and_windows(
+    query_octree: OctreeT, depth: int, quantizer: Optional[CoordinateSystem] = None,
+):
     """
     For a given octree depth, returns the octree points, octree points reshaped
     to windows, and a tensor containing the idx of each window. 
@@ -530,7 +545,7 @@ def get_octree_points_and_windows(query_octree: OctreeT, depth: int, quantizer: 
     windows_idx = query_octree.patch_reverse(windows_idx, depth)
     return points_octree, points_octree_windows, windows_idx
 
-def pad_sequence(batch_list, fill_value: float = 0.) -> torch.Tensor:
+def pad_sequence(batch_list, fill_value: float = 0.0) -> torch.Tensor:
     """
     Collate list of different size tensors into a batch via padding. I found
     this implementation faster than torch.nn.utils.rnn.pad_sequence().

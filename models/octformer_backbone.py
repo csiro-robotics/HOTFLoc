@@ -552,6 +552,7 @@ class OctFormerBase(torch.nn.Module):
                  ct_propagation_scale: Optional[float] = None,
                  ct_rpe_init: bool = False,
                  ADaPE_mode: Optional[str] = None,
+                 ADaPE_use_accurate_point_stats: bool = False,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
@@ -571,6 +572,7 @@ class OctFormerBase(torch.nn.Module):
         self.ct_size = ct_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = ADaPE_mode is not None
+        self.ADaPE_use_accurate_point_stats = ADaPE_use_accurate_point_stats
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # Stochastic depth per block
         drop_ratio = torch.linspace(0, drop_path, sum(num_blocks)).tolist()
@@ -602,7 +604,8 @@ class OctFormerBase(torch.nn.Module):
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
                          ct_layers=self.ct_layers, ct_size=self.ct_size,
-                         ADaPE_mode=self.ADaPE_mode)
+                         ADaPE_mode=self.ADaPE_mode,
+                         ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats)
         octree.build_t()
         features = {}
         feats_and_attn_maps_per_stage = {}
@@ -668,6 +671,7 @@ class OctFormer(torch.nn.Module):
                  ct_propagation_scale: Optional[float] = None,
                  ct_rpe_init: bool = False,
                  ADaPE_mode: Optional[str] = None,
+                 ADaPE_use_accurate_point_stats: bool = False,
                  num_top_down: int = 2, fpn_channel: int = 168,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
@@ -692,6 +696,7 @@ class OctFormer(torch.nn.Module):
             ct_propagation: Boolean indicating if carrier token features should be propagated to local features at the end of the stage.
             ct_propagation_scale: Learnable scalar multiplier for ct propagation step, to prevent 'blurring' of local features.
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
+            ADaPE_use_accurate_point_stats: Use accurate point statistics when computing ADaPE (by default just takes octant centroids instead of considering true point distribution)
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
             fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
@@ -707,7 +712,8 @@ class OctFormer(torch.nn.Module):
         self.backbone = OctFormerBase(
             in_channels, channels, num_blocks, num_heads, ct_layers,
             patch_size, dilation, drop_path, nempty, stem_down, ct_size,
-            ct_propagation, ct_propagation_scale, ct_rpe_init, ADaPE_mode, grad_checkpoint,
+            ct_propagation, ct_propagation_scale, ct_rpe_init, ADaPE_mode,
+            ADaPE_use_accurate_point_stats, grad_checkpoint,
             downsample_input_embeddings, disable_RPE, conv_norm, layer_scale,
             xcpe, return_feats_and_attn_maps,
         )

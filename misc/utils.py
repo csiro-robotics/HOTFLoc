@@ -111,6 +111,7 @@ class ModelParams:
             self.rt_init_type = params.get('rt_init_type', 'avg_pool')  # type of initialisation to use for relay tokens
             assert self.rt_init_type.lower() in ['avg_pool', 'max_pool', 'learnable']
             self.ADaPE_mode = params.get('ADaPE_mode', None)  # Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
+            self.ADaPE_use_accurate_point_stats = params.getboolean('ADaPE_use_accurate_point_stats', False)  # Use accurate point statistics when computing ADaPE (by default just takes octant centroids instead of considering true point distribution)
             self.drop_path = params.getfloat('drop_path', 0.5)  # stochastic depth dropout
             self.input_features = params.get('input_features', 'P')  # P for global position, D for local displacement (check docs)
             self.downsample_input_embeddings = params.getboolean('downsample_input_embeddings', True)

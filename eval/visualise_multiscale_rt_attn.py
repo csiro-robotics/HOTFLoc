@@ -575,6 +575,7 @@ def process_submap(submap, model, device, params: TrainingParams):
         start_depth=window_max_depth-num_stages+1,
         ct_size=model_params.ct_size,
         ADaPE_mode=model_params.ADaPE_mode,
+        ADaPE_use_accurate_point_stats=model_params.ADaPE_use_accurate_point_stats,
         num_pyramid_levels=model_params.num_pyramid_levels,
         num_octf_levels=model_params.num_octf_levels)
     octree.build_t()

@@ -170,7 +170,8 @@ def main(model, device, params: TrainingParams):
                            max_depth=window_max_depth,
                            start_depth=window_max_depth-len(model_params.channels)+1,
                            ct_layers=model_params.ct_layers, ct_size=model_params.ct_size,
-                           ADaPE_mode=model_params.ADaPE_mode)
+                           ADaPE_mode=model_params.ADaPE_mode,
+                           ADaPE_use_accurate_point_stats=model_params.ADaPE_use_accurate_point_stats)
     query_octree.build_t()
     
     for i, depth in enumerate(feats_and_attn_maps.keys()):

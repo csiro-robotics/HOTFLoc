@@ -731,6 +731,7 @@ class HOTFormerBase(torch.nn.Module):
                  rt_rpe_init: bool = False, 
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
+                 ADaPE_use_accurate_point_stats: bool = False,
                  grad_checkpoint: bool = True,
                  downsample_input_embeddings: bool = True,
                  disable_RPE: bool = False, conv_norm: str = 'batchnorm',
@@ -748,6 +749,7 @@ class HOTFormerBase(torch.nn.Module):
         self.ct_size = rt_size
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
+        self.ADaPE_use_accurate_point_stats = ADaPE_use_accurate_point_stats
         self.disable_rt = disable_rt
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         # Stochastic depth per block
@@ -795,6 +797,7 @@ class HOTFormerBase(torch.nn.Module):
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
                          ct_size=self.ct_size, ADaPE_mode=self.ADaPE_mode,
+                         ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats,
                          num_pyramid_levels=self.num_pyramid_levels,
                          num_octf_levels=self.num_octf_levels)
         octree.build_t()
@@ -846,6 +849,7 @@ class HOTFormer(torch.nn.Module):
         rt_rpe_init: bool = False, 
         disable_rt: bool = False,
         ADaPE_mode: Optional[str] = None,
+        ADaPE_use_accurate_point_stats: bool = False,
         grad_checkpoint: bool = True,
         downsample_input_embeddings: bool = True,
         disable_RPE: bool = False,
@@ -874,6 +878,7 @@ class HOTFormer(torch.nn.Module):
             rt_init_type: Type of initialisation to use for relay tokens. Valid types include ['avg_pool', 'max_pool', 'learnable']
             disable_rt: Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
+            ADaPE_use_accurate_point_stats: Use accurate point statistics when computing ADaPE (by default just takes octant centroids instead of considering true point distribution)
             num_top_down: Number of top-down layers in FPN. Output features will be at Octree depth d = octree_depth - stem_down - (num_stages - 1) + num_top_down.
             fpn_channel: Number of channels in FPN top-down branch, default is to set this equal to number of channels used in Pooling (i.e. output_dim param).
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
@@ -905,6 +910,7 @@ class HOTFormer(torch.nn.Module):
             rt_rpe_init=rt_rpe_init, 
             disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode,
+            ADaPE_use_accurate_point_stats=ADaPE_use_accurate_point_stats,
             grad_checkpoint=grad_checkpoint,
             downsample_input_embeddings=downsample_input_embeddings,
             disable_RPE=disable_RPE,
