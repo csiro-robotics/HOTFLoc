@@ -58,6 +58,25 @@ class EvaluationTuple:
         return self.timestamp, self.rel_scan_filepath, self.position, self.pose
 
 
+def clip_points(data: torch.Tensor, coordinates: str):
+    """
+    Clip point coordinates to [-1, 1] range. Ensures this operation holds
+    for cylindrical coordinates too.
+    """
+    assert coordinates in ['cartesian', 'cylindrical']
+    # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
+    mask = torch.all(abs(data) <= 1.0, dim=1)
+    data = data[mask]
+    # Also ensure this will hold if converting coordinate systems
+    if coordinates == 'cylindrical':
+        data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
+        mask = torch.all(data_norm <= 1.0, dim=1)
+        data = data[mask]
+    # elif self.coordinates == 'spherical':  # TODO: if spherical is used
+    #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
+    #     mask = torch.all(data_norm <= 1.0, dim=1)
+    return data
+
 class TrainingDataset(Dataset):
     def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
                  transform=None, set_transform=None, load_octree=False,
@@ -106,26 +125,8 @@ class TrainingDataset(Dataset):
         if self.transform is not None:
             data = self.transform(data)
         if self.load_octree and self.clip_octree_points:
-            data = self.clip_points(data)
+            data = clip_points(data, self.coordinates)
         return data, ndx
-
-    def clip_points(self, data):
-        """
-        Clip point coordinates to [-1, 1] range. Ensures this operation holds
-        for cylindrical coordinates too.
-        """
-        # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-        mask = torch.all(abs(data) <= 1.0, dim=1)
-        data = data[mask]
-        # Also ensure this will hold if converting coordinate systems
-        if self.coordinates == 'cylindrical':
-            data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
-            mask = torch.all(data_norm <= 1.0, dim=1)
-            data = data[mask]
-        # elif self.coordinates == 'spherical':  # TODO: if spherical is used
-        #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
-        #     mask = torch.all(data_norm <= 1.0, dim=1)
-        return data
 
     def get_positives(self, ndx):
         return self.queries[ndx].positives
@@ -152,14 +153,21 @@ class TrainingDataset(Dataset):
 
 class Training6DOFDataset(TrainingDataset):
     """
-    Dataset wrapper for for 6dof estimation.
+    Dataset wrapper for 6DOF estimation. Loads pairs of positive point clouds
+    with relative transform and normalization parameters.
     """
     def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
-                 local_transform=None, icp=False, **kwargs):
+                 local_transform=None, icp=False, icp_use_gicp=True,
+                 icp_inlier_dist_threshold: float = 0.2, icp_max_iteration: int = 100,
+                 icp_voxel_size: Optional[float] = None, **kwargs):
         super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
         self.clip_octree_points = False  # We do this step after local transforms
         self.local_transform = local_transform
         self.icp = icp
+        self.icp_use_gicp = icp_use_gicp
+        self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
+        self.icp_max_iteration = icp_max_iteration
+        self.icp_voxel_size = icp_voxel_size
 
     def __getitem__(self, ndx):
         # TODO: Consider adding gravity alignment as a step here
@@ -202,10 +210,10 @@ class Training6DOFDataset(TrainingDataset):
                 query_pc.numpy().astype(float),
                 positive_pc.numpy().astype(float),
                 transform.numpy(),
-                gicp=True,
-                inlier_dist_threshold=0.2,
-                max_iteration=100,
-                voxel_size=None,
+                gicp=self.icp_use_gicp,
+                inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                max_iteration=self.icp_max_iteration,
+                voxel_size=self.icp_voxel_size,
             )
             # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
             # logging.debug(msg)
@@ -238,10 +246,10 @@ class Training6DOFDataset(TrainingDataset):
 
         # Now clip point coordinates after normalization is done
         if self.load_octree:
-            query_pc = self.clip_points(query_pc)
-            positive_pc = self.clip_points(positive_pc)
+            query_pc = clip_points(query_pc, self.coordinates)
+            positive_pc = clip_points(positive_pc, self.coordinates)
 
-        return query_pc, positive_pc, transform, query_shift_and_scale, positive_shift_and_scale
+        return query_pc, query_shift_and_scale, positive_pc, positive_shift_and_scale, transform
 
 
 class EvalDataset(Dataset):
@@ -251,36 +259,52 @@ class EvalDataset(Dataset):
         self.dataset_path = dataset_path
         self.dataset_type = dataset_type
         assert len(data_set_dict) > 0, "Empty dict"
-        self.tuple_dict = data_set_dict
+        self.data_set_dict = data_set_dict
         self.transform = transform
         self.coordinates = coordinates
         self.load_octree = load_octree
+        self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
 
         self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
 
     def __len__(self):
-        return len(self.tuple_dict)
+        return len(self.data_set_dict)
 
     def __getitem__(self, ndx):
         # Load point cloud and apply transform
-        file_pathname = os.path.join(self.dataset_path, self.tuple_dict[ndx]['query'])
+        file_pathname = os.path.join(self.dataset_path, self.data_set_dict[ndx]['query'])
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
         if self.transform is not None:
             data = self.transform(data)
-        if self.load_octree:
-            # Ensure no values outside of [-1, 1] exist (see ocnn documentation)
-            mask = torch.all(abs(data) <= 1.0, dim=1)
-            data = data[mask]
-            # Also ensure this will hold if converting coordinate systems
-            if self.coordinates == 'cylindrical':
-                data_norm = torch.linalg.norm(data[:, :2], dim=1)[:, None]
-                mask = torch.all(data_norm <= 1.0, dim=1)
-                data = data[mask]
-            # elif self.coordinates == 'spherical':  # TODO: if spherical is used
-            #     data_norm = torch.linalg.norm(data, dim=1)[:, None]
-            #     mask = torch.all(data_norm <= 1.0, dim=1)
+        if self.load_octree and self.clip_octree_points:
+            data = clip_points(data, self.coordinates)
         return data
+
+
+class Eval6DOFDataset(EvalDataset):
+    """
+    Dataset wrapper for 6DOF estimation. Returns point clouds and normalization
+    parameters.
+    """
+    def __init__(self, dataset_path: str, dataset_type: str, data_set_dict: Dict,
+                 local_transform=None, **kwargs):
+        super().__init__(dataset_path, dataset_type, data_set_dict, **kwargs)
+        self.clip_octree_points = False  # We do this step after local transforms
+        self.local_transform = local_transform
+
+    def __getitem__(self, ndx):
+        # TODO: Consider adding gravity alignment as a step here
+        query_shift_and_scale = None
+        # pose is a global coordinate system pose 3x4 R|T matrix
+        query_pc = super().__getitem__(ndx)
+        # Apply only normalization jitter to the query point cloud
+        if self.local_transform is not None:
+            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
+        # Now clip point coordinates after normalization is done
+        if self.load_octree:
+            query_pc = clip_points(query_pc, self.coordinates)
+        return query_pc, query_shift_and_scale
 
 
 class EvaluationSet:

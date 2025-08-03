@@ -65,8 +65,9 @@ class ModelParams:
 
         # Metric loc params
         if local:
-            self.coarse_idx = params.getint('coarse_idx', -1)
-            self.fine_idx = params.getint('fine_idx', -3)
+            self.depth_coarse = params.getint('depth_coarse')
+            self.depth_fine = params.getint('depth_fine')
+            assert self.depth_coarse is not None and self.depth_fine is not None
 
         if 'minkloc' in self.model.lower():
         #######################################################################
@@ -161,24 +162,26 @@ class ModelParams:
                     if 'COARSE MATCHING' in config:
                         params = config['COARSE MATCHING']
                         self.coarse_matching = edict()
-                        self.coarse_matching.num_targets = params.getint('num_targets', 128)
-                        self.coarse_matching.overlap_threshold = params.getfloat('overlap_threshold', 0.1)
-                        self.coarse_matching.num_correspondences = params.getint('num_correspondences', 256)
+                        # For GT
+                        self.coarse_matching.num_targets = params.getint('num_targets', 128)  # Max num coarse correspondences to consider for training
+                        self.coarse_matching.overlap_threshold = params.getfloat('overlap_threshold', 0.1)  # Min overlap for selecting ground truth coarse correspondences
+                        self.coarse_matching.ground_truth_matching_radius = params.getfloat('ground_truth_matching_radius', 0.6)  # Max radius to consider a GT coarse correspondence
+                        # For computing coarse matching
+                        self.coarse_matching.num_correspondences = params.getint('num_correspondences', 256)  # Num coarse correspondences to select
                         self.coarse_matching.dual_normalization = params.getboolean('dual_normalization', True)
-                        self.coarse_matching.ground_truth_matching_radius = params.getfloat('ground_truth_matching_radius', 0.6)
-                        self.coarse_matching.num_points_in_patch = params.getint('num_points_in_patch', 128)
+                        self.coarse_matching.num_points_in_patch = params.getint('num_points_in_patch', 128)  # max num fine points to consider in patch
 
                     # model - Fine Matching
                     if 'FINE MATCHING' in config:
                         params = config['FINE MATCHING']
                         self.fine_matching = edict()
-                        self.fine_matching.topk = params.getint('topk', 2)
-                        self.fine_matching.acceptance_radius = params.getfloat('acceptance_radius', 0.6)
-                        self.fine_matching.mutual = params.getboolean('mutual', True)
-                        self.fine_matching.confidence_threshold = params.getfloat('confidence_threshold', 0.05)
+                        self.fine_matching.topk = params.getint('topk', 2)  # top-k potential fine correspondences to consider for each point within corresponding patches
+                        self.fine_matching.acceptance_radius = params.getfloat('acceptance_radius', 0.6)  # Max radius to consider fine correspondences as inliers during LGR (maybe default to 2x voxel size?)
+                        self.fine_matching.mutual = params.getboolean('mutual', True)  # Only consider mutual nearest neighbours
+                        self.fine_matching.confidence_threshold = params.getfloat('confidence_threshold', 0.05)  # Min sinkhorn confidence to consider correspondence
                         self.fine_matching.use_dustbin = params.getboolean('use_dustbin', False)
                         self.fine_matching.use_global_score = params.getboolean('use_global_score', False)
-                        self.fine_matching.correspondence_threshold = params.getint('correspondence_threshold', 3)
+                        self.fine_matching.correspondence_threshold = params.getint('correspondence_threshold', 3)  # Min num fine correspondences needed to consider a patch
                         self.fine_matching.correspondence_limit = params.getint('correspondence_limit', None)
                         self.fine_matching.num_refinement_steps = params.getint('num_refinement_steps', 5)
                         self.fine_matching.num_sinkhorn_iterations = params.getint('num_sinkhorn_iterations', 100)
@@ -353,14 +356,18 @@ class TrainingParams:
             self.local.batch_size = params.getint('local_batch_size', 8)
             self.local.aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
             self.local.icp = params.getboolean('icp', False)
+            self.local.icp_use_gicp = params.getboolean('icp_use_gicp', True)
+            self.local.icp_inlier_dist_threshold = params.getfloat('icp_inlier_dist_threshold', 0.2)
+            self.local.icp_max_iteration = params.getint('icp_max_iteration', 100)
+            self.local.icp_voxel_size = params.getfloat('icp_voxel_size', None)
             self.local.weight_coarse_loss = params.getfloat('weight_coarse_loss', 1.0)
             self.local.weight_fine_loss = params.getfloat('weight_coarse_loss', 1.0)
             # eval config
-            self.local.acceptance_overlap = params.getfloat('acceptance_overlap', 0.0)
-            self.local.acceptance_radius = params.getfloat('acceptance_radius', 1.0)
+            self.local.acceptance_overlap = params.getfloat('acceptance_overlap', 0.0)  # min overlap to consider a ground truth coarse correspondence
+            self.local.acceptance_radius = params.getfloat('acceptance_radius', 1.0)  # distance threshold for inlier fine correspondences
             self.local.inlier_ratio_threshold = params.getfloat('inlier_ratio_threshold', 0.05)
-            self.local.rre_threshold = params.getfloat('rre_threshold', 5.0)
-            self.local.rte_threshold = params.getfloat('rte_threshold', 2.0)
+            self.local.rre_threshold = params.getfloat('rre_threshold', 5.0)  # Rotation threshold to classify successful metric loc
+            self.local.rte_threshold = params.getfloat('rte_threshold', 2.0)  # Translation threshold to classify successful metric loc
 
         # loss - Coarse level
         if 'COARSE LOSS' in config:
@@ -371,13 +378,13 @@ class TrainingParams:
             self.coarse_loss.positive_optimal = params.getfloat('positive_optimal', 0.1)
             self.coarse_loss.negative_optimal = params.getfloat('negative_optimal', 1.4)
             self.coarse_loss.log_scale = params.getfloat('log_scale', 40)
-            self.coarse_loss.positive_overlap = params.getfloat('positive_overlap', 0.1)
+            self.coarse_loss.positive_overlap = params.getfloat('positive_overlap', 0.1)  # Min overlap to classify a positive in circle loss
 
         # loss - Fine level
         if 'FINE LOSS' in config:
             params = config['FINE LOSS']
             self.fine_loss = edict()
-            self.fine_loss.positive_radius = 0.6
+            self.fine_loss.positive_radius = params.getfloat('positive_radius', 0.6)  # Ground truth radius to consider fine correspondences
 
         # Read model parameters
         self.model_params = ModelParams(self.model_params_path, local=self.local.enable_local)

@@ -122,8 +122,8 @@ def model_factory(model_params: ModelParams):
             hotformerloc_global=hotformerloc_global,
             coarse_feat_refiner=coarse_feat_refiner,
             model_params=model_params,
-            coarse_idx=model_params.coarse_idx,
-            fine_idx=model_params.fine_idx,
+            depth_coarse=model_params.depth_coarse,
+            depth_fine=model_params.depth_fine,
             quantizer=model_params.quantizer,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )

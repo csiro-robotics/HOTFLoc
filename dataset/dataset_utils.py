@@ -2,24 +2,24 @@
 
 import time
 import logging
-from typing import List, Sequence, Dict
+from typing import List, Sequence, Dict, Iterable, Union
 from itertools import repeat
 
 import numpy as np
 import torch
 import ocnn
 import MinkowskiEngine as ME
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from sklearn.neighbors import KDTree
 from ocnn.octree import Octree, Points
 
-from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset
+from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset, Eval6DOFDataset
 from dataset.augmentation import TrainTransform, TrainSetTransform, Train6DOFTransform, ValTransform, Val6DOFTransform
 from dataset.samplers import BatchSampler, BatchSampler6DOF
 from misc.utils import TrainingParams
 
 
-def make_datasets(params: TrainingParams, local=False, validation=True):
+def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[str, Dataset]:
     # Create training and validation datasets
     datasets = {}
     train_set_transform = TrainSetTransform(params.set_aug_mode, random_rot_theta=params.random_rot_theta)
@@ -57,7 +57,11 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
         )
         datasets['local_train'] = Training6DOFDataset(
             params.dataset_folder, params.dataset_name, params.train_file, local_transform=local_train_transform,
-            icp=params.local.icp, load_octree=params.load_octree, octree_depth=params.octree_depth,
+            icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+            icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
+            icp_max_iteration=params.local.icp_max_iteration,
+            icp_voxel_size=params.local.icp_voxel_size,
+            load_octree=params.load_octree, octree_depth=params.octree_depth,
             full_depth=params.full_depth, coordinates=params.model_params.coordinates,
             is_cross_source_dataset=params.is_cross_source_dataset,
             prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
@@ -69,7 +73,11 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
             )
             datasets['local_val'] = Training6DOFDataset(
                 params.dataset_folder, params.dataset_name, params.val_file, local_transform=local_val_transform,
-                icp=params.local.icp, load_octree=params.load_octree, octree_depth=params.octree_depth,
+                icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+                icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
+                icp_max_iteration=params.local.icp_max_iteration,
+                icp_voxel_size=params.local.icp_voxel_size,    
+                load_octree=params.load_octree, octree_depth=params.octree_depth,
                 full_depth=params.full_depth, coordinates=params.model_params.coordinates,
                 is_cross_source_dataset=params.is_cross_source_dataset,
                 prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
@@ -78,7 +86,7 @@ def make_datasets(params: TrainingParams, local=False, validation=True):
     return datasets
 
 
-def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingParams):
+def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingParams) -> Dict[str, Union[Octree, torch.Tensor]]:
     """
     Util function to create batches in correct format from an input list of 
     point clouds.
@@ -157,7 +165,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     return collate_fn
 
 
-def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: TrainingParams):
+def make_collate_fn_6DOF(quantizer, params: TrainingParams):
     """
     Collation function for local batches. Returns batch + 6DOF relative transform + 
     normalization shift and scale parameters.
@@ -167,10 +175,10 @@ def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: Traini
 
         # Constructs a batch object
         anchor_clouds = [e[0] for e in data_list]
-        positive_clouds = [e[1] for e in data_list]
-        rel_transforms = [e[2] for e in data_list]
-        anchor_shift_and_scale = [e[3] for e in data_list]
-        positive_shift_and_scale = [e[4] for e in data_list]
+        anchor_shift_and_scale = [e[1] for e in data_list]
+        positive_clouds = [e[2] for e in data_list]
+        positive_shift_and_scale = [e[3] for e in data_list]
+        rel_transforms = [e[4] for e in data_list]
 
         # Generate anchor and positive batches
         anchor_batch = create_batch(anchor_clouds, quantizer, params)
@@ -196,15 +204,17 @@ def make_collate_fn_6DOF(dataset: Training6DOFDataset, quantizer, params: Traini
         # Returns:
         # Anc and pos point clouds, anc and pos batch, relative transformations, normalization shift and scale params
         return {
-            "anc_points": anchor_pts, "pos_points": positive_pts, "anc_batch": anchor_batch,
-            "pos_batch": positive_batch, "transform": trans_batch,
-            "anc_shift_and_scale": anchor_shift_and_scale_batch, "pos_shift_and_scale": positive_shift_and_scale_batch
+            "anc_points": anchor_pts, "pos_points": positive_pts,
+            "anc_batch": anchor_batch, "pos_batch": positive_batch,
+            "anc_shift_and_scale": anchor_shift_and_scale_batch,
+            "pos_shift_and_scale": positive_shift_and_scale_batch,
+            "transform": trans_batch,
         }
 
     return collate_fn
 
 
-def make_dataloaders(params: TrainingParams, local=False, validation=True):
+def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Dict[str, Iterable]:
     """
     Create training and validation dataloaders that return groups of k=2 similar elements
 
@@ -245,7 +255,7 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
         )
 
     if local:
-        train_collate_fn_loc = make_collate_fn_6DOF(datasets['local_train'], quantizer, params)
+        train_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)
         train_sampler_loc = BatchSampler6DOF(
             datasets["local_train"], batch_size=params.local.batch_size,
             only_ground_aerial=params.only_ground_aerial,
@@ -256,7 +266,7 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
             pin_memory=True,
         )
         if validation and 'local_val' in datasets:
-            val_collate_fn_loc = make_collate_fn_6DOF(datasets['local_val'], quantizer, params)
+            val_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)
             val_sampler_loc = BatchSampler6DOF(
                 datasets["local_val"], batch_size=params.local.batch_size,
                 only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
@@ -274,17 +284,20 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True):
     return dataloaders
 
 
-def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False):
+def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False) -> Dataset:
     """
     Create dataset class for a single sequence.
     """
     if local:
-        raise NotImplementedError()
         val_transform = Val6DOFTransform(
             normalize_points=params.normalize_points, scale_factor=params.scale_factor,
             unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
         )
-        dataset = None
+        dataset = Eval6DOFDataset(
+            params.dataset_folder, params.dataset_name, data_set,
+            local_transform=val_transform, load_octree=params.load_octree,
+            coordinates=params.model_params.coordinates
+        )
     else:
         val_transform = ValTransform(
             normalize_points=params.normalize_points, scale_factor=params.scale_factor,
@@ -316,12 +329,12 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
     return collate_fn
 
 
-def make_eval_dataloader(params: TrainingParams, data_set: Dict, local=False):
+def make_eval_dataloader(params: TrainingParams, data_set: Dict) -> DataLoader:
     """
     Creates dataloader suitable for evaluate.py script.
     """
     quantizer = params.model_params.quantizer
-    eval_dataset = make_eval_dataset(params, data_set, local=local)
+    eval_dataset = make_eval_dataset(params, data_set, local=False)
     eval_collate_fn = make_eval_collate_fn(quantizer, params)
     eval_dataloader = DataLoader(eval_dataset, batch_size=params.val_batch_size,
                                  shuffle=False, pin_memory=True, num_workers=params.num_workers,

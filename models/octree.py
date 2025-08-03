@@ -358,49 +358,6 @@ class OctreeT(Octree):
                              self.patch_size, C).transpose(1, 2).reshape(-1, C)
         return self.patch_reverse(data, depth)
 
-    def split_and_pad_data(self, data: torch.Tensor, depth: int,
-                           fill_value: float = 0.0, return_mask=False):
-        """
-        Convert octree data from concat format to stacked (and padded) format.
-
-        Args:
-            data: Octree data, which must have shape (M, C)
-            depth: Octree depth of data
-            fill_value: Value to pad tensor with (defaults to zero-padding)
-            return_mask: Return a mask for the data to filter out padding
-
-        Returns:
-            Padded octree data of shape (B, N, C), where N is the size of the largest batch element,
-            and (optionally) corresponding boolean mask for padding of shape (B, N)
-            (True is ignored, False is preserved).
-        """
-        batch_lengths = self.batch_nnum_nempty[depth].tolist()
-        data_split = data.split(batch_lengths)
-        data_padded = pad_sequence(data_split, fill_value=fill_value)
-        if return_mask:
-            batch_id_split = self.batch_id(depth, self.nempty)[:, None].split(batch_lengths)
-            batch_id_padded = pad_sequence(batch_id_split, fill_value=self.batch_size).squeeze(dim=-1)
-            padding_mask = batch_id_padded != torch.arange(self.batch_size, device=self.device)[:, None]
-            return data_padded, padding_mask
-        return data_padded
-
-    def unpad_and_concat_data(self, data_padded: torch.Tensor, depth: int):
-        """
-        Convert split and padded octree data back to concat form.
-
-        Args:
-            data_padded: Padded octree data, which must have shape (B, N, C)
-            depth: Octree depth of data
-
-        Returns:
-            Octree data of shape (M, C)
-        """
-        batch_lengths = self.batch_nnum_nempty[depth]
-        data_split = unpad_sequence(data_padded, batch_lengths, batch_first=True)
-        data = torch.concat(data_split, dim=0)
-        return data
-        
-    
     def to(self, device: Union[torch.device, str], non_blocking: bool = False):
         r""" Moves the octree to a specified device. Adapted from `ocnn.octree`.
 
@@ -457,6 +414,58 @@ class OctreeT(Octree):
         octree.window_stats = list_to_device(self.window_stats)
         return octree
 
+
+def split_and_pad_data(
+    octree: Octree,
+    data: torch.Tensor,
+    depth: int,
+    fill_value: float = 0.0,
+    return_mask=False,
+    nempty=True,
+) -> torch.Tensor:
+    """
+    Convert octree data from concat format to stacked (and padded) format.
+
+    Args:
+        octree: Octree to operate within.
+        data: Octree data, which must have shape (M, C)
+        depth: Octree depth of data
+        fill_value: Value to pad tensor with (defaults to zero-padding)
+        return_mask: Return a mask for the data to filter out padding
+
+    Returns:
+        Padded octree data of shape (B, N, C), where N is the size of the largest batch element,
+        and (optionally) corresponding boolean mask for padding of shape (B, N)
+        (True is ignored, False is preserved).
+    """
+    batch_lengths = octree.batch_nnum_nempty[depth].tolist()
+    data_split = data.split(batch_lengths)
+    data_padded = pad_sequence(data_split, fill_value=fill_value)
+    if return_mask:
+        batch_id_split = octree.batch_id(depth, nempty)[:, None].split(batch_lengths)
+        batch_id_padded = pad_sequence(batch_id_split, fill_value=octree.batch_size).squeeze(dim=-1)
+        padding_mask = batch_id_padded != torch.arange(octree.batch_size, device=octree.device)[:, None]
+        return data_padded, padding_mask
+    return data_padded
+
+def unpad_and_concat_data(
+    octree: Octree, data_padded: torch.Tensor, depth: int
+) -> torch.Tensor:
+    """
+    Convert split and padded octree data back to concat form.
+
+    Args:
+        octree: Octree to operate within.
+        data_padded: Padded octree data, which must have shape (B, N, C)
+        depth: Octree depth of data
+
+    Returns:
+        Octree data of shape (M, C)
+    """
+    batch_lengths = octree.batch_nnum_nempty[depth]
+    data_split = unpad_sequence(data_padded, batch_lengths, batch_first=True)
+    data = torch.concat(data_split, dim=0)
+    return data
 
 def rescale_octree_points(points: torch.Tensor, depth: int) -> torch.Tensor:
     """ 

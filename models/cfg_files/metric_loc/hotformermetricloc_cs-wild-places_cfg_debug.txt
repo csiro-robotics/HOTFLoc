@@ -9,6 +9,7 @@ ct_size = 1
 ct_propagation = False
 rt_init_type = max_pool
 ADaPE_mode = cov
+ADaPE_use_accurate_point_stats = False
 patch_size = 64
 input_features = P
 downsample_input_embeddings = True
@@ -25,8 +26,8 @@ coordinates = cartesian
 normalize_embeddings = True
 return_feats_and_attn_maps = False
 
-coarse_idx = -1
-fine_idx = -3
+depth_coarse = 3
+depth_fine = 5
 
 [GEOTRANSFORMER]
 input_dim = 96

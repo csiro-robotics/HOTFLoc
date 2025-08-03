@@ -156,7 +156,7 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams,
     #     return embeddings
 
     # Create dataloader for data_set
-    dataloader = make_eval_dataloader(params, data_set, local=False)
+    dataloader = make_eval_dataloader(params, data_set)
     embeddings = None
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
