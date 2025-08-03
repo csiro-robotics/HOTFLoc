@@ -284,6 +284,7 @@ class OctreeT(Octree):
             #       so it is not the true distribution, but will be much closer than
             #       the default method. Fixing would require also passing the
             #       original points during OctreeT construction.
+            raise NotImplementedError('ADaPE_use_accurate_point_stats disabled until further bug investigation')
             points = get_octant_centroids_from_points(self.to_points(), depth)
         points = self.data_to_windows(points, depth, dilated_windows=False)
         mask = self.ct_init_mask[depth]
