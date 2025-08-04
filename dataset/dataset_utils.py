@@ -284,31 +284,43 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Di
     return dataloaders
 
 
-def make_eval_dataset(params: TrainingParams, data_set: Dict, local=False) -> Dataset:
+def make_eval_dataset(params: TrainingParams, data_set: Dict) -> Dataset:
     """
     Create dataset class for a single sequence.
     """
-    if local:
-        val_transform = Val6DOFTransform(
-            normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
-        )
-        dataset = Eval6DOFDataset(
-            params.dataset_folder, params.dataset_name, data_set,
-            local_transform=val_transform, load_octree=params.load_octree,
-            coordinates=params.model_params.coordinates
-        )
-    else:
-        val_transform = ValTransform(
-            normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-            unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
-        )
-        dataset = EvalDataset(
-            params.dataset_folder, params.dataset_name, data_set,
-            transform=val_transform, load_octree=params.load_octree,
-            coordinates=params.model_params.coordinates
-        )
+    val_transform = ValTransform(
+        normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+    )
+    dataset = EvalDataset(
+        params.dataset_folder, params.dataset_name, data_set,
+        transform=val_transform, load_octree=params.load_octree,
+        coordinates=params.model_params.coordinates
+    )
 
+    return dataset
+
+
+def make_eval_dataset_6DOF(
+    params: TrainingParams, query_set: Dict, database_set: Dict, pairs_list: List
+) -> Dataset:
+    """
+    Create dataset class for evaluating metric localisation on pairs of query
+    and NN.
+    """
+    val_transform = Val6DOFTransform(
+        normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+    )
+    dataset = Eval6DOFDataset(
+        params.dataset_folder, params.dataset_name, query_set, database_set,
+        pairs_list, local_transform=val_transform,
+        icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+        icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
+        icp_max_iteration=params.local.icp_max_iteration,
+        icp_voxel_size=params.local.icp_voxel_size,    
+        load_octree=params.load_octree, coordinates=params.model_params.coordinates,
+    )
     return dataset
 
 
@@ -334,10 +346,29 @@ def make_eval_dataloader(params: TrainingParams, data_set: Dict) -> DataLoader:
     Creates dataloader suitable for evaluate.py script.
     """
     quantizer = params.model_params.quantizer
-    eval_dataset = make_eval_dataset(params, data_set, local=False)
+    eval_dataset = make_eval_dataset(params, data_set)
     eval_collate_fn = make_eval_collate_fn(quantizer, params)
     eval_dataloader = DataLoader(eval_dataset, batch_size=params.val_batch_size,
-                                 shuffle=False, pin_memory=True, num_workers=params.num_workers,
+                                 shuffle=False, pin_memory=True,
+                                 num_workers=params.num_workers,
+                                 collate_fn=eval_collate_fn)
+    return eval_dataloader
+
+
+def make_eval_dataloader_6DOF(
+    params: TrainingParams, query_set: Dict, database_set: Dict, pairs_list: List
+) -> DataLoader:
+    """
+    Creates dataloader suitable for evaluate_metric_loc script.
+    """
+    quantizer = params.model_params.quantizer
+    eval_dataset = make_eval_dataset_6DOF(
+        params, query_set, database_set, pairs_list
+    )
+    eval_collate_fn = make_collate_fn_6DOF(quantizer, params)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=1,
+                                 shuffle=False, pin_memory=False,  # no pinned mem as it seems to be faster without here
+                                 num_workers=params.local.eval_num_workers,  # double workers to keep pace with BS 1
                                  collate_fn=eval_collate_fn)
     return eval_dataloader
 

@@ -13,19 +13,16 @@ import os
 import argparse
 import logging
 import torch
-import copy
 from time import time
 import tqdm
-import ocnn
 from typing import Sequence, List, Dict, Optional
 
-from dataset.dataset_utils import make_eval_dataloader, make_eval_dataset, make_collate_fn_6DOF
+from dataset.dataset_utils import make_eval_dataloader, make_eval_dataloader_6DOF
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
 from eval.sgv.sgv_utils import sgv_fn
 from misc.logger import create_logger
 from misc.point_clouds import icp
-from misc.poses import relative_pose
 from misc.torch_utils import set_seed, to_device, release_cuda
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
@@ -336,9 +333,6 @@ def get_metrics(
     if only_global:
         local_metrics = {}
     else:
-        query_loader = make_eval_dataset(params, query_set, local=True)
-        database_loader = make_eval_dataset(params, database_set, local=True)
-        eval_collate_fn = make_collate_fn_6DOF(params.model_params.quantizer, params)
         local_metrics = {
             eval_mode: {
                 'rre': [],
@@ -367,17 +361,17 @@ def get_metrics(
     # nearest neighbour search results as using cosine distance
     database_global_nbrs = KDTree(database_global_output)
 
-    recall = [0] * num_neighbors
-    recall_idx = []
+    metric_loc_pairs_list = {eval_mode: [] for eval_mode in EVAL_MODES}
 
-    one_percent_retrieved = 0
     opr_threshold = max(int(round(len(database_global_output)/100.0)), 1)
 
     num_evaluated = 0
-    for query_idx in tqdm.tqdm(range(len(queries_global_output)), disable=(not show_progress)):
+    for query_idx in tqdm.tqdm(range(len(queries_global_output)),
+                               desc='Place Recognition',
+                               disable=(not show_progress)):
         query_metadata = query_set[query_idx]  # {'query': path, 'northing': , 'easting': , 'pose': }
         query_position = np.array((query_metadata['northing'], query_metadata['easting']))
-        query_pose = query_metadata['pose']
+        # query_pose = query_metadata['pose']
         true_neighbors = query_metadata
         if len(true_neighbors) == 0:
             continue
@@ -520,37 +514,25 @@ def get_metrics(
         if euclid_dist[0] > local_max_eval_thresh:  # and euclid_dist_rr[0] > local_max_eval_thresh:
             continue
 
-        query_batch = query_loader[query_idx]  # (query_pc, query_shift_and_scale)
-        for eval_mode in EVAL_MODES:
-            # Get the first match and compute local stats only for the best match
-            if eval_mode == 'Initial':
-                nn_idx = nn_indices[0]
-            elif eval_mode == 'Re-Ranked':
-                nn_idx = topk_rerank_indices[0]
-            nn_metadata = database_set[nn_idx]  # {'query': path, 'northing': , 'easting': , 'pose': }
-            nn_pose = nn_metadata['pose']
+        # Cache query and nn idx for metric loc eval
+        metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
+        # pairs_dict['Re-Ranked'].append(query_idx, topk_rerank_indices[0]))  # TODO: Enable when re-ranking implemented
 
-            # Collate batch for query and nn, and process in HOTFormerMetricLoc
-            nn_batch = database_loader[nn_idx]  # (database_pc, database_shift_and_scale)
-            T_gt = relative_pose(query_pose, nn_pose)
-            query_pc_metric = Normalize.unnormalize(*query_batch)
-            query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
-            nn_pc_metric = Normalize.unnormalize(*nn_batch)
-            nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
-            # ICP refine ground truth transform (as dataloader does not do it in eval)
-            if params.local.icp and not DISABLE_ICP:
-                T_gt, _, _ = icp(
-                    query_pc_metric,
-                    nn_pc_metric,
-                    T_gt,
-                    gicp=params.local.icp_use_gicp,
-                    inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
-                    max_iteration=params.local.icp_max_iteration,
-                    voxel_size=params.local.icp_voxel_size,
-                )
-            T_gt = torch.tensor(T_gt, dtype=query_batch[0].dtype)
-            data_list = [(*query_batch, *nn_batch, T_gt)]
-            batch = eval_collate_fn(data_list)
+    # Run metric localisation evaluation for initial and re-ranked top-candidate
+    for eval_mode in EVAL_MODES:
+        if only_global:
+            break
+        eval_dataloader = make_eval_dataloader_6DOF(
+            params, query_set, database_set, metric_loc_pairs_list[eval_mode]
+        )
+        # TODO: Process with batch size > 1 to reduce dataloader bottleneck
+        for idx, batch in tqdm.tqdm(enumerate(eval_dataloader),
+                                    total=len(eval_dataloader),
+                                    desc=f'Metric Localisation [{eval_mode}]',
+                                    disable=(not show_progress)):
+            query_idx, nn_idx = metric_loc_pairs_list[eval_mode][idx]
+            T_gt = batch['transform'][0]
+
             # Use pre-computed embeddings so we don't re-compute the entire forward pass
             batch['anc_local_feats'] = {
                 'coarse': query_local_embeddings['coarse'][query_idx],
@@ -570,6 +552,12 @@ def get_metrics(
             
             # Refine the estimated pose using ICP
             if icp_refine:
+                # Get point clouds in metric coordinates
+                query_pc_metric = Normalize.unnormalize(batch['anc_points'].points, batch['anc_shift_and_scale'][0])
+                query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
+                nn_pc_metric = Normalize.unnormalize(batch['pos_points'].points, batch['pos_shift_and_scale'][0])
+                nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
+
                 tic = time()
                 T_estimated_refined, _, _ = icp(
                     query_pc_metric,
@@ -611,7 +599,7 @@ def get_metrics(
             torch.cuda.empty_cache()
 
 
-    # Calculate mean metrics
+    # Calculate mean global metrics
     global_metrics['recall'] = {r: [intermediate_metrics['tp'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
     # global_metrics['recall_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
     global_metrics['recall@1'] = {r: global_metrics['recall'][r][0] for r in radius}

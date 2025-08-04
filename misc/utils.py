@@ -355,6 +355,7 @@ class TrainingParams:
             self.local.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
             self.local.batch_size = params.getint('local_batch_size', 8)
             self.local.aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
+            self.local.eval_num_workers = params.getint('eval_num_workers', 0)  # Num dataloader workers for metric loc eval dataloader (ideally higher than standard num_workers)
             self.local.icp = params.getboolean('icp', False)
             self.local.icp_use_gicp = params.getboolean('icp_use_gicp', True)
             self.local.icp_inlier_dist_threshold = params.getfloat('icp_inlier_dist_threshold', 0.2)

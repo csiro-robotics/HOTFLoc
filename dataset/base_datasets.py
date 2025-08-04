@@ -284,27 +284,96 @@ class EvalDataset(Dataset):
 
 class Eval6DOFDataset(EvalDataset):
     """
-    Dataset wrapper for 6DOF estimation. Returns point clouds and normalization
-    parameters.
+    Dataset wrapper for 6DOF estimation. Loads pairs of positive point clouds
+    with relative transform and normalization parameters.
     """
-    def __init__(self, dataset_path: str, dataset_type: str, data_set_dict: Dict,
-                 local_transform=None, **kwargs):
-        super().__init__(dataset_path, dataset_type, data_set_dict, **kwargs)
+    def __init__(self, dataset_path: str, dataset_type: str, query_set: Dict,
+                 database_set: Dict, pairs_list: List, local_transform=None,
+                 icp=False, icp_use_gicp=True, icp_inlier_dist_threshold: float = 0.2,
+                 icp_max_iteration: int = 100, icp_voxel_size: Optional[float] = None,
+                 **kwargs):
+        super().__init__(dataset_path, dataset_type, query_set, **kwargs)
+        self.pos_dataset = EvalDataset(dataset_path, dataset_type, database_set, **kwargs)
         self.clip_octree_points = False  # We do this step after local transforms
+        self.pos_dataset.clip_octree_points = False
+        self.pairs_list = pairs_list
         self.local_transform = local_transform
+        self.icp = icp
+        self.icp_use_gicp = icp_use_gicp
+        self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
+        self.icp_max_iteration = icp_max_iteration
+        self.icp_voxel_size = icp_voxel_size
+
+    def __len__(self):
+        return len(self.pairs_list)
 
     def __getitem__(self, ndx):
         # TODO: Consider adding gravity alignment as a step here
         query_shift_and_scale = None
-        # pose is a global coordinate system pose 3x4 R|T matrix
-        query_pc = super().__getitem__(ndx)
-        # Apply only normalization jitter to the query point cloud
+        positive_shift_and_scale = None
+
+        query_ndx, positive_ndx = self.pairs_list[ndx]
+        query_pc = super().__getitem__(query_ndx)
+        positive_pc = self.pos_dataset[positive_ndx]
+
+        # get relative pose from global poses
+        transform = torch.tensor(
+            relative_pose(
+                self.data_set_dict[query_ndx]['pose'],
+                self.pos_dataset.data_set_dict[positive_ndx]['pose'],
+            ),
+            dtype=query_pc.dtype,
+        )
+
+        # ######################## TEMP FOR DEBUGGING ########################
+        # query_pc_orig = query_pc.clone()
+        # positive_pc_orig = positive_pc.clone()
+        # transform_orig = transform.clone()
+        # ####################################################################
+
+        # Ensure alignment with icp
+        if self.icp:
+            # tic = time.time()
+            transform_icp, fitness_icp, inlier_rmse_icp = icp(
+                query_pc.numpy().astype(float),
+                positive_pc.numpy().astype(float),
+                transform.numpy(),
+                gicp=self.icp_use_gicp,
+                inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                max_iteration=self.icp_max_iteration,
+                voxel_size=self.icp_voxel_size,
+            )
+            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
+            # logging.debug(msg)
+            transform = torch.tensor(transform_icp, dtype=transform.dtype)
+        
         if self.local_transform is not None:
+            # Apply normalization 
             query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
+            positive_pc, positive_shift_and_scale, _ = self.local_transform(positive_pc, ignore_rot_and_trans=True)
+
+        ########################################################################
+        # VISUALISATIONS FOR DEBUGGING
+        ########################################################################
+        # from misc.point_clouds import draw_registration_result
+        # # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
+        # # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
+        # # draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
+        # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
+        # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
+        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, aug_tf @ transform_icp)
+        ########################################################################
+
         # Now clip point coordinates after normalization is done
         if self.load_octree:
             query_pc = clip_points(query_pc, self.coordinates)
-        return query_pc, query_shift_and_scale
+            positive_pc = clip_points(positive_pc, self.coordinates)
+
+        return query_pc, query_shift_and_scale, positive_pc, positive_shift_and_scale, transform
 
 
 class EvaluationSet:

@@ -36,6 +36,7 @@ validation = True
 enable_local = True
 local_batch_size = 24
 local_aug_mode = 1
+eval_num_workers = 6
 icp = True
 weight_coarse_loss = 1.0
 weight_fine_loss = 1.0
