@@ -41,15 +41,18 @@ def evaluate(
     model_name: str = "model",
     radius: Sequence[float] = [5., 20.],
     icp_refine: bool = False,
-    local_max_eval_thresh: float = np.inf,
+    local_max_eval_threshold: float = np.inf,
     num_neighbors: int = 20,
     show_progress: bool = False,
+    only_global: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
 ):
     # Run evaluation on all eval datasets
     eval_database_files, eval_query_files = get_query_database_splits(params)
-    metric_loc_evaluator = Evaluator(params)
+    metric_loc_evaluator = None
+    if not only_global:
+        metric_loc_evaluator = Evaluator(params)
 
     assert len(eval_database_files) == len(eval_query_files)
     global_metrics, local_metrics = {}, {}
@@ -91,27 +94,30 @@ def evaluate(
             model_name=model_name,
             radius=radius,
             icp_refine=icp_refine,
-            local_max_eval_thresh=local_max_eval_thresh,
+            local_max_eval_threshold=local_max_eval_threshold,
             num_neighbors=num_neighbors,
             show_progress=show_progress,
+            only_global=only_global,
             save_embeddings=save_embeddings,
             load_embeddings=load_embeddings,
         )
         global_metrics[location_name] = temp_global_metrics
-        local_metrics[location_name] = temp_local_metrics
         average_global_metrics[location_name] = temp_global_metrics['average']
-        average_local_metrics[location_name] = temp_local_metrics['average']
+        if not only_global:
+            local_metrics[location_name] = temp_local_metrics
+            average_local_metrics[location_name] = temp_local_metrics['average']
         
     # Compute average stats
     global_metrics['average'] = {'average': average_nested_dict(average_global_metrics)}
-    local_metrics['average'] = {'average': average_nested_dict(average_local_metrics)}
+    if not only_global:
+        local_metrics['average'] = {'average': average_nested_dict(average_local_metrics)}
     return global_metrics, local_metrics
 
 
 def evaluate_dataset(
     model: torch.nn.Module,
     device,
-    metric_loc_evaluator: Evaluator,
+    metric_loc_evaluator: Optional[Evaluator],
     params: TrainingParams,
     database_sets: List[Dict],
     query_sets: List[Dict],
@@ -120,9 +126,10 @@ def evaluate_dataset(
     model_name: str = "model",
     radius: Sequence[float] = [5., 20.],
     icp_refine: bool = False,
-    local_max_eval_thresh: float = np.inf,
+    local_max_eval_threshold: float = np.inf,
     num_neighbors: int = 20,
     show_progress: bool = False,
+    only_global: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
 ):
@@ -137,6 +144,7 @@ def evaluate_dataset(
 
     model.eval()
 
+    # TODO: Determine why memory usage peaks at ~200GB when computing/loading Venman from disk (even though Kara is larger)
     if show_progress:
         logging.info(f'{"Loading" if load_embeddings else "Computing"} database embeddings')
     for ii, data_set in enumerate(database_sets):
@@ -190,23 +198,27 @@ def evaluate_dataset(
                 database_set=database_sets[i],
                 query_set=query_sets[j],
                 model=model,
+                device=device,
                 metric_loc_evaluator=metric_loc_evaluator,
                 params=params,
                 radius=radius,
                 icp_refine=icp_refine,
-                local_max_eval_thresh=local_max_eval_thresh,
+                local_max_eval_threshold=local_max_eval_threshold,
                 num_neighbors=num_neighbors,
                 log=log,
                 model_name=model_name,
                 show_progress=show_progress,
+                only_global=only_global,
             )
             # Report per-split metrics
             global_metrics[split_name] = temp_global_metrics
-            local_metrics[split_name] = temp_local_metrics
+            if not only_global:
+                local_metrics[split_name] = temp_local_metrics
 
     # Compute average for split
     global_metrics['average'] = average_nested_dict(global_metrics)
-    local_metrics['average'] = average_nested_dict(local_metrics)
+    if not only_global:
+        local_metrics['average'] = average_nested_dict(local_metrics)
 
     del database_embeddings, database_local_embeddings, query_embeddings, query_local_embeddings
     return global_metrics, local_metrics
@@ -244,10 +256,14 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
         return None, None
 
     ### NOTE: Disabled so that eval can be tested during training debug mode
-    # if params.debug:
-    #     global_embeddings = np.random.rand(len(data_set), 256)
-    #     local_embeddings = {4: torch.rand(len(data_set), 128, params.model_params.channels[1])}
-    #     return global_embeddings, local_embeddings
+    if params.debug:
+        global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
+        local_embeddings = {'coarse': [], 'fine': []}
+        if params.local.enable_local:
+            for _ in range(len(data_set)):
+                local_embeddings['coarse'].append(torch.randn(128, params.model_params.channels[-1]))
+                local_embeddings['fine'].append(torch.randn(512, params.model_params.channels[-3]))
+        return global_embeddings, local_embeddings
 
     # Create dataloader for data_set
     dataloader = make_eval_dataloader(params, data_set)
@@ -262,8 +278,9 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
                 global_embeddings = np.zeros((len(data_set), temp_global_embedding.shape[1]), dtype=temp_global_embedding.dtype)
             global_embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_global_embedding))] = temp_global_embedding
             # Split local embeddings from batch
-            for embedding_resolution, embedding in temp_local_embedding.items():
-                local_embeddings[embedding_resolution].extend(embedding)
+            if temp_local_embedding is not None:
+                for embedding_resolution, embedding in temp_local_embedding.items():
+                    local_embeddings[embedding_resolution].extend(embedding)
             pbar.update(len(temp_global_embedding))
     
     return global_embeddings, local_embeddings
@@ -302,11 +319,12 @@ def get_metrics(
     database_set: Dict[int, Dict],
     query_set: Dict[int, Dict],
     model: torch.nn.Module,
-    metric_loc_evaluator: Evaluator,
+    device: str,
+    metric_loc_evaluator: Optional[Evaluator],
     params: TrainingParams,
     radius: Sequence[float] = [5., 20.],
     icp_refine: bool = False,
-    local_max_eval_thresh: float = np.inf,
+    local_max_eval_threshold: float = np.inf,
     num_neighbors: int = 20,
     log: bool = False,
     model_name: str = "model",
@@ -330,11 +348,10 @@ def get_metrics(
         'RR_rr': {r: [] for r in radius},
         't_rr': [],
     }
-    if only_global:
-        local_metrics = {}
-    else:
-        local_metrics = {
-            eval_mode: {
+    local_metrics = {}
+    if not only_global:
+        for eval_mode in EVAL_MODES:
+            local_metrics[eval_mode] = {
                 'rre': [],
                 'rte': [],
                 'success': [],
@@ -342,16 +359,17 @@ def get_metrics(
                 'fine_IR': [],
                 'failure_query_pos_ndx': [],
                 't_metloc': [],
+            }
+            if icp_refine:
+                local_metrics[eval_mode].update({
                 'rre_refined': [],
                 'rte_refined': [],
                 'success_refined': [],
                 'coarse_IR_refined': [],
                 'fine_IR_refined': [],
                 'failure_query_pos_ndx_refined': [],
-                't_metloc_refined': [],
-            }
-            for eval_mode in EVAL_MODES
-        }
+                't_metloc_refined': []
+                })
 
     database_global_output = database_global_embeddings
     queries_global_output = query_global_embeddings
@@ -363,6 +381,7 @@ def get_metrics(
 
     metric_loc_pairs_list = {eval_mode: [] for eval_mode in EVAL_MODES}
 
+    # NOTE: Recall@1% will be incorrect when `opr_threshold` is > `num_neighbours`
     opr_threshold = max(int(round(len(database_global_output)/100.0)), 1)
 
     num_evaluated = 0
@@ -511,7 +530,7 @@ def get_metrics(
         # Do the evaluation only if the nn pose is within distance threshold
         # Otherwise the overlap is too small to get reasonable results
         # (evaluation continues if standard OR re-ranked nn pose is within thresh meters)
-        if euclid_dist[0] > local_max_eval_thresh:  # and euclid_dist_rr[0] > local_max_eval_thresh:
+        if euclid_dist[0] > local_max_eval_threshold:  # and euclid_dist_rr[0] > local_max_eval_threshold:
             continue
 
         # Cache query and nn idx for metric loc eval
@@ -534,14 +553,26 @@ def get_metrics(
             T_gt = batch['transform'][0]
 
             # Use pre-computed embeddings so we don't re-compute the entire forward pass
-            batch['anc_local_feats'] = {
-                'coarse': query_local_embeddings['coarse'][query_idx],
-                'fine': query_local_embeddings['fine'][query_idx],
-            }
-            batch['pos_local_feats'] = {
-                'coarse': database_local_embeddings['coarse'][nn_idx],
-                'fine': database_local_embeddings['fine'][nn_idx],
-            }
+            if params.debug:
+                if idx >= 2:
+                    break
+                batch['anc_local_feats'] = {
+                    'coarse': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
+                    'fine': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
+                }
+                batch['pos_local_feats'] = {
+                    'coarse': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
+                    'fine': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
+                }
+            else:
+                batch['anc_local_feats'] = {
+                    'coarse': query_local_embeddings['coarse'][query_idx],
+                    'fine': query_local_embeddings['fine'][query_idx],
+                }
+                batch['pos_local_feats'] = {
+                    'coarse': database_local_embeddings['coarse'][nn_idx],
+                    'fine': database_local_embeddings['fine'][nn_idx],
+                }
             batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
 
             with torch.inference_mode():
@@ -721,10 +752,13 @@ def print_eval_stats(global_metrics: Dict, local_metrics: Dict, icp_refine=False
                     msg += '\n        Re-Ranking Failures (query, nn, nn_rerank, nn_dist, nn_rerank_dist):\n          '
                     msg += '\n          '.join(global_metrics[database_name][split]['rr_failures'])
 
+            if len(local_metrics) == 0:
+                msg += '\n'
+                continue
             msg += '\n    Metric Localization:'
             for eval_mode in EVAL_MODES:
                 if eval_mode not in local_metrics[database_name][split]:
-                    break
+                    continue
                 msg += f'\n      Eval Mode: {eval_mode}'
                 for metric in local_metrics[database_name][split][eval_mode]:
                     if '_refined' in metric and not icp_refine:
@@ -781,10 +815,13 @@ def write_eval_stats(
                         msg += '\n        Re-Ranking Failures (query, nn, nn_rerank, nn_dist, nn_rerank_dist):\n          '
                         msg += '\n          '.join(global_metrics[database_name][split]['rr_failures'])
 
+                if len(local_metrics) == 0:
+                    msg += '\n'
+                    continue
                 msg += '\n    Metric Localization:'
                 for eval_mode in EVAL_MODES:
                     if eval_mode not in local_metrics[database_name][split]:
-                        break
+                        continue
                     msg += f'\n      Eval Mode: {eval_mode}'
                     for metric in local_metrics[database_name][split][eval_mode]:
                         if '_refined' in metric and not icp_refine:
@@ -833,7 +870,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--radius', type=float, nargs='+', default=[5., 20.], help='True Positive thresholds in meters')
     parser.add_argument('--icp_refine', action='store_true', help='Refine estimated pose with ICP')
-    parser.add_argument('--local_max_eval_thresh', type=float, default=np.inf,
+    parser.add_argument('--local_max_eval_threshold', type=float, default=np.inf,
                         help=('Maximum nn threshold to continue with local eval step '
                               'metric localisation not computed if distance to nearest retrieval is > thresh'))
     parser.add_argument('--num_neighbors', type=int, default=20, help='Number of nearest neighbours to consider in evaluation and re-ranking')
@@ -841,6 +878,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--log', action='store_true', help='Log false positives and top-5 retrievals')
+    parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
@@ -849,8 +887,9 @@ if __name__ == "__main__":
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
     print(f'Radius: {args.radius} [m]')
+    print(f'Only global: {args.only_global}')
     print(f'ICP refine: {args.icp_refine}')
-    print(f'Local max eval threshold: {args.local_max_eval_thresh}')
+    print(f'Local max eval threshold: {args.local_max_eval_threshold}')
     print(f'Num neighbors: {args.num_neighbors}')
     if args.weights is None:
         if args.save_embeddings or args.load_embeddings:
@@ -911,9 +950,10 @@ if __name__ == "__main__":
         model_name,
         radius=args.radius,
         icp_refine=args.icp_refine,
-        local_max_eval_thresh=args.local_max_eval_thresh,
+        local_max_eval_threshold=args.local_max_eval_threshold,
         num_neighbors=args.num_neighbors,
         show_progress=True,
+        only_global=args.only_global,
         save_embeddings=args.save_embeddings,
         load_embeddings=args.load_embeddings,
     )

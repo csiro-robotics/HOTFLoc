@@ -241,6 +241,10 @@ class TrainingParams:
         self.num_embeddings_logged = params.getint('num_embeddings_logged', 20)  # Number of embeddings to log at each epoch
         self.num_workers = params.getint('num_workers', 0)
         self.wandb = params.getboolean('wandb', True)  # enable wandb logging
+        if 'eval_radius' in params:  # thresholds to evaluate PR at
+            self.eval_radius = tuple([float(e) for e in params['eval_radius'].split(',')])
+        else:
+            self.eval_radius = tuple([5., 20.])
 
         # Initial batch size for global descriptors (for both main and secondary dataset)
         self.batch_size = params.getint('batch_size', 64)
@@ -349,13 +353,14 @@ class TrainingParams:
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
 
         # Metric localisation and re-ranking parameters
-        self.local = edict({'enable_local': False})
+        self.local = edict({'enable_local': False, 'max_eval_threshold': 20.})
         if 'LOCAL' in config:
             params = config['LOCAL']
             self.local.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
             self.local.batch_size = params.getint('local_batch_size', 8)
             self.local.aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
             self.local.eval_num_workers = params.getint('eval_num_workers', 0)  # Num dataloader workers for metric loc eval dataloader (ideally higher than standard num_workers)
+            self.local.max_eval_threshold = params.getfloat('max_eval_threshold', 20.)  # max distance to NN to evaluate metric loc (prevents impossible pairs)
             self.local.icp = params.getboolean('icp', False)
             self.local.icp_use_gicp = params.getboolean('icp_use_gicp', True)
             self.local.icp_inlier_dist_threshold = params.getfloat('icp_inlier_dist_threshold', 0.2)

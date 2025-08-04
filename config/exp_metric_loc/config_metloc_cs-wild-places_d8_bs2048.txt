@@ -11,6 +11,7 @@ val_batch_size = 32
 only_ground_aerial = True
 save_freq = 10
 eval_freq = 10
+eval_radius = 10, 30
 
 lr = 8e-4
 epochs = 100
@@ -38,7 +39,8 @@ validation = True
 enable_local = True
 local_batch_size = 8
 local_aug_mode = 1
-eval_num_workers = 6
+eval_num_workers = 10
+max_eval_threshold = 30
 icp = True
 weight_coarse_loss = 1.0
 weight_fine_loss = 1.0

@@ -1,5 +1,5 @@
 """
-Train HOTFormerLoc or MinkLoc3Dv2 model, with support for metric localisation.
+Train HOTFormerLoc or MinkLoc3Dv2 model.
 Based on MinkLoc3Dv2 training script by Jacek Komorowski.
 
 Ethan Griffiths (Data61, Pullenvale)
@@ -32,7 +32,7 @@ from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.octree import OctreeT, get_octant_centroids_from_points
 from dataset.dataset_utils import make_dataloaders
-from eval.evaluate_metric_loc_splits_sgv import evaluate, print_eval_stats, write_eval_stats, EVAL_MODES
+from eval.pnv_evaluate_splits import evaluate, print_eval_stats, pnv_write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
     colourise_points_by_height, colourise_points_by_similarity, \
         create_heatmap
@@ -161,7 +161,7 @@ class NetworkTrainer:
 
     def save_checkpoint(self, checkpoint_path: str):
         # Save checkpoint of training state (as opposed to just model weights)
-        self.logger.info(f"Saving checkpoint to {checkpoint_path}")
+        print(f"[INFO] Saving checkpoint to {checkpoint_path}", flush=True)
         state = {
             'epoch': self.curr_epoch,
             'wandb_id': self.wandb_id,
@@ -255,7 +255,7 @@ class NetworkTrainer:
             s += f"Recall@1: {stats['recall'][1]:.4f}   "
         if 'ap' in stats:
             s += f"AP: {stats['ap']:.4f}   "
-        self.logger.info(s)
+        print(s, flush=True)
 
     def print_local_stats(self, phase, stats):
         s = f"{phase}:  local loss: {stats['loss']:.4f}   "
@@ -273,7 +273,7 @@ class NetworkTrainer:
             s += f"RTE: {stats['RTE']:.4f}   "
         if 'RR' in stats:
             s += f"RR: {stats['RR']:.4f}   "
-        self.logger.info(s)
+        print(s, flush=True)
 
     def print_stats(self, phase, stats):
         self.print_global_stats(phase, stats['global'])
@@ -312,52 +312,17 @@ class NetworkTrainer:
             stage_grad_mags[stage_i] = np.mean(grad_mags_list)
         return stage_grad_mags
 
-    def log_eval_stats(self, global_metrics: dict, local_metrics: dict):
+    def log_eval_stats(self, stats):
         eval_stats = {}
-        for database_name in global_metrics.keys():
-            for split in global_metrics[database_name].keys():
+        for database_name in stats:
+            for split in stats[database_name]:
                 split_log_key = split
                 if split == 'average':
                     split_log_key = database_name
-                eval_stats[split_log_key] = {
-                    'recall@1': {},
-                    'recall@5': {},
-                    'recall@20': {},
-                    'recall@1%': {},
-                    'MRR': {},
-                }
-                if 'Re-Ranking' in EVAL_MODES:
-                    eval_stats[split_log_key].update({
-                        'recall@1_rerank': {},
-                        'recall@5_rerank': {},
-                        'recall@20_rerank': {},
-                        'recall@1%_rerank': {},
-                        'MRR_rerank': {},
-                    })
-
-                for radius in self.params.eval_radius:
-                    eval_stats[split_log_key]['recall@1'][radius] = global_metrics[database_name][split]['recall'][radius][0]
-                    eval_stats[split_log_key]['recall@5'][radius] = global_metrics[database_name][split]['recall'][radius][5-1]
-                    eval_stats[split_log_key]['recall@20'][radius] = global_metrics[database_name][split]['recall'][radius][20-1]
-                    eval_stats[split_log_key]['recall@1%'][radius] = global_metrics[database_name][split]['recall@1%'][radius]
-                    eval_stats[split_log_key]['MRR'][radius] = global_metrics[database_name][split]['MRR'][radius]
-                    if 'Re-Ranking' in EVAL_MODES:
-                        eval_stats[split_log_key]['recall@1_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][0]
-                        eval_stats[split_log_key]['recall@5_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][5-1]
-                        eval_stats[split_log_key]['recall@20_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][20-1]
-                        eval_stats[split_log_key]['recall@1%_rerank'][radius] = global_metrics[database_name][split]['recall@1%_rr'][radius]
-                        eval_stats[split_log_key]['MRR_rerank'][radius] = global_metrics[database_name][split]['MRR_rr'][radius]
-
-                if len(local_metrics) == 0:
-                    continue
-                for eval_mode in EVAL_MODES:
-                    if eval_mode not in local_metrics[database_name][split]:
-                        continue
-                    eval_stats[split_log_key][eval_mode] = {}
-                    for metric in local_metrics[database_name][split][eval_mode].keys():
-                        if 'failure' in metric:  # ignore failure indices, no need to log to wandb
-                            continue
-                        eval_stats[split_log_key][eval_mode][metric] = local_metrics[database_name][split][eval_mode][metric]
+                eval_stats[split_log_key] = {}
+                eval_stats[split_log_key]['recall@1%'] = stats[database_name][split]['ave_one_percent_recall']
+                eval_stats[split_log_key]['recall@1'] = stats[database_name][split]['ave_recall'][0]
+                eval_stats[split_log_key]['MRR'] = stats[database_name][split]['ave_mrr']
         return eval_stats
 
     def log_feats(self, feature_maps: tp.List) -> tp.Dict:
@@ -1010,25 +975,16 @@ class NetworkTrainer:
                     self.save_checkpoint(epoch_pathname)
 
             if self.params.eval_freq > 0 and epoch % self.params.eval_freq == 0:
-                self.logger.debug("Begin evaluation")
-                global_eval_stats, local_eval_stats = evaluate(
-                    self.model,
-                    self.device,
-                    self.params,
-                    log=False,
-                    radius=self.params.eval_radius,
-                    icp_refine=False,
-                    local_max_eval_threshold=self.params.local.max_eval_threshold,
-                    show_progress=self.params.verbose,
-                    only_global=(not self.params.local.enable_local)
-                )
-                print_eval_stats(global_eval_stats, local_eval_stats)
-                metrics['test'] = self.log_eval_stats(global_eval_stats, local_eval_stats)
+                if self.params.verbose:
+                    print("[INFO] Begin evaluation", flush=True)
+                eval_stats = evaluate(self.model, self.device, self.params,
+                                      log=False, show_progress=self.params.verbose)
+                print_eval_stats(eval_stats)
+                metrics['test'] = self.log_eval_stats(eval_stats)
                 # store best AR@1 on all test sets
-                radius_best = min(self.params.eval_radius)
-                avg_AR_1 = metrics['test']['average']['recall@1'][radius_best]
+                avg_AR_1 = metrics['test']['average']['recall@1']
                 if avg_AR_1 > self.best_avg_AR_1:
-                    self.logger.info(f"New best avg AR@1 at Epoch {epoch}: {self.best_avg_AR_1:.2f} -> {avg_AR_1:.2f}")
+                    print(f"New best avg AR@1 at Epoch {epoch}: {self.best_avg_AR_1:.2f} -> {avg_AR_1:.2f}")
                     self.best_avg_AR_1 = avg_AR_1
                     if not self.params.debug:
                         best_model_pathname = f"{self.model_pathname}_best.ckpt"
@@ -1047,24 +1003,20 @@ class NetworkTrainer:
                 if rnz < self.params.batch_expansion_th:
                     dataloaders['global_train'].batch_sampler.expand_batch()
 
+        print('')
+
         # Save final model weights
         if not self.params.debug:
             final_model_path = self.model_pathname + '_final.ckpt'
             self.save_checkpoint(final_model_path)
 
         # Evaluate the final
-        final_global_stats, final_local_stats = evaluate(
-            self.model,
-            self.device,
-            self.params,
-            log=False,
-            radius=self.params.eval_radius,
-            icp_refine=False,
-            local_max_eval_threshold=self.params.local.max_eval_threshold,
-            show_progress=self.params.verbose,
-            only_global=(not self.params.local.enable_local)
-        )
-        print_eval_stats(final_global_stats, final_local_stats)
+        # PointNetVLAD datasets evaluation protocol
+        final_stats = evaluate(self.model, self.device, self.params, log=False,
+                               show_progress=self.params.verbose)
+        print_eval_stats(final_stats)
+
+        print('.')
 
         # Append key experimental metrics to experiment summary file
         if not self.params.debug:
@@ -1073,7 +1025,7 @@ class NetworkTrainer:
             model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
             prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
-            write_eval_stats(f"metloc_sgv_{self.params.dataset_name}_split_results.txt", prefix, final_global_stats, final_local_stats)        
+            pnv_write_eval_stats(f"pnv_{self.params.dataset_name}_results.txt", prefix, final_stats)        
 
             if self.params.wandb and WANDB_OFFLINE:
                 self.trigger_sync()
@@ -1167,3 +1119,41 @@ class NetworkTrainer:
         if 'RR' in epoch_stats['local']:
             metrics['local']['RR'] = epoch_stats['local']['RR']
         return metrics
+
+    # def get_wandb_metrics(self, epoch_stats: tp.Dict[str, tp.Dict]) -> tp.Dict:
+    #     metrics = {}
+    #     # Global Metrics
+    #     metrics['loss1'] = epoch_stats['global'].get('loss')
+    #     metrics['loss_total'] = epoch_stats['global'].get('loss_total')
+    #     metrics['active_triplets1'] = epoch_stats['global'].get('num_non_zero_triplets')
+    #     metrics['positive_ranking'] = epoch_stats['global'].get('positive_ranking')
+    #     if 'recall' in epoch_stats['global']:
+    #         metrics['recall@1'] = epoch_stats['global']['recall'][1]
+    #     metrics['AP'] = epoch_stats['global'].get('ap')
+    #     metrics['loss_mesa'] = epoch_stats['global'].get('loss_mesa')
+    #     metrics['local_qkv_std_loss'] = epoch_stats['global'].get('local_qkv_std_loss')
+    #     metrics['local_qkv_std'] = epoch_stats['global'].get('local_qkv_std')
+    #     metrics['rt_qkv_std_loss'] = epoch_stats['global'].get('rt_qkv_std_loss')
+    #     metrics['rt_qkv_std'] = epoch_stats['global'].get('rt_qkv_std')
+    #     metrics['qkv_weight_norm_loss'] = epoch_stats['global'].get('qkv_weight_norm_loss')
+    #     metrics['qkv_weight_norm'] = epoch_stats['global'].get('qkv_weight_norm')
+    #     metrics['rt_attn_map'] = epoch_stats['global'].get('rt_attn_map')
+    #     metrics['local_attn_map'] = epoch_stats['global'].get('local_attn_map')
+    #     metrics['local_rpe'] = epoch_stats['global'].get('local_rpe')
+    #     metrics['rt_token_unique_sim'] = epoch_stats['global'].get('rt_token_unique_sim')
+    #     metrics['local_token_unique_sim'] = epoch_stats['global'].get('local_token_unique_sim')
+    #     metrics['rt_token_sim_matrix'] = epoch_stats['global'].get('rt_token_sim_matrix')
+    #     metrics['local_token_sim_matrix'] = epoch_stats['global'].get('local_token_sim_matrix')
+    #     metrics['pointcloud'] = epoch_stats['global'].get('pointcloud')
+    #     metrics['pca_variance'] = epoch_stats['global'].get('pca_variance')
+    #     # Local Metrics
+    #     metrics['local'] = {}
+    #     metrics['local']['loss'] = epoch_stats['local'].get('loss')
+    #     metrics['local']['coarse_loss'] = epoch_stats['local'].get('coarse_loss')
+    #     metrics['local']['fine_loss'] = epoch_stats['local'].get('fine_loss')
+    #     metrics['local']['coarse_IR'] = epoch_stats['local'].get('PIR')
+    #     metrics['local']['fine_IR'] = epoch_stats['local'].get('IR')
+    #     metrics['local']['RRE'] = epoch_stats['local'].get('RRE')
+    #     metrics['local']['RTE'] = epoch_stats['local'].get('RTE')
+    #     metrics['local']['RR'] = epoch_stats['local'].get('RR')
+    #     return metrics
