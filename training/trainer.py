@@ -770,8 +770,11 @@ class NetworkTrainer:
                 minibatch = to_device(minibatch, self.device, non_blocking=True, construct_octree_neigh=True)
                 y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
+                if phase != 'train':
+                    del minibatch, y
+                    continue
                 # Log stats related to feats and attn maps (only for first minibatch)
-                if i == 0 and phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
+                if i == 0 and 'feats_and_attn_maps' in y and self.params.wandb:
                     feats_and_attn_maps = y.pop('feats_and_attn_maps')
                     if 'octree' in y:
                         temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
@@ -789,7 +792,7 @@ class NetworkTrainer:
 
         # Stage 2 - compute gradient of the loss w.r.t embeddings
         embeddings = torch.cat(embeddings_l, dim=0)
-        if mesa > 0.0:
+        if phase == 'train' and mesa > 0.0:
             embeddings_ema = torch.cat(embeddings_ema_l, dim=0)
 
         with torch.set_grad_enabled(phase == 'train'):
@@ -799,7 +802,7 @@ class NetworkTrainer:
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
             # Compute MESA loss
-            if mesa > 0.0:
+            if phase == 'train' and mesa > 0.0:
                 kd = kdloss(embeddings, embeddings_ema)
                 mesa_loss = mesa * kd
                 loss += mesa_loss
@@ -837,10 +840,6 @@ class NetworkTrainer:
                     embeddings.backward(gradient=embeddings_grad[i: i+minibatch_size])
                     i += minibatch_size
                     del minibatch, y
-
-                # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step
-                # if self.model_ema is not None:
-                #     self.model_ema.update(self.model)
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
         if embeddings is not None:
