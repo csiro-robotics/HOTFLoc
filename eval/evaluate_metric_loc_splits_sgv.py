@@ -26,6 +26,7 @@ from misc.point_clouds import icp
 from misc.torch_utils import set_seed, to_device, release_cuda
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
+from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.losses.geotransformer_loss import Evaluator
 
 DISABLE_ICP = False
@@ -155,7 +156,7 @@ def evaluate_dataset(
             if load_embeddings:
                 temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
             else:
-                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, only_global, show_progress)
             if save_embeddings:
                 save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
         database_embeddings.append(temp_embeddings)
@@ -170,7 +171,7 @@ def evaluate_dataset(
             if load_embeddings:
                 temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
             else:
-                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, show_progress)
+                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, only_global, show_progress)
             if save_embeddings:
                 save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
         query_embeddings.append(temp_embeddings)
@@ -250,7 +251,8 @@ def average_nested_dict(nested_dict: Dict):
     return average_dict
 
 def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
-                       params: TrainingParams, show_progress: bool = False):
+                       params: TrainingParams, only_global: bool = False,
+                       show_progress: bool = False):
     # Adapted from original PointNetVLAD code
     if len(data_set) == 0:
         return None, None
@@ -273,7 +275,7 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
         for ii, batch in enumerate(dataloader):
             batch = to_device(batch, device, non_blocking=True, construct_octree_neigh=True)
-            temp_global_embedding, temp_local_embedding = compute_embedding(model, batch)
+            temp_global_embedding, temp_local_embedding = compute_embedding(model, batch, only_global)
             if global_embeddings is None:
                 global_embeddings = np.zeros((len(data_set), temp_global_embedding.shape[1]), dtype=temp_global_embedding.dtype)
             global_embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_global_embedding))] = temp_global_embedding
@@ -286,16 +288,16 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
     return global_embeddings, local_embeddings
 
 
-def compute_embedding(model: torch.nn.Module, batch: Dict):
+def compute_embedding(model: torch.nn.Module, batch: Dict, only_global: bool = False):
     with torch.inference_mode():
         # Compute global descriptor
         y = model(batch, global_only=True)
         global_embedding = release_cuda(y['global'], to_numpy=True)
         # Get local descriptors for each pyramid level
         local_embedding = None
-        if 'local' in y:
+        if not only_global and 'local' in y:
             local_embedding = y['local']  # keep as tensors for future forward pass
-            if 'octree' in y:
+            if isinstance(model, HOTFormerMetricLoc):
                 # Only keep the coarse and fine indices to save mem
                 # Batch stored in concat mode, so need to split back to batch elems
                 batch_lengths_coarse = y['octree'].batch_nnum_nempty[model.depth_coarse].tolist()
