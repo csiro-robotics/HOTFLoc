@@ -46,8 +46,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
         hotformerloc_global: HOTFormerLoc,
         coarse_feat_refiner: GeometricTransformer,
         model_params: ModelParams,
-        depth_coarse: int = 3,  # Assuming Octree depth 7 with 2 input downsamples and 2 pyramid layers
-        depth_fine: int = 5,
+        octree_depth: int,
+        coarse_idx: int,
+        fine_idx: int,
         quantizer: Optional[CoordinateSystem] = None,
         return_feats_and_attn_maps: bool = False,
     ):
@@ -59,6 +60,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
             hotformerloc_global (nn.Module): HOTFormerLoc instance for extracting local features and global descriptor for place rec.
             coarse_feat_refiner (nn.Module): GeoTransformer (or other) instance for refining coarse features and correspondences.
             model_params (ModelParams): Model parameters instance.
+            octree_depth (int): Octree depth (must be fixed for this instance of the model).
+            coarse_idx (int): Index corresponding to depth of coarse features, ranging from [0, num_pyramid_levels)
+                              (sorted from finest to coarsest). Supports negative indices.
+            fine_idx (int): Index corresponding to depth of fine features, ranging from [0, num_pyramid_levels)
+                            (sorted from finest to coarsest). Supports negative indices.
             depth_coarse (int): Octree depth of coarse features (must correspond to depth of OctFormer/HOTFormer blocks))
             depth_fine (int): Octree depth of fine features (must correspond to depth of OctFormer/HOTFormer blocks))
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
@@ -72,8 +78,10 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.hotformerloc_global = hotformerloc_global
         self.coarse_feat_refiner = coarse_feat_refiner
         self.model_params = model_params
-        self.depth_coarse = depth_coarse
-        self.depth_fine = depth_fine
+        self.coarse_idx = coarse_idx
+        self.fine_idx = fine_idx
+        self.octree_depth = octree_depth
+        self.compute_depth_from_idx()
         self.quantizer = quantizer
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.point_padding = 1e10
@@ -112,6 +120,25 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.optimal_transport = LearnableLogOptimalTransport(
             model_params.fine_matching.num_sinkhorn_iterations
         )
+
+    def compute_depth_from_idx(self):
+        """
+        Determines the octree depth of coarse and fine features based on the
+        input octree depth and HOTFormerLoc parameters.
+        """
+        num_downsamples = (self.hotformerloc_global.backbone.backbone.stem_down
+                           if self.hotformerloc_global.backbone.backbone.downsample_input_embeddings
+                           else 0)
+        num_stages = self.hotformerloc_global.backbone.backbone.num_stages
+        depth_start = self.octree_depth - num_downsamples
+        if self.coarse_idx >= 0:
+            self.depth_coarse = depth_start - self.coarse_idx
+        else:  # neg idx
+            self.depth_coarse = depth_start - num_stages - self.coarse_idx
+        if self.fine_idx >= 0:
+            self.depth_fine = depth_start - self.fine_idx
+        else:
+            self.depth_fine = depth_start - num_stages - self.fine_idx
         
     def forward(self, batch, global_only=False, **kwargs) -> List[dict]:
         """

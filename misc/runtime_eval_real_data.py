@@ -178,7 +178,7 @@ if __name__ == "__main__":
     for model_type in configs.keys():        
         print(f"EVALUATING {model_configs[model_type]} RUNTIME...")
         params = TrainingParams(configs[model_type], model_configs[model_type])
-        model = model_factory(params.model_params).to(device)
+        model = model_factory(params).to(device)
         model.eval()
         
         # Get queries and database for desired split

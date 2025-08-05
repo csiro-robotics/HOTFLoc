@@ -411,7 +411,7 @@ if __name__ == "__main__":
         device = "cpu"
     print('Device: {}'.format(device))
 
-    model = model_factory(params.model_params)
+    model = model_factory(params)
     if args.weights is not None:
         assert os.path.exists(args.weights), 'Cannot open network weights: {}'.format(args.weights)
         print('Loading weights: {}'.format(args.weights))

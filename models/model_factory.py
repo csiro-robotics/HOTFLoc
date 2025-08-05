@@ -9,7 +9,7 @@ from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from geotransformer.modules.geotransformer import GeometricTransformer
-from misc.utils import ModelParams
+from misc.utils import TrainingParams
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
 from models.layers.eca_block import ECABasicBlock
 from models.minkfpn import MinkFPN
@@ -27,7 +27,8 @@ def get_in_channels(input_features: str) -> int:
     
     return in_channels
 
-def model_factory(model_params: ModelParams):
+def model_factory(params: TrainingParams):
+    model_params = params.model_params
     in_channels = 1
 
     if 'minkloc' in model_params.model.lower():
@@ -122,8 +123,9 @@ def model_factory(model_params: ModelParams):
             hotformerloc_global=hotformerloc_global,
             coarse_feat_refiner=coarse_feat_refiner,
             model_params=model_params,
-            depth_coarse=model_params.depth_coarse,
-            depth_fine=model_params.depth_fine,
+            octree_depth=params.octree_depth,
+            coarse_idx=model_params.coarse_idx,
+            fine_idx=model_params.fine_idx,
             quantizer=model_params.quantizer,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )

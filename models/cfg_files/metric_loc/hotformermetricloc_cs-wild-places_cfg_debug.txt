@@ -26,8 +26,8 @@ coordinates = cartesian
 normalize_embeddings = True
 return_feats_and_attn_maps = False
 
-depth_coarse = 3
-depth_fine = 5
+coarse_idx = -1
+fine_idx = -3
 
 [GEOTRANSFORMER]
 input_dim = 96

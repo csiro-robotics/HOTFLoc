@@ -65,9 +65,9 @@ class ModelParams:
 
         # Metric loc params
         if local:
-            self.depth_coarse = params.getint('depth_coarse')
-            self.depth_fine = params.getint('depth_fine')
-            assert self.depth_coarse is not None and self.depth_fine is not None
+            self.coarse_idx = params.getint('coarse_idx')
+            self.fine_idx = params.getint('fine_idx')
+            assert self.coarse_idx is not None and self.fine_idx is not None
 
         if 'minkloc' in self.model.lower():
         #######################################################################

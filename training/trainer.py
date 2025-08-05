@@ -179,7 +179,7 @@ class NetworkTrainer:
         """
         Initialise the model, optimiser, and scheduler from the provided parameters.
         """
-        self.model = model_factory(self.params.model_params)
+        self.model = model_factory(self.params)
 
         # Move the model to the proper device before configuring the optimizer
         if torch.cuda.is_available():
