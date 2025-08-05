@@ -155,7 +155,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
                 minibatch = create_batch(temp, quantizer, params)
                 batch.append(minibatch)
 
-        logging.debug(f"Collating global batch done in {time.time()-tic:.2f}s")
+        logging.debug(f'Collating global batch done in {time.time()-tic:.2f}s')
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
@@ -199,7 +199,7 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
         anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
         positive_shift_and_scale_batch = torch.stack(positive_shift_and_scale, dim=0)
 
-        logging.debug(f"Collating local batch done in {time.time()-tic:.2f}s")
+        logging.debug(f'Collating local batch done in {time.time()-tic:.2f}s')
 
         # Returns:
         # Anc and pos point clouds, anc and pos batch, relative transformations, normalization shift and scale params
@@ -227,7 +227,7 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Di
 
     dataloaders = {}
     train_sampler = BatchSampler(
-        datasets["global_train"],
+        datasets['global_train'],
         batch_size=params.batch_size,
         batch_size_limit=params.batch_size_limit,
         batch_expansion_rate=params.batch_expansion_rate,
@@ -236,43 +236,43 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Di
 
     # Collate function collates items into a batch and applies a 'set transform' on the entire batch
     quantizer = params.model_params.quantizer
-    train_collate_fn = make_collate_fn(datasets["global_train"], quantizer, params)
-    dataloaders["global_train"] = DataLoader(
-        datasets["global_train"], batch_sampler=train_sampler,
+    train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
+    dataloaders['global_train'] = DataLoader(
+        datasets['global_train'], batch_sampler=train_sampler,
         collate_fn=train_collate_fn, num_workers=params.num_workers, pin_memory=True,
     )
     if validation and 'global_val' in datasets:
         val_collate_fn = make_collate_fn(datasets['global_val'], quantizer, params)
         val_sampler = BatchSampler(
-            datasets["global_val"], batch_size=params.val_batch_size,
+            datasets['global_val'], batch_size=params.val_batch_size,
             only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
         )
         # Collate function collates items into a batch and applies a 'set transform' on the entire batch
         # Currently validation dataset has empty set_transform function, but it may change in the future
-        dataloaders["global_val"] = DataLoader(
-            datasets["global_val"], batch_sampler=val_sampler, collate_fn=val_collate_fn,
+        dataloaders['global_val'] = DataLoader(
+            datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
             num_workers=params.num_workers, pin_memory=True,
         )
 
     if local:
         train_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)
         train_sampler_loc = BatchSampler6DOF(
-            datasets["local_train"], batch_size=params.local.batch_size,
+            datasets['local_train'], batch_size=params.local.batch_size,
             only_ground_aerial=params.only_ground_aerial,
         )
-        dataloaders["local_train"] = DataLoader(
-            datasets["local_train"], batch_sampler=train_sampler_loc,
+        dataloaders['local_train'] = DataLoader(
+            datasets['local_train'], batch_sampler=train_sampler_loc,
             collate_fn=train_collate_fn_loc, num_workers=params.num_workers,
             pin_memory=True,
         )
         if validation and 'local_val' in datasets:
             val_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)
             val_sampler_loc = BatchSampler6DOF(
-                datasets["local_val"], batch_size=params.local.batch_size,
+                datasets['local_val'], batch_size=params.local.batch_size,
                 only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
             )
-            dataloaders["local_val"] = DataLoader(
-                datasets["local_val"], batch_sampler=val_sampler_loc,
+            dataloaders['local_val'] = DataLoader(
+                datasets['local_val'], batch_sampler=val_sampler_loc,
                 collate_fn=val_collate_fn_loc, num_workers=params.num_workers,
                 pin_memory=True,
             )
@@ -334,7 +334,7 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
         # Generate batches in correct format for MinkLoc/OctFormer
         batch = create_batch(data_list, quantizer, params)
 
-        logging.debug(f"Collating eval batch done in {time.time()-tic:.2f}s")
+        logging.debug(f'Collating eval batch done in {time.time()-tic:.2f}s')
 
         return batch
 
@@ -394,8 +394,8 @@ def filter_query_elements(query_set: List[EvaluationTuple], map_set: List[Evalua
         else:
             count_ignored += 1
 
-    print(f"{count_ignored} query elements ignored - not having corresponding map element within {dist_threshold} [m] "
-          f"radius")
+    print(f'{count_ignored} query elements ignored - not having corresponding map element within {dist_threshold} [m] '
+          f'radius')
     return filtered_query_set
 
 
