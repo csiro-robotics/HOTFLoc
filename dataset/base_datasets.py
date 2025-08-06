@@ -11,8 +11,10 @@ from torch.utils.data import Dataset
 
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
+from dataset.mulran.mulran_raw import MulranPointCloudLoader
+from dataset.mulran.utils import relative_pose as mulran_relative_pose
 from misc.point_clouds import PointCloudLoader, icp, fast_global_registration
-from misc.poses import relative_pose
+from misc.poses import relative_pose as base_relative_pose
 
 
 class TrainingTuple:
@@ -126,6 +128,7 @@ class TrainingDataset(Dataset):
             data = self.transform(data)
         if self.load_octree and self.clip_octree_points:
             data = clip_points(data, self.coordinates)
+        assert data.size(0) > 0
         return data, ndx
 
     def get_positives(self, ndx):
@@ -168,6 +171,10 @@ class Training6DOFDataset(TrainingDataset):
         self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
         self.icp_max_iteration = icp_max_iteration
         self.icp_voxel_size = icp_voxel_size
+        if self.dataset_type.lower() == 'mulran':
+            self.relative_pose = mulran_relative_pose
+        else:
+            self.relative_pose = base_relative_pose
 
     def __getitem__(self, ndx):
         # TODO: Consider adding gravity alignment as a step here
@@ -193,7 +200,7 @@ class Training6DOFDataset(TrainingDataset):
             )
         else:
             transform = torch.tensor(
-                relative_pose(self.queries[ndx].pose, self.queries[positive_ndx].pose),
+                self.relative_pose(self.queries[ndx].pose, self.queries[positive_ndx].pose),
                 dtype=query_pc.dtype,
             )
 
@@ -230,17 +237,17 @@ class Training6DOFDataset(TrainingDataset):
         # VISUALISATIONS FOR DEBUGGING
         ########################################################################
         # from misc.point_clouds import draw_registration_result
-        # # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
-        # # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
+        # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
+        # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
         # # draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
         # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
         # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.linalg.inv(aug_tf))
         # # draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
         # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
         # # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_fgr)
-        # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
         # # draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
-        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
+        # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
         # # draw_registration_result(query_pc_denorm, positive_pc_denorm, aug_tf @ transform_icp)
         ########################################################################
 
@@ -279,6 +286,7 @@ class EvalDataset(Dataset):
             data = self.transform(data)
         if self.load_octree and self.clip_octree_points:
             data = clip_points(data, self.coordinates)
+        assert data.size(0) > 0
         return data
 
 
@@ -303,6 +311,10 @@ class Eval6DOFDataset(EvalDataset):
         self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
         self.icp_max_iteration = icp_max_iteration
         self.icp_voxel_size = icp_voxel_size
+        if self.dataset_type.lower() == 'mulran':
+            self.relative_pose = mulran_relative_pose
+        else:
+            self.relative_pose = base_relative_pose
 
     def __len__(self):
         return len(self.pairs_list)
@@ -318,7 +330,7 @@ class Eval6DOFDataset(EvalDataset):
 
         # get relative pose from global poses
         transform = torch.tensor(
-            relative_pose(
+            self.relative_pose(
                 self.data_set_dict[query_ndx]['pose'],
                 self.pos_dataset.data_set_dict[positive_ndx]['pose'],
             ),
@@ -356,16 +368,15 @@ class Eval6DOFDataset(EvalDataset):
         # VISUALISATIONS FOR DEBUGGING
         ########################################################################
         # from misc.point_clouds import draw_registration_result
-        # # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
-        # # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
+        # query_pc_denorm = self.local_transform.normalization_transform.unnormalize(query_pc, query_shift_and_scale)
+        # positive_pc_denorm = self.local_transform.normalization_transform.unnormalize(positive_pc, positive_shift_and_scale)
         # # draw_registration_result(query_pc_denorm, query_pc_orig, np.eye(4))
         # # draw_registration_result(positive_pc_denorm, positive_pc_orig, np.eye(4))
         # # draw_registration_result(query_pc_orig, positive_pc_orig, np.eye(4))
         # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_orig)
-        # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
+        # # draw_registration_result(query_pc_orig, positive_pc_orig, transform_icp)
         # # draw_registration_result(query_pc_denorm, positive_pc_denorm, np.eye(4))
-        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
-        # # draw_registration_result(query_pc_denorm, positive_pc_denorm, aug_tf @ transform_icp)
+        # draw_registration_result(query_pc_denorm, positive_pc_denorm, transform)  # this should be correct, but currently isnt (for K-01 1624327938.8356152.pcd and K-02 1624318871.8437989.pcd, actual pose files seem incorrect)
         ########################################################################
 
         # Now clip point coordinates after normalization is done
@@ -427,6 +438,8 @@ class EvaluationSet:
 def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
     if 'WildPlaces' in dataset_type:
         return CSWildPlacesPointCloudLoader()
+    elif dataset_type.lower() == 'mulran':
+        return MulranPointCloudLoader()
     elif dataset_type in ['Oxford', 'CSCampus3D']:
         return PNVPointCloudLoader()
     else:

@@ -57,7 +57,7 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
         )
         datasets['local_train'] = Training6DOFDataset(
             params.dataset_folder, params.dataset_name, params.train_file, local_transform=local_train_transform,
-            icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+            icp=params.local.icp_train, icp_use_gicp=params.local.icp_use_gicp,
             icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
             icp_max_iteration=params.local.icp_max_iteration,
             icp_voxel_size=params.local.icp_voxel_size,
@@ -73,7 +73,7 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
             )
             datasets['local_val'] = Training6DOFDataset(
                 params.dataset_folder, params.dataset_name, params.val_file, local_transform=local_val_transform,
-                icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+                icp=params.local.icp_train, icp_use_gicp=params.local.icp_use_gicp,
                 icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
                 icp_max_iteration=params.local.icp_max_iteration,
                 icp_voxel_size=params.local.icp_voxel_size,    
@@ -317,7 +317,7 @@ def make_eval_dataset_6DOF(
     dataset = Eval6DOFDataset(
         params.dataset_folder, params.dataset_name, query_set, database_set,
         pairs_list, local_transform=val_transform,
-        icp=params.local.icp, icp_use_gicp=params.local.icp_use_gicp,
+        icp=params.local.icp_eval, icp_use_gicp=params.local.icp_use_gicp,
         icp_inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
         icp_max_iteration=params.local.icp_max_iteration,
         icp_voxel_size=params.local.icp_voxel_size,    

@@ -1,17 +1,15 @@
-# CURRENTLY CRASHES ON H100, MAY NEED DDP TO RUN
 [DEFAULT]
-dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.40m_rmground/
+# Follow README instructions to install dataset
+dataset_folder = ../data/MulRan
 
 [TRAIN]
 num_workers = 4
 batch_size = 2048
-batch_split_size = 32
-val_batch_size = 32
-#prioritise_cross_source = True
-only_ground_aerial = True
+batch_split_size = 256
+val_batch_size = 256
 save_freq = 10
 eval_freq = 10
-eval_radius = 10, 30
+eval_radius = 5, 20
 
 lr = 8e-4
 epochs = 100
@@ -21,27 +19,26 @@ aug_mode = 2
 set_aug_mode = 2
 random_rot_theta = 180
 normalize_points = True
-octree_depth = 8
+octree_depth = 9
 weight_decay = 1e-4
 loss = TruncatedSmoothAP
 tau1 = 0.01
 positives_per_query = 4
-mesa = 1.0
-mesa_start_ratio = 0.15
 
-dataset_name = CSWildPlaces
-skip_same_run = True
-train_file = training_queries_CSWildPlaces_baseline_v3.pickle
-val_file = test_queries_CSWildPlaces_v3.pickle
+dataset_name = MulRan
+skip_same_run = False
+train_file = train_Sejong_01_Sejong_02_2_10.pickle
+val_file = val_Sejong_01_Sejong_02_2_10.pickle
 validation = True
 
 [LOCAL]
 enable_local = True
-local_batch_size = 8
+local_batch_size = 1
 local_aug_mode = 1
 eval_num_workers = 10
-max_eval_threshold = 30
-icp_train = True
+max_eval_threshold = 20
+# ICP already done in training tuples
+icp_train = False
 icp_eval = True
 weight_coarse_loss = 1.0
 weight_fine_loss = 1.0

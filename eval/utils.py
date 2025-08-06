@@ -4,9 +4,9 @@ def get_query_database_splits(params):
                                'residential_evaluation_database.pickle', 'business_evaluation_database.pickle']
         eval_query_files = ['oxford_evaluation_query.pickle', 'university_evaluation_query.pickle',
                             'residential_evaluation_query.pickle', 'business_evaluation_query.pickle']
-    elif params.dataset_name == 'MulRan':
+    elif params.dataset_name.lower() == 'mulran':
         eval_database_files = ['DCC_database.pickle', 'Sejong_database.pickle']
-        eval_query_files = ['DCC_queries.pickle', 'Sejong_queries.pickle']
+        eval_query_files = ['DCC_query.pickle', 'Sejong_query.pickle']
     elif 'AboveUnder' in params.dataset_name:
         eval_database_files = [
             # 'above-under_Beetaloo_evaluation_database.pickle',

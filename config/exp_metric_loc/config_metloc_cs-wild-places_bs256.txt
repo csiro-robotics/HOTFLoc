@@ -39,7 +39,8 @@ local_batch_size = 24
 local_aug_mode = 1
 eval_num_workers = 10
 max_eval_threshold = 30
-icp = True
+icp_train = True
+icp_eval = True
 weight_coarse_loss = 1.0
 weight_fine_loss = 1.0
 

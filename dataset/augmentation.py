@@ -43,6 +43,8 @@ class TrainTransform:
             self.scale_factor = scale_factor
         self.transform = None
         t = []
+        # NOTE: Normalization before other augs will cause some border points to be
+        #       clipped, which is fine as it is effectively additional augmentation
         if self.normalize_points:
             t.append(Normalize(scale_factor=self.scale_factor,
                                unit_sphere_norm=self.unit_sphere_norm,
