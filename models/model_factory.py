@@ -127,6 +127,7 @@ def model_factory(params: TrainingParams):
             coarse_idx=model_params.coarse_idx,
             fine_idx=model_params.fine_idx,
             quantizer=model_params.quantizer,
+            grad_checkpoint=model_params.grad_checkpoint,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'hotformerloc' in model_params.model.lower():

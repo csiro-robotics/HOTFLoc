@@ -12,6 +12,7 @@ from typing import Optional, List
 
 import torch
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from ocnn.octree import Points, Octree
 
 from dataset.augmentation import Normalize
@@ -50,6 +51,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         coarse_idx: int,
         fine_idx: int,
         quantizer: Optional[CoordinateSystem] = None,
+        grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
     ):
         """
@@ -68,6 +70,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             depth_coarse (int): Octree depth of coarse features (must correspond to depth of OctFormer/HOTFormer blocks))
             depth_fine (int): Octree depth of fine features (must correspond to depth of OctFormer/HOTFormer blocks))
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
+            grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
             return_feats_and_attn_maps (bool): Returns intermediate features and attention maps from the backbone.
 
         Returns:
@@ -83,6 +86,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.octree_depth = octree_depth
         self.compute_depth_from_idx()
         self.quantizer = quantizer
+        self.grad_checkpoint = grad_checkpoint
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.point_padding = 1e10
         if self.depth_coarse >= self.depth_fine:
@@ -244,14 +248,26 @@ class HOTFormerMetricLoc(torch.nn.Module):
         # NOTE: Padding does change the output slightly, as it softens the softmax
         #       output, but is a difference on the order of 0.01-0.1 on average.
         tic = time.time()
-        anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
-            anc_points_coarse_padded,
-            pos_points_coarse_padded,
-            anc_feats_coarse_padded,
-            pos_feats_coarse_padded,
-            anc_coarse_mask,
-            pos_coarse_mask,
-        )
+        if self.grad_checkpoint and self.training:
+            anc_feats_coarse_padded, pos_feats_coarse_padded = checkpoint(
+                self.coarse_feat_refiner,
+                anc_points_coarse_padded,
+                pos_points_coarse_padded,
+                anc_feats_coarse_padded,
+                pos_feats_coarse_padded,
+                anc_coarse_mask,
+                pos_coarse_mask,
+                use_reentrant=False,
+            )
+        else:
+            anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
+                anc_points_coarse_padded,
+                pos_points_coarse_padded,
+                anc_feats_coarse_padded,
+                pos_feats_coarse_padded,
+                anc_coarse_mask,
+                pos_coarse_mask,
+            )
         anc_feats_coarse_norm_padded = F.normalize(anc_feats_coarse_padded, p=2, dim=1)
         pos_feats_coarse_norm_padded = F.normalize(pos_feats_coarse_padded, p=2, dim=1)
         time_dict['geotrans forward'] = time.time() - tic
