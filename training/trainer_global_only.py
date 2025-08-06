@@ -702,12 +702,13 @@ class NetworkTrainer:
                     stats.update(temp_stats)
                     loss += qkv_loss
 
-                stats['loss_total'] = loss.item()
                 loss.backward()
 
                 # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step 
                 # if self.model_ema is not None:
                 #     self.model_ema.update(self.model)
+
+            stats['loss_total'] = loss.item()
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
