@@ -137,6 +137,10 @@ class NetworkTrainer:
         self.logger = Logger(log_file=None, logging_level=logging_level, local_rank=-1)
 
         # Begin train loop
+        msg = f'Begin training on {os.environ['HOSTNAME']}'
+        if 'SLURM_JOB_ID' in os.environ:
+            msg += f" with job ID {os.environ['SLURM_JOB_ID']}"
+        self.logger.info(msg)
         self.do_train()
 
     def checkpoint(self, *args: tp.Any, **kwargs: tp.Any) -> submitit.helpers.DelayedSubmission:
