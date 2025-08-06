@@ -261,7 +261,7 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
     if params.debug:
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
         local_embeddings = {'coarse': [], 'fine': []}
-        if params.local.enable_local:
+        if not only_global:
             for _ in range(len(data_set)):
                 local_embeddings['coarse'].append(torch.randn(128, params.model_params.channels[-1]))
                 local_embeddings['fine'].append(torch.randn(512, params.model_params.channels[-3]))
@@ -938,6 +938,12 @@ if __name__ == "__main__":
 
     logging_level = 'DEBUG' if params.debug else 'INFO'
     create_logger(log_file=None, logging_level=logging_level)
+
+    # Check if metric localisation is supported by model
+    if not params.local.enable_local and not args.only_global:
+        msg = 'Metric localisation not supported by model... only running PR evaluation (pass `--only_global` to prevent this warning)'
+        logging.warning(msg)
+        args.only_global = True
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
