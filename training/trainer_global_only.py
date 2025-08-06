@@ -17,6 +17,7 @@ import wandb
 import submitit
 import matplotlib.pyplot as plt
 import seaborn as sns
+from ocnn.octree import Points
 from timm.utils import ModelEmaV3
 from timm.optim.lamb import Lamb
 import wandb_osh
@@ -373,7 +374,7 @@ class NetworkTrainer:
         return stats
 
     def log_feats_and_attn_maps(self, feats_and_attn_maps: tp.List, octree: OctreeT,
-                                softmax=False) -> tp.Dict:
+                                points: Points, softmax=False) -> tp.Dict:
         """
         Logs various things including attention maps, average token similarity.
         """
@@ -511,8 +512,8 @@ class NetworkTrainer:
                             stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
 
                 # Log the point cloud itself
-                octree_local = octree.cpu()
-                octree_points_local = octree_local.to_points()
+                octree_local = release_cuda(octree)
+                octree_points_local = release_cuda(points)
                 pcl_max_depth = get_octant_centroids_from_points(
                     octree_points_local, depth=self.params.octree_depth, quantizer=self.params.model_params.quantizer
                 )
@@ -614,8 +615,8 @@ class NetworkTrainer:
                             stats['local_token_unique_sim'][f'stage_{j}'][f'block_{block_idx}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
 
                 # Log the point cloud itself
-                octree_local = octree.cpu()
-                octree_points_local = octree_local.to_points()
+                octree_local = release_cuda(octree)
+                octree_points_local = release_cuda(points)
                 pcl_max_depth = get_octant_centroids_from_points(
                     octree_points_local, depth=self.params.octree_depth, quantizer=self.params.model_params.quantizer
                 )
@@ -675,7 +676,7 @@ class NetworkTrainer:
             if phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
                 feats_and_attn_maps = y.pop('feats_and_attn_maps')
                 if 'octree' in y:
-                    temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
+                    temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'], batch['points'])
                 else:  # minkloc
                     temp_stats = self.log_feats(feats_and_attn_maps)
                 del feats_and_attn_maps  # free memory from intermediate feats
@@ -739,7 +740,7 @@ class NetworkTrainer:
                 if i == 0 and phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
                     feats_and_attn_maps = y.pop('feats_and_attn_maps')
                     if 'octree' in y:
-                        temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'])
+                        temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'], minibatch['points'])
                     else:  # minkloc
                         temp_stats = self.log_feats(feats_and_attn_maps)
                     del feats_and_attn_maps  # free memory from intermediate feats

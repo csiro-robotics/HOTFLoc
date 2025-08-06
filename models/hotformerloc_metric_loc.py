@@ -159,8 +159,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
         anc_octree: Octree = batch['anc_batch']['octree']
         pos_octree: Octree = batch['pos_batch']['octree']
-        anc_points: Points = batch['anc_points']
-        pos_points: Points = batch['pos_points']
+        anc_points: Points = batch['anc_batch']['points']
+        pos_points: Points = batch['pos_batch']['points']
 
         # Get coarse and fine feats and points
         if 'anc_local_feats' in batch:

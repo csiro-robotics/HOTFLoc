@@ -586,9 +586,9 @@ def get_metrics(
             # Refine the estimated pose using ICP
             if icp_refine:
                 # Get point clouds in metric coordinates
-                query_pc_metric = Normalize.unnormalize(batch['anc_points'].points, batch['anc_shift_and_scale'][0])
+                query_pc_metric = Normalize.unnormalize(batch['anc_batch']['points'].points, batch['anc_shift_and_scale'][0])
                 query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
-                nn_pc_metric = Normalize.unnormalize(batch['pos_points'].points, batch['pos_shift_and_scale'][0])
+                nn_pc_metric = Normalize.unnormalize(batch['pos_batch']['points'].points, batch['pos_shift_and_scale'][0])
                 nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
 
                 tic = time()

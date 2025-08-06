@@ -101,16 +101,19 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
         if quantizer is not None:            
             clouds = [quantizer(e) for e in clouds]
         octrees = []
+        points = []
         # Convert to ocnn Points object, then create Octree
         for cloud in clouds:
             cloud_points_obj = Points(cloud)
+            points.append(cloud_points_obj)
             octree = Octree(params.octree_depth, params.full_depth)
             octree.build_octree(cloud_points_obj)
-            octrees.append(octree)                        
+            octrees.append(octree)
         octrees_merged = ocnn.octree.merge_octrees(octrees)
+        points_merged = ocnn.octree.merge_points(points)
         # NOTE: remember to construct the neighbor indices before processing (much faster on GPU)
         # octrees_merged.construct_all_neigh()
-        batch = {'octree': octrees_merged}
+        batch = {'octree': octrees_merged, 'points': points_merged}
     else:
         coords = [quantizer(e)[0] for e in clouds]
         coords = ME.utils.batched_coordinates(coords)
@@ -202,9 +205,8 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
         logging.debug(f'Collating local batch done in {time.time()-tic:.2f}s')
 
         # Returns:
-        # Anc and pos point clouds, anc and pos batch, relative transformations, normalization shift and scale params
+        # Anc and pos batch, relative transformations, normalization shift and scale params
         return {
-            "anc_points": anchor_pts, "pos_points": positive_pts,
             "anc_batch": anchor_batch, "pos_batch": positive_batch,
             "anc_shift_and_scale": anchor_shift_and_scale_batch,
             "pos_shift_and_scale": positive_shift_and_scale_batch,

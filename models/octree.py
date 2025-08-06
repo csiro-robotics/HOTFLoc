@@ -498,6 +498,12 @@ def get_octant_centroids_from_points(
     point_cloud: Points, depth: int, quantizer: Optional[CoordinateSystem] = None
 ) -> torch.Tensor:
     """
+    WARNING: CURRENTLY THIS FUNCTION WILL NOT PRODUCE THE SAME NUMBER OF
+    POINTS AS THE OCTREE WHEN USED ON THE OUTPUT OF `octree.to_points()`,
+    DUE TO THAT FUNCTION USING THE AVERAGED POINT COORDS. THIS ONLY OUTPUTS
+    THE CORRECT NUMBER OF POINTS IF USED ON THE INPUT POINT CLOUD THAT WAS
+    USED TO CREATE THE OCTREE IN THE FIRST PLACE.
+
     For a given octree depth, determine the 'centre of mass' of each octant.
     Provides more accurate points than simply taking the centroid of octants.
     Requires the (normalized) point cloud as input (can have batch_size > 1),
