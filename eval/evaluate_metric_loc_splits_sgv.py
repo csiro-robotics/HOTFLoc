@@ -867,7 +867,7 @@ def load_embeddings_from_file(model_name: str, dataset_name: str, location_name:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Evaluate model on PointNetVLAD (Oxford) dataset')
+    parser = argparse.ArgumentParser(description='Evaluate PR and metric localisation with SGV reranking')
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--radius', type=float, nargs='+', default=[5., 20.], help='True Positive thresholds in meters')
