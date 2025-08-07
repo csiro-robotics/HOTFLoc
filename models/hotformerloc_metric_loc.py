@@ -398,7 +398,20 @@ class HOTFormerMetricLoc(torch.nn.Module):
             # 6. Optimal transport
             matching_scores_ii = torch.einsum('bnd,bmd->bnm', anc_node_corr_knn_feats_ii, pos_node_corr_knn_feats_ii)  # (P, K, K)
             matching_scores_ii = matching_scores_ii / anc_feats_fine_ii.shape[-1] ** 0.5
-            matching_scores_ii = self.optimal_transport(matching_scores_ii, anc_node_corr_knn_masks_ii, pos_node_corr_knn_masks_ii)
+            if self.grad_checkpoint and self.training:
+                matching_scores_ii = checkpoint(
+                    self.optimal_transport,
+                    matching_scores_ii,
+                    anc_node_corr_knn_masks_ii,
+                    pos_node_corr_knn_masks_ii,
+                    use_reentrant=False,
+                )
+            else:
+                matching_scores_ii = self.optimal_transport(
+                    matching_scores_ii,
+                    anc_node_corr_knn_masks_ii,
+                    pos_node_corr_knn_masks_ii,
+                )
 
             output_dicts[batch_idx]['matching_scores'] = matching_scores_ii
 
