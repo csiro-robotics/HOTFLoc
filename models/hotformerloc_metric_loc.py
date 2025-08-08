@@ -315,6 +315,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
             pos_point_to_node_ii, pos_node_masks_ii, pos_node_knn_indices_ii, pos_node_knn_masks_ii = point_to_node_partition(
                 pos_points_fine_ii, pos_points_coarse_ii, self.num_points_in_patch
             )
+            output_dicts[batch_idx]['anc_point_to_node'] = anc_point_to_node_ii
+            output_dicts[batch_idx]['pos_point_to_node'] = pos_point_to_node_ii
+
             if VIZ:
                 save_filename = f'{SAVE_DIR}/superpoints-{batch_idx}' if SAVE_VIZ_PCL else None
                 draw_point_to_node(release_cuda(anc_points_fine_ii, to_numpy=True),
