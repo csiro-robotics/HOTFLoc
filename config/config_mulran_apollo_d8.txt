@@ -1,6 +1,7 @@
 [DEFAULT]
 # Follow README instructions to install dataset
 dataset_folder = ../data/MulRan
+secondary_dataset_folder = ../data/ApolloSouthbay
 
 [TRAIN]
 num_workers = 4
@@ -19,14 +20,16 @@ aug_mode = 2
 set_aug_mode = 2
 random_rot_theta = 180
 normalize_points = True
-octree_depth = 9
+octree_depth = 8
 weight_decay = 1e-4
-loss = TruncatedSmoothAP
-tau1 = 0.01
-positives_per_query = 4
+loss = BatchHardTripletMarginLoss
+l_gammas = 1., 1., 1., 4.
+margin = 0.2
 
 dataset_name = MulRan
+secondary_dataset_name = Southbay
 skip_same_run = False
 train_file = train_Sejong_01_Sejong_02_2_10.pickle
 val_file = val_Sejong_01_Sejong_02_2_10.pickle
+secondary_train_file = train_southbay_2_10.pickle
 validation = True

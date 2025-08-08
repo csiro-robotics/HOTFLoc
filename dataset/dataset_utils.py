@@ -49,6 +49,17 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
             is_cross_source_dataset=params.is_cross_source_dataset,
             prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
         )
+    if params.secondary_dataset_name is not None:
+        datasets['secondary_train'] = TrainingDataset(
+            params.secondary_dataset_folder, params.secondary_dataset_name,
+            params.secondary_train_file, transform=train_transform,
+            set_transform=train_set_transform, load_octree=params.load_octree,
+            octree_depth=params.octree_depth, full_depth=params.full_depth,
+            coordinates=params.model_params.coordinates,
+            is_cross_source_dataset=params.is_cross_source_dataset,
+            prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+        )
+
     if local:
         local_train_transform = Train6DOFTransform(
             params.local.aug_mode, normalize_points=params.normalize_points,
@@ -216,7 +227,7 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
     return collate_fn
 
 
-def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Dict[str, Iterable]:
+def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Dict[str, Union[DataLoader, Iterable]]:
     """
     Create training and validation dataloaders that return groups of k=2 similar elements
 
@@ -255,6 +266,25 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Di
             datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
             num_workers=params.num_workers, pin_memory=True,
         )
+
+    if params.secondary_dataset_name is not None:
+        secondary_train_sampler = BatchSampler(
+            datasets['secondary_train'],
+            batch_size=params.batch_size,
+            batch_size_limit=params.secondary_batch_size_limit,
+            batch_expansion_rate=params.batch_expansion_rate,
+            only_ground_aerial=params.only_ground_aerial,
+            max_batches=2000,
+        )  # NOTE: max batches should change for diff batch sizes
+
+        secondary_train_collate_fn = make_collate_fn(datasets['secondary_train'], quantizer, params)
+        dataloaders['secondary_train'] = DataLoader(
+            datasets['secondary_train'], batch_sampler=secondary_train_sampler,
+            collate_fn=secondary_train_collate_fn, num_workers=params.num_workers,
+            pin_memory=True,
+        )
+        # No local phase for secondary (for now), so endlessly loop
+        dataloaders['local_secondary_train'] = repeat(None)
 
     if local:
         train_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)

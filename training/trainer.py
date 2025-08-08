@@ -701,18 +701,18 @@ class NetworkTrainer:
         return stats
 
     def global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
-        assert phase in ['train', 'val']
+        assert phase in ['train', 'secondary_train', 'val']
 
         batch, positives_mask, negatives_mask = global_batch
         batch = to_device(batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
-        with torch.set_grad_enabled(phase == 'train'):
+        with torch.set_grad_enabled('train' in phase):
             y = self.model(batch, global_only=True)
             stats = self.model.stats.copy() if hasattr(self.model, 'stats') else {}
 
             embeddings = y['global']
             # Log stats related to feats and attn maps
-            if phase == 'train' and 'feats_and_attn_maps' in y and self.params.wandb:
+            if 'train' in phase and 'feats_and_attn_maps' in y and self.params.wandb:
                 feats_and_attn_maps = y.pop('feats_and_attn_maps')
                 if 'octree' in y:
                     temp_stats = self.log_feats_and_attn_maps(feats_and_attn_maps, y['octree'], batch['points'])
@@ -724,7 +724,7 @@ class NetworkTrainer:
             loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
-            if phase == 'train':
+            if 'train' in phase:
                 # Compute MESA loss
                 if mesa > 0.0:
                     with torch.no_grad():
@@ -762,7 +762,7 @@ class NetworkTrainer:
         # See some exemplary implementation here: https://gist.github.com/ByungSun12/ad964a08eba6a7d103dab8588c9a3774
         if qkv_loss_fn is not None:
             raise NotImplementedError('QKV Losses not implemented for multistage backprop, set `batch_split_size` to 0')
-        assert phase in ['train', 'val']
+        assert phase in ['train', 'secondary_train', 'val']
 
         batch, positives_mask, negatives_mask = global_batch
 
@@ -776,7 +776,7 @@ class NetworkTrainer:
                 minibatch = to_device(minibatch, self.device, non_blocking=True, construct_octree_neigh=True)
                 y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
-                if phase != 'train':
+                if 'train' not in phase:
                     del minibatch, y
                     continue
                 # Log stats related to feats and attn maps (only for first minibatch)
@@ -798,17 +798,17 @@ class NetworkTrainer:
 
         # Stage 2 - compute gradient of the loss w.r.t embeddings
         embeddings = torch.cat(embeddings_l, dim=0)
-        if phase == 'train' and mesa > 0.0:
+        if 'train' in phase and mesa > 0.0:
             embeddings_ema = torch.cat(embeddings_ema_l, dim=0)
 
-        with torch.set_grad_enabled(phase == 'train'):
-            if phase == 'train':
+        with torch.set_grad_enabled('train' in phase):
+            if 'train' in phase:
                 embeddings.requires_grad_(True)
             loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
             # Compute MESA loss
-            if phase == 'train' and mesa > 0.0:
+            if 'train' in phase and mesa > 0.0:
                 kd = kdloss(embeddings, embeddings_ema)
                 mesa_loss = mesa * kd
                 loss += mesa_loss
@@ -823,7 +823,7 @@ class NetworkTrainer:
             #     stats.update(temp_stats)
             #     loss += qkv_loss
             stats['loss_total'] = loss.item()
-            if phase == 'train':
+            if 'train' in phase:
                 loss.backward()
                 embeddings_grad = embeddings.grad
 
@@ -832,7 +832,7 @@ class NetworkTrainer:
 
         # Stage 3 - recompute descriptors with gradient enabled and compute the gradient of the loss w.r.t.
         # network parameters using cached gradient of the loss w.r.t embeddings
-        if phase == 'train':
+        if 'train' in phase:
             i = 0
             with torch.set_grad_enabled(True):
                 for minibatch in batch:
@@ -854,11 +854,11 @@ class NetworkTrainer:
             return stats, embeddings
 
     def local_training_step(self, local_batch, phase, local_loss_fn):
-        assert phase in ['train', 'val']
+        assert phase in ['train', 'secondary_train', 'val']
 
         local_batch = to_device(local_batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
-        with torch.set_grad_enabled(phase == 'train'):
+        with torch.set_grad_enabled('train' in phase):
             output_dicts = self.model(local_batch)
             batch_local_loss = []
             batch_metrics = []
@@ -874,7 +874,7 @@ class NetworkTrainer:
             batch_local_loss = torch.stack(batch_local_loss).mean()
             batch_metrics = metrics_mean(batch_metrics)
 
-        if phase == 'train':
+        if 'train' in phase:
             batch_local_loss.backward()
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
@@ -916,18 +916,19 @@ class NetworkTrainer:
         # Training Loop
         ########################################################################
 
+        phases = ['train']
+        if self.params.secondary_dataset_name is not None:
+            phases.append('secondary_train')
         if self.params.validation:
             # Validation phase
-            phases = ['train', 'val']
-        else:
-            phases = ['train']
+            phases.append('val')
 
         # Training statistics
         stats = {e: [] for e in phases}
 
         for epoch in tqdm.tqdm(range(self.start_epoch, self.params.epochs + 1),
                                initial=self.start_epoch-1, total=self.params.epochs):
-            metrics = {'train': {}, 'val': {}, 'test': {}}      # Metrics for wandb reporting
+            metrics = {'train': {}, 'secondary_train': {}, 'val': {}, 'test': {}}  # Metrics for wandb reporting
             if epoch / self.params.epochs > self.params.mesa_start_ratio:
                 mesa = self.params.mesa
             else:
@@ -944,6 +945,10 @@ class NetworkTrainer:
                     self.model.train()
                     global_phase = 'global_train'
                     local_phase = 'local_train'
+                elif phase == 'secondary_train':
+                    self.model.train()
+                    global_phase = 'secondary_train'
+                    local_phase = 'local_secondary_train'
                 elif phase == 'val':
                     self.model.eval()
                     global_phase = 'global_val'
@@ -965,15 +970,15 @@ class NetworkTrainer:
                     self.logger.debug(f"Global batch {self.count_batches} end")
                     batch_stats['global'] = temp_global_stats
                     
-                    self.logger.debug(f"Local batch {self.count_batches} start")
-                    if self.params.local.enable_local:
+                    if self.params.local.enable_local and local_batch is not None:
+                        self.logger.debug(f"Local batch {self.count_batches} start")
                         temp_local_stats = self.local_training_step(
                             local_batch, phase, local_loss_fn,
                         )
                         batch_stats['local'] = temp_local_stats
-                    self.logger.debug(f"Local batch {self.count_batches} end")
+                        self.logger.debug(f"Local batch {self.count_batches} end")
 
-                    if phase == 'train':
+                    if 'train' in phase:
                         # Step optimizer after .backward called for global and local losses
                         self.optimizer.step()
                         self.optimizer.zero_grad()
@@ -983,11 +988,11 @@ class NetworkTrainer:
 
                     running_stats.append(batch_stats)
                     if (epoch % self.params.embeddings_log_freq == 0
-                        and self.count_batches == 1 and phase == 'train'):  # log embeddings once per epoch
+                        and self.count_batches == 1 and 'train' in phase):  # log embeddings once per epoch
                         epoch_embeddings = temp_global_embeddings
 
                 # Log average gradients per stage
-                if phase == 'train' and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc)):
+                if 'train' in phase and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc)):
                     # FIXME: currently broken for HOTFormerLoc
                     epoch_stage_gradient_magnitudes = self.log_stage_gradient_magnitudes(self.params.load_octree)
 
@@ -1048,9 +1053,20 @@ class NetworkTrainer:
                 # Dynamic batch size expansion based on number of non-zero triplets
                 # Ratio of non-zero triplets
                 le_train_stats = stats['train'][-1]  # Last epoch training stats
-                rnz = le_train_stats['global']['num_non_zero_triplets'] / le_train_stats['global']['num_triplets']
+                rnz = (
+                    le_train_stats['global']['num_non_zero_triplets']
+                    / le_train_stats['global']['num_triplets']
+                )
                 if rnz < self.params.batch_expansion_th:
                     dataloaders['global_train'].batch_sampler.expand_batch()
+                if self.params.secondary_dataset_name is not None:
+                    le_secondary_train_stats = stats['secondary_train'][-1]
+                    rnz = (
+                        le_secondary_train_stats['global']['num_non_zero_triplets']
+                        / le_secondary_train_stats['global']['num_triplets']
+                    )
+                    if rnz < self.params.batch_expansion_th:
+                        dataloaders['secondary_train'].batch_sampler.expand_batch()
 
         # Save final model weights
         if not self.params.debug:
@@ -1152,7 +1168,7 @@ class NetworkTrainer:
         if 'pca_variance' in epoch_stats['global']:
             metrics['pca_variance'] = epoch_stats['global']['pca_variance']
         # Local Metrics
-        if not self.params.local.enable_local:
+        if not (self.params.local.enable_local and 'local' in epoch_stats):
             return metrics
         metrics['local'] = {}
         if 'loss' in epoch_stats['local']:

@@ -7,6 +7,9 @@ def get_query_database_splits(params):
     elif params.dataset_name.lower() == 'mulran':
         eval_database_files = ['DCC_database.pickle', 'Sejong_database.pickle']
         eval_query_files = ['DCC_query.pickle', 'Sejong_query.pickle']
+    elif params.dataset_name.lower() == 'southbay':  # NOTE: Eval won't run on Southbay if its the secondary train dataset
+        eval_database_files = ['SunnyvaleBigloop_1.0_5_database.pickle']
+        eval_query_files = ['SunnyvaleBigloop_1.0_5_query.pickle']
     elif 'AboveUnder' in params.dataset_name:
         eval_database_files = [
             # 'above-under_Beetaloo_evaluation_database.pickle',

@@ -9,6 +9,7 @@ batch_split_size = 32
 val_batch_size = 32
 save_freq = 10
 eval_freq = 1
+eval_radius = 5, 20
 wandb = False
 
 lr = 8e-4

@@ -9,7 +9,7 @@ from sklearn.neighbors import KDTree
 import torch
 
 from dataset.mulran.utils import read_lidar_poses, in_test_split, in_train_split
-from misc.point_clouds import PointCloudLoader, preprocess_pointcloud
+from misc.point_clouds import PointCloudLoader
 
 
 class MulranPointCloudLoader(PointCloudLoader):
@@ -19,13 +19,10 @@ class MulranPointCloudLoader(PointCloudLoader):
         self.max_range = 80
 
     def read_pc(self, file_pathname: str) -> torch.Tensor:
-        # Reads the point cloud without pre-processing
         # Returns Nx3 tensor
         pc = np.fromfile(file_pathname, dtype=np.float32)
         # PC in Mulran is of size [num_points, 4] -> x,y,z,reflectance
         pc = np.reshape(pc, (-1, 4))[:, :3]
-        pc = preprocess_pointcloud(pc, min_x=-self.max_range, max_x=self.max_range,
-                                   min_y=-self.max_range, max_y=self.max_range)
         return pc
 
 

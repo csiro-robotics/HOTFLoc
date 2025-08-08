@@ -120,6 +120,7 @@ if __name__ == '__main__':
         sequences = ['ParkingLot', 'ParkingLot']
 
     print(f'Dataset root: {args.dataset_root}')
+    print(f'Save dir: {args.save_dir}')
     print(f'Sequence: {args.sequence}')
     print(f'Sequences: {sequences}')
     print(f'Threshold for positive examples: {args.pos_threshold}')

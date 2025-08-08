@@ -233,6 +233,8 @@ class TrainingParams:
         config.read(self.params_path)
         params = config['DEFAULT']
         self.dataset_folder = params.get('dataset_folder')
+        # Seconday dataset for global descriptor training
+        self.secondary_dataset_folder = params.get('secondary_dataset_folder', None)
 
         params = config['TRAIN']
         self.save_freq = params.getint('save_freq', 0)          # Model saving frequency (in epochs)
@@ -263,6 +265,11 @@ class TrainingParams:
         else:
             self.batch_size_limit = self.batch_size
             self.batch_expansion_rate = None
+
+        if 'secondary_batch_size_limit' in params:
+            self.secondary_batch_size_limit = params.getint('secondary_batch_size_limit')
+        else:
+            self.secondary_batch_size_limit = self.batch_size_limit
 
         self.val_batch_size = params.getint('val_batch_size', self.batch_size_limit)
 
@@ -339,15 +346,20 @@ class TrainingParams:
         self.zero_mean = params.getboolean('zero_mean', True)  # Shift point cloud to zero mean during normalization
         self.octree_depth = params.getint('octree_depth', 11)    # Set depth of octree, if octrees are used
         self.full_depth = params.getint('full_depth', 2)    # Depth of octree that is fully populated
+        self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
+        self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
+
         self.train_file = params.get('train_file')
         self.val_file = params.get('val_file', None)
         self.validation = params.getboolean('validation', True)
+        self.secondary_train_file = params.get('secondary_train_file', None)
         self.test_file = params.get('test_file', None)
         self.dataset_name = params.get('dataset_name', None)
         self.is_cross_source_dataset = 'CSWildPlaces' in self.dataset_name  # flag for dataset with ground-aerial pairs
+        self.secondary_dataset_name = params.get('secondary_dataset_name', None)
+        if self.secondary_dataset_name is not None:
+            self.secondary_dataset_name = self.secondary_dataset_name
         self.skip_same_run = params.getboolean('skip_same_run', True)
-        self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
-        self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
 
         # If running a hyperparameter search
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
@@ -411,6 +423,8 @@ class TrainingParams:
 
     def _check_params(self):
         assert os.path.exists(self.dataset_folder), 'Cannot access dataset: {}'.format(self.dataset_folder)
+        if self.secondary_dataset_folder is not None:
+            assert os.path.exists(self.secondary_dataset_folder), 'Cannot access secondary dataset: {}'.format(self.secondary_dataset_folder)
 
     def print(self):
         print('Parameters:')

@@ -210,6 +210,7 @@ class PointCloudLoader:
         self.remove_zero_points = True
         self.remove_ground_plane = True
         self.ground_plane_level = None
+        self.max_range = None
         self.set_properties()
 
     def set_properties(self):
@@ -224,6 +225,10 @@ class PointCloudLoader:
         pc = self.read_pc(file_pathname)
         assert pc.shape[1] == 3
 
+        if self.max_range is not None:
+            pc = preprocess_pointcloud(pc, min_x=-self.max_range, max_x=self.max_range,
+                                       min_y=-self.max_range, max_y=self.max_range)
+        
         if self.remove_zero_points:
             mask = np.all(np.isclose(pc, 0), axis=1)
             pc = pc[~mask]

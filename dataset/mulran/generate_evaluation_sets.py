@@ -2,7 +2,7 @@
 # Adapted from https://github.com/csiro-robotics/SpectralGV/blob/main/datasets/mulran/generate_evaluation_sets.py
 
 import argparse
-from typing import List
+from typing import List, Tuple, Dict
 import os
 import pickle
 
@@ -54,7 +54,7 @@ def get_scans(sequence: MulranSequence) -> List[EvaluationTuple]:
 
 # NOTE: Using the old eval set format for now, until the entire pipeline is upgraded (requires changing format for Oxford and CS-Campus3D, or keeping eval scripts separate)
 def generate_evaluation_set(dataset_root: str, map_sequence: str, query_sequence: str,
-                            min_displacement: float = 0.2, dist_threshold=20) -> EvaluationSet:
+                            min_displacement: float = 0.2, dist_threshold=20) -> Tuple[List[Dict]]:
     split = 'test'
     map_sequence = MulranSequence(dataset_root, map_sequence, split=split, min_displacement=min_displacement)
     query_sequence = MulranSequence(dataset_root, query_sequence, split=split, min_displacement=min_displacement)
@@ -98,6 +98,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     print(f'Dataset root: {args.dataset_root}')
+    print(f'Save dir: {args.save_dir}')
     print(f'Sequence: {args.sequence}')
     print(f'Minimum displacement between consecutive anchors: {args.min_displacement}')
     print(f'Ignore query elements without a corresponding map element within a threshold [m]: {args.dist_threshold}')

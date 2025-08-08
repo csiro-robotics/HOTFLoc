@@ -13,6 +13,7 @@ from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
 from dataset.mulran.mulran_raw import MulranPointCloudLoader
 from dataset.mulran.utils import relative_pose as mulran_relative_pose
+from dataset.southbay.southbay_raw import SouthbayPointCloudLoader
 from misc.point_clouds import PointCloudLoader, icp, fast_global_registration
 from misc.poses import relative_pose as base_relative_pose
 
@@ -440,6 +441,8 @@ def get_pointcloud_loader(dataset_type) -> PointCloudLoader:
         return CSWildPlacesPointCloudLoader()
     elif dataset_type.lower() == 'mulran':
         return MulranPointCloudLoader()
+    elif dataset_type.lower() == 'southbay':
+        return SouthbayPointCloudLoader()
     elif dataset_type in ['Oxford', 'CSCampus3D']:
         return PNVPointCloudLoader()
     else:
