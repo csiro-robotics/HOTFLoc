@@ -282,7 +282,7 @@ class NetworkTrainer:
 
     def print_stats(self, phase, stats):
         self.print_global_stats(phase, stats['global'])
-        if self.params.local.enable_local:
+        if self.params.local.enable_local and 'local' in stats:
             self.print_local_stats(phase, stats['local'])
     
     def create_weights_folder(self, dataset_name : str):
@@ -418,7 +418,7 @@ class NetworkTrainer:
         Logs various things including attention maps, average token similarity.
         """
         tic = time.time()
-        VIZ_BLOCKS = 5
+        VIZ_BLOCKS = 3
         VIZ_HEADS = 2
         VIZ_LOCAL_WINDOWS = 1
         BATCH_IDX = 0  # just take samples from the first batch element for attn maps
@@ -455,14 +455,14 @@ class NetworkTrainer:
                         'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
                         'pointcloud': {}, 'pca_variance': {}}
                 block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps)-1,
-                                        VIZ_BLOCKS, dtype=np.int32)).tolist()
+                                          VIZ_BLOCKS, dtype=np.int32)).tolist()
                 rt_ticklabels = get_rt_heatmap_ticklabels()
                 for block_idx in block_indices:
                     if 'rt_attn' in feats_and_attn_maps[block_idx]:
                         rt_attn_maps_i = feats_and_attn_maps[block_idx]['rt_attn']['attn_map']
                         num_heads = rt_attn_maps_i.size(dim=1)
                         head_indices = np.unique(np.linspace(0, num_heads-1, VIZ_HEADS,
-                                                    dtype=np.int32)).tolist()
+                                                 dtype=np.int32)).tolist()
                         for k, head_kdx in enumerate(head_indices):
                             temp_attn_map = rt_attn_maps_i[BATCH_IDX, head_kdx].to(self.device)  # move to GPU as octree is on GPU
                             temp_attn_map = remove_rt_attn_padding(temp_attn_map, octree, BATCH_IDX)
