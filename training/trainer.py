@@ -146,7 +146,7 @@ class NetworkTrainer:
             if self.params.finetune:
                 # Save new model_pathname (combining weights name and model name)
                 orig_model_name = os.path.splitext(os.path.basename(self.model_pathname))[0]
-                model_name += f'--finetune--{orig_model_name}'
+                model_name += f'--FINETUNE--{orig_model_name}'
             s = get_datetime()
             model_name += f'_{s}'
             # Add SLURM job ID to prevent overwriting paths for jobs running at same time
