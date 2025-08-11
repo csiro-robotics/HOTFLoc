@@ -22,8 +22,9 @@ random_rot_theta = 180
 normalize_points = True
 octree_depth = 8
 weight_decay = 1e-4
-loss = BatchHardTripletMarginLoss
-margin = 0.2
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
 
 dataset_name = MulRan
 secondary_dataset_name = Southbay
