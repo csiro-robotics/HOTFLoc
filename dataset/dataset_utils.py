@@ -198,16 +198,6 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
         anchor_batch = create_batch(anchor_clouds, quantizer, params)
         positive_batch = create_batch(positive_clouds, quantizer, params)
 
-        # Batch raw points together
-        if quantizer is not None:
-            anchor_pts_list = [Points(quantizer(cloud)) for cloud in anchor_clouds]
-            positive_pts_list = [Points(quantizer(cloud)) for cloud in positive_clouds]
-        else:
-            anchor_pts_list = [Points(cloud) for cloud in anchor_clouds]
-            positive_pts_list = [Points(cloud) for cloud in positive_clouds]
-        anchor_pts = ocnn.octree.merge_points(anchor_pts_list)
-        positive_pts = ocnn.octree.merge_points(positive_pts_list)
-
         # Stack transforms and shift/scales
         trans_batch = torch.stack(rel_transforms, dim=0)
         anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
