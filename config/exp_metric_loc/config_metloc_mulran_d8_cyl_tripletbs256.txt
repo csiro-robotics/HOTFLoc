@@ -24,7 +24,6 @@ normalize_points = True
 octree_depth = 8
 weight_decay = 1e-4
 loss = BatchHardTripletMarginLoss
-l_gammas = 1., 1., 1., 4.
 margin = 0.2
 
 dataset_name = MulRan

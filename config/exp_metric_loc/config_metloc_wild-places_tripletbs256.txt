@@ -23,9 +23,8 @@ random_rot_theta = 180
 normalize_points = True
 octree_depth = 7
 weight_decay = 1e-4
-loss = TruncatedSmoothAP
-tau1 = 0.01
-positives_per_query = 4
+loss = BatchHardTripletMarginLoss
+margin = 0.2
 
 dataset_name = WildPlaces
 skip_same_run = True
