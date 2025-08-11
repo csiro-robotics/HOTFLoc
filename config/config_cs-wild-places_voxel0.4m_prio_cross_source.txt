@@ -11,6 +11,7 @@ prioritise_cross_source = True
 only_ground_aerial = False
 save_freq = 10
 eval_freq = 10
+eval_radius = 10, 30
 
 lr = 8e-4
 epochs = 100
