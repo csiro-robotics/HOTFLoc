@@ -9,6 +9,7 @@ from dataset.base_datasets import TrainingTuple
 from dataset.WildPlaces.utils import load_csv, check_in_test_set
 from dataset.WildPlaces.utils import P1, P2, P3, P4, P5, P6
 from dataset.WildPlaces.utils import B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12
+from misc.poses import xyz_quat2m
 import matplotlib.pyplot as plt 
 
 
@@ -31,8 +32,9 @@ def construct_query_dict(df_centroids, save_path, ind_nn_r, ind_r_r):
     ind_r = tree.query_radius(df_centroids[['easting', 'northing']], r=ind_r_r)
     queries = {}
     for anchor_ndx in tqdm(range(len(ind_nn))):
-        anchor_pos = np.array(df_centroids.iloc[anchor_ndx][['easting', 'northing']])
-        pose = np.array(df_centroids.iloc[anchor_ndx][['x','y','z','qx','qy','qz','qw']])
+        anchor_pos = np.array(df_centroids.iloc[anchor_ndx][['easting', 'northing']], dtype=np.float64)
+        pose = np.array(df_centroids.iloc[anchor_ndx][['x','y','z','qx','qy','qz','qw']], dtype=np.float64)
+        pose = xyz_quat2m(pose)  # Convert to SE(3) to support metric localisation
         query = df_centroids.iloc[anchor_ndx]["filename"]
         # Extract timestamp from the filename
         scan_filename = os.path.split(query)[1]
@@ -50,8 +52,7 @@ def construct_query_dict(df_centroids, save_path, ind_nn_r, ind_r_r):
         queries[anchor_ndx] = TrainingTuple(
             id=anchor_ndx, timestamp=timestamp, rel_scan_filepath=query,
             positives=positives, non_negatives=non_negatives,
-            # position=anchor_pos, pose = pose)  # not using pose currently
-            position=anchor_pos)
+            position=anchor_pos, pose=pose)
 
     file_path = save_path
     with open(file_path, 'wb') as handle:
@@ -65,10 +66,10 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_root', type=str, required=True, help='Dataset root folder')
     parser.add_argument('--save_folder', type=str, required=True, help='Folder to save training pickles to')
 
-    parser.add_argument('--csv_filename', type=str, default='poses_aligned.csv', help='Name of CSV containing ground truth poses')
+    parser.add_argument('--csv_filename', type=str, default='poses_aligned_fixed.csv', help='Name of CSV containing ground truth poses')
     parser.add_argument('--cloud_folder', type=str, default='Clouds_downsampled', help='Name of folder containing point cloud frames')
 
-    parser.add_argument('--pos_thresh', type=float, default=5, help='Threshold to sample positives within')
+    parser.add_argument('--pos_thresh', type=float, default=3, help='Threshold to sample positives within')
     parser.add_argument('--neg_thresh', type=float, default=50, help='Threshold to sample negative within')
 
     parser.add_argument('--vis_splits', action='store_true', default=False, help='View training splits using matplotlib')

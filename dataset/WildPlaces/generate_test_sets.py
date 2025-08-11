@@ -7,6 +7,7 @@ import argparse
 from tqdm import tqdm 
 from dataset.WildPlaces.utils import load_csv, check_in_test_set
 from dataset.WildPlaces.utils import P1, P2, P3, P4, P5, P6
+from misc.poses import xyz_quat2m
 
 def output_to_file(output, base_path, filename):
     file_path = os.path.join(base_path, filename)
@@ -43,7 +44,8 @@ def construct_query_and_database_sets(base_path, runs_folder, folders, pointclou
         test = {}
         df_locations = load_csv(os.path.join(base_path, runs_folder, folder, filename), os.path.join(runs_folder, folder, pointcloud_fols))
         for index, row in df_locations.iterrows():
-            pose = np.array(row[['x','y','z','qx','qy','qz','qw']])        
+            pose = np.array(row[['x','y','z','qx','qy','qz','qw']], dtype=np.float64)
+            pose = xyz_quat2m(pose)  # Convert to SE(3) to support metric localisation
             row['timestamp'] = float(os.path.basename(row['filename'].replace('.pcd', ''))) 
             if check_in_test_set(row['easting'], row['northing'], p, []) == 'test':
                 test[len(test.keys())] = {'query': row['filename'], 'northing': row['northing'], 'easting': row['easting'], 'pose': pose, 'timestamp': row['timestamp']}
@@ -79,10 +81,10 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_root', type = str, required = True, help = 'Dataset root folder')
     parser.add_argument('--save_folder', type = str, required = True, help = 'Folder to save training pickles to')
 
-    parser.add_argument('--csv_filename', type = str, default = 'poses_aligned.csv', help = 'Name of CSV containing ground truth poses')
+    parser.add_argument('--csv_filename', type = str, default = 'poses_aligned_fixed.csv', help = 'Name of CSV containing ground truth poses')
     parser.add_argument('--cloud_folder', type = str, default = 'Clouds_downsampled', help = 'Name of folder containing point cloud frames')
 
-    parser.add_argument('--eval_thresh', type = float, default = 5, help  = 'Threshold for correct retrieval during eval')
+    parser.add_argument('--eval_thresh', type = float, default = 3, help  = 'Threshold for correct retrieval during eval')
     args = parser.parse_args()
 
     print('Dataset root: {}'.format(args.dataset_root))

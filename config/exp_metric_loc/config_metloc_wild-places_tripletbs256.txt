@@ -1,0 +1,62 @@
+[DEFAULT]
+# Follow README instructions to install dataset
+dataset_folder = ../data/wild_places/data
+
+[TRAIN]
+num_workers = 4
+batch_size = 32
+batch_size_limit = 256
+batch_expansion_rate = 1.4
+batch_expansion_th = 0.7
+val_batch_size = 256
+save_freq = 10
+eval_freq = 10
+eval_radius = 5, 20
+
+lr = 3e-3
+epochs = 80
+scheduler_milestones = 30
+warmup_epochs = 5
+aug_mode = 2
+set_aug_mode = 2
+random_rot_theta = 180
+normalize_points = True
+octree_depth = 7
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+
+dataset_name = WildPlaces
+skip_same_run = True
+train_file = training_wild-places.pickle
+val_file = testing_wild-places.pickle
+validation = True
+
+[LOCAL]
+enable_local = True
+local_batch_size = 24
+local_aug_mode = 1
+eval_num_workers = 10
+max_eval_threshold = 20
+icp_train = True
+icp_eval = True
+weight_coarse_loss = 1.0
+weight_fine_loss = 1.0
+
+acceptance_overlap = 0.0
+acceptance_radius = 1.0
+inlier_ratio_threshold = 0.05
+rre_threshold = 5.0
+rte_threshold = 2.0
+
+[COARSE LOSS]
+positive_margin = 0.1
+negative_margin = 1.4
+positive_optimal = 0.1
+negative_optimal = 1.4
+log_scale = 40
+positive_overlap = 0.1
+
+[FINE LOSS]
+positive_radius = 0.6
