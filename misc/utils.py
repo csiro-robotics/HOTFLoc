@@ -247,6 +247,7 @@ class TrainingParams:
             self.eval_radius = tuple([float(e) for e in params['eval_radius'].split(',')])
         else:
             self.eval_radius = tuple([5., 20.])
+        self.finetune = params.getboolean('finetune', False)  # Finetune from weights (if True, `--resume_from` resets epoch counter)
 
         # Initial batch size for global descriptors (for both main and secondary dataset)
         self.batch_size = params.getint('batch_size', 64)

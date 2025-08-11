@@ -77,10 +77,13 @@ class NetworkTrainer:
         Handle logic for starting/resuming training when called manually or by
         submitit.
         """
-        checkpoint_path = kwargs.get('checkpoint_path')
-        self.resume = checkpoint_path is not None        
-        # Set params for hyperparam search
         self.params = params
+        checkpoint_path = kwargs.get('checkpoint_path')
+        self.resume = checkpoint_path is not None
+        if self.params.finetune and not self.resume:
+            raise ValueError('Cannot fine-tune without specifying weights (use `--resume_from`)')
+
+        # Set params for hyperparam search
         if not self.resume:
             if self.params.hyperparam_search:
                 if len(args) == 1 and isinstance(args[0], dict):  # This is required for submitit job arrays currently
@@ -101,24 +104,51 @@ class NetworkTrainer:
         if self.resume:
             self.model_pathname = checkpoint_path.split(self.checkpoint_extension)[0]
             state = torch.load(checkpoint_path)
-            try:
-                self.start_epoch = state['epoch']
-                self.curr_epoch = self.start_epoch
-                self.wandb_id = state['wandb_id']
-                self.best_avg_AR_1 = state['best_avg_AR_1']
-                self.model.load_state_dict(state['model_state_dict'])
-                self.optimizer.load_state_dict(state['optim_state_dict'])
-                if self.scheduler is not None:
-                    self.scheduler.load_state_dict(state['sched_state_dict'])
+            if self.params.finetune:  # Finetuning
+                if os.path.splitext(checkpoint_path)[1] == '.ckpt':
+                    state = state['model_state_dict']
+                try:
+                    self.model.load_state_dict(state)
+                except RuntimeError:
+                    # Check if HOTFormerLoc weights are being loaded for HOTFormerMetricLoc
+                    if isinstance(self.model, HOTFormerMetricLoc):
+                        self.model.hotformerloc_global.load_state_dict(state)
+                    else:
+                        raise
+                # Need to re-init model_ema to checkpoint weights
                 if self.model_ema is not None:
-                    self.model_ema.load_state_dict(state['model_ema_state_dict'])
-            except KeyError:
-                print("Invalid checkpoint file provided. Only files ending in '.ckpt' are valid for resuming training.")
-            print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
-        else:
+                    self.init_model_ema()
+                print(f'Begin fine-tuning of {self.model_pathname}')
+
+            else:  # Resume training
+                try:
+                    self.start_epoch = state['epoch']
+                    self.curr_epoch = self.start_epoch
+                    self.wandb_id = state['wandb_id']
+                    self.best_avg_AR_1 = state['best_avg_AR_1']
+                    self.model.load_state_dict(state['model_state_dict'])
+                    self.optimizer.load_state_dict(state['optim_state_dict'])
+                    if self.scheduler is not None:
+                        self.scheduler.load_state_dict(state['sched_state_dict'])
+                    if self.model_ema is not None:
+                        self.model_ema.load_state_dict(state['model_ema_state_dict'])
+                except KeyError:
+                    error_msg = (
+                        "Invalid checkpoint file provided. Only files ending "
+                        "in '.ckpt' are valid for resuming training."
+                    )
+                    raise ValueError(error_msg)
+                print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
+
+        if (not self.resume) or self.params.finetune:
             # Create model class
+            model_name = self.params.model_params.model
+            if self.params.finetune:
+                # Save new model_pathname (combining weights name and model name)
+                orig_model_name = os.path.splitext(os.path.basename(self.model_pathname))[0]
+                model_name += f'--finetune--{orig_model_name}'
             s = get_datetime()
-            model_name = self.params.model_params.model + '_' + s
+            model_name += f'_{s}'
             # Add SLURM job ID to prevent overwriting paths for jobs running at same time
             if 'SLURM_JOB_ID' in os.environ:
                 model_name += f"_job{os.environ['SLURM_JOB_ID']}"
@@ -180,6 +210,9 @@ class NetworkTrainer:
             state['model_ema_state_dict'] = self.model_ema.state_dict()
         torch.save(state, checkpoint_path)
 
+    def init_model_ema(self):
+        self.model_ema = ModelEmaV3(self.model, decay=0.9998)
+    
     def init_model_optim_sched(self):
         """
         Initialise the model, optimiser, and scheduler from the provided parameters.
@@ -197,7 +230,7 @@ class NetworkTrainer:
         # Setup exponential moving average of model weights, SWA could be used here too
         if self.params.mesa > 0.0:
             # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
-            self.model_ema = ModelEmaV3(self.model, decay=0.9998)
+            self.init_model_ema()
 
         # Training elements
         if self.params.optimizer == 'Adam':
