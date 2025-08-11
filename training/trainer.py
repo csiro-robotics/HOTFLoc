@@ -262,6 +262,8 @@ class NetworkTrainer:
             warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.warmup)
             self.scheduler = torch.optim.lr_scheduler.SequentialLR(self.optimizer, [warmup_scheduler, self.scheduler], [self.params.warmup_epochs])
 
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.params.model_params.scale_grads)
+
     def warmup(self, epoch: int):
         # Linear scaling lr warmup
         min_factor = 1e-3
@@ -774,7 +776,7 @@ class NetworkTrainer:
                     stats.update(temp_stats)
                     loss += qkv_loss
 
-                loss.backward()
+                self.grad_scaler.scale(loss).backward()
 
                 # NOTE: Verify that EMA works correctly with metric loc model + moving update outside of global train step 
                 # if self.model_ema is not None:
@@ -857,7 +859,7 @@ class NetworkTrainer:
             #     loss += qkv_loss
             stats['loss_total'] = loss.item()
             if 'train' in phase:
-                loss.backward()
+                self.grad_scaler.scale(loss).backward()
                 embeddings_grad = embeddings.grad
 
         # Delete intermediary values
@@ -908,7 +910,7 @@ class NetworkTrainer:
             batch_metrics = metrics_mean(batch_metrics)
 
         if 'train' in phase:
-            batch_local_loss.backward()
+            self.grad_scaler.scale(batch_local_loss).backward()
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
         return batch_metrics
@@ -1013,8 +1015,9 @@ class NetworkTrainer:
 
                     if 'train' in phase:
                         # Step optimizer after .backward called for global and local losses
-                        self.optimizer.step()
+                        self.grad_scaler.step(self.optimizer)
                         self.optimizer.zero_grad()
+                        self.grad_scaler.update()
                         # Update EMA of model params for MESA loss
                         if self.model_ema is not None:
                             self.model_ema.update(self.model)

@@ -62,6 +62,7 @@ class ModelParams:
             self.k_pooled_tokens = tuple([int(e) for e in params['k_pooled_tokens'].split(',')])
         self.num_top_down = params.getint('num_top_down', 1)
         self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', True)  # outputs feats and attn maps from each block of HOTFormerLoc (or MinkLoc)
+        self.scale_grads = params.getboolean('scale_grads', False)  # Enables gradient scaling to prevent gradient underflow
 
         # Metric loc params
         if local:

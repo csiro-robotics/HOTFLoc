@@ -1,0 +1,60 @@
+[MODEL]
+model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-pyrmd-3lvls-scale-grads
+channels = 128,256
+num_blocks = 4,10
+num_heads = 8,16
+num_pyramid_levels = 3
+num_octf_levels = 1
+ct_size = 1
+ct_propagation = False
+rt_init_type = max_pool
+patch_size = 48
+input_features = P
+downsample_input_embeddings = True
+num_input_downsamples = 2
+disable_RPE = False
+grad_checkpoint = True
+scale_grads = True
+conv_norm = layernorm
+feature_size = 256
+output_dim = 256
+pooling = PyramidAttnPoolMixer
+k_pooled_tokens = 148,72,36
+
+coordinates = cylindrical
+normalize_embeddings = True
+return_feats_and_attn_maps = True
+
+coarse_idx = -1
+fine_idx = -3
+
+[GEOTRANSFORMER]
+input_dim = 256
+hidden_dim = 128
+output_dim = 256
+num_heads = 4
+blocks = self,cross,self,cross,self,cross
+sigma_d = 4.8
+sigma_a = 15
+angle_k = 3
+activation_fn = ReLU
+reduction_a = max
+                    
+[COARSE MATCHING]
+num_targets = 128
+overlap_threshold = 0.1
+num_correspondences = 256
+dual_normalization = True
+ground_truth_matching_radius = 0.6
+num_points_in_patch = 128
+
+[FINE MATCHING]
+topk = 2
+acceptance_radius = 0.6
+mutual = True
+confidence_threshold = 0.05
+use_dustbin = False
+use_global_score = False
+correspondence_threshold = 3
+num_refinement_steps = 5
+num_sinkhorn_iterations = 100
