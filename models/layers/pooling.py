@@ -298,9 +298,10 @@ class PyramidAttnPoolWrapper(nn.Module):
         local_tokens = pad_sequence(local_feats.split(batch_counts))        
         return local_tokens
     
-    def calc_local_attn_mask(self, local_tokens: Tensor, octree: OctreeT,
-                             j: int, depth_j: int) -> Tensor:
+    def calc_local_attn_mask_DEPRECATED(self, local_tokens: Tensor, octree: OctreeT,
+                                        j: int, depth_j: int) -> Tensor:
         """
+        DEPRECATED: Uses far more memory than necessary to compute this.
         Computes attention mask for local feature attentional pooling.
         """
         # Generate (B, N) mask of batch idx for all local tokens.
@@ -318,6 +319,24 @@ class PyramidAttnPoolWrapper(nn.Module):
         attn_mask = attn_mask[:, 0, :].unsqueeze(1)  # (B, N, N) -> (B, k, N)
         attn_mask = attn_mask.repeat(1, self.k_pooled_tokens[j], 1)
         return attn_mask
+
+    def calc_local_attn_mask(self, local_tokens: Tensor, octree: OctreeT,
+                             j: int, depth_j: int) -> Tensor:
+        """
+        Computes attention mask for local feature attentional pooling.
+        """
+        # Generate (B, N) mask of batch idx for all local tokens.
+        # (N = number of largest batch element, which all are padded to reach)
+        B, N, C = local_tokens.shape        
+        batch_counts = octree.batch_nnum_nempty[depth_j]
+        attn_mask = torch.zeros(
+            (B, self.k_pooled_tokens[j], N), dtype=local_tokens.dtype, device=octree.device
+        )
+        for batch_idx, batch_length in enumerate(batch_counts):
+            attn_mask[batch_idx, :, batch_length:] = octree.invalid_mask_value
+
+        return attn_mask
+
 
 class AttnPoolWrapper(nn.Module):
     """
