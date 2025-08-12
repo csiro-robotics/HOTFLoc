@@ -413,7 +413,7 @@ class NetworkTrainer:
         # Make absolutely sure that gradients aren't touched here
         with torch.no_grad():
             stats = {'local_token_unique_sim': {}, 'local_token_sim_matrix': {},
-                     'pointcloud': {}, 'pca_variance': {}}
+                     'pointcloud': {}, 'pca_variance': {}, 'pointcloud_umap': {}}
             # Log query and positive (queries and positives are neighbour pairs within the batch)
             assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
             query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
@@ -436,13 +436,20 @@ class NetworkTrainer:
                         # Collect unique values of token similarity (off diagonal)
                         stats['local_token_unique_sim'][f'layer_{j}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
                     # Plot points colourised by PCA embeddings
-                    pcl_j_colours, feature_map_j_variance = colourise_points_by_similarity(
+                    pcl_j_pca_colours, feature_map_j_variance = colourise_points_by_similarity(
                         feature_map_j.numpy(), mode='pca', return_explained_variance=True
                     )
-                    pcl_j_colours *= 255.0
-                    pcl_j_combined = np.concatenate([pcl_j, pcl_j_colours], axis=1)
-                    stats['pointcloud'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_combined)
+                    pcl_j_pca_colours *= 255.0
+                    pcl_j_pca_combined = np.concatenate([pcl_j, pcl_j_pca_colours], axis=1)
+                    stats['pointcloud'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_pca_combined)
                     stats['pca_variance'][f'{pcl_type}_layer_{j}'] = wandb.Histogram(feature_map_j_variance)
+                    # Plot points colourised by UMAP embeddings
+                    pcl_j_umap_colours = colourise_points_by_similarity(
+                        feature_map_j.numpy(), mode='umap',
+                    )
+                    pcl_j_umap_colours *= 255.0
+                    pcl_j_umap_combined = np.concatenate([pcl_j, pcl_j_umap_colours], axis=1)
+                    stats['pointcloud_umap'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_umap_combined)
                 
         self.logger.debug(f'Logged feats in {time.time() - tic:.4f}s')
         return stats
@@ -488,7 +495,7 @@ class NetworkTrainer:
                 stats = {'rt_attn_map': {}, 'local_attn_map': {}, 'local_rpe': {},
                         'rt_token_unique_sim': {}, 'local_token_unique_sim': {},
                         'rt_token_sim_matrix': {}, 'local_token_sim_matrix': {},
-                        'pointcloud': {}, 'pca_variance': {}}
+                        'pointcloud': {}, 'pca_variance': {}, 'pointcloud_umap': {}}
                 block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps)-1,
                                           VIZ_BLOCKS, dtype=np.int32)).tolist()
                 rt_ticklabels = get_rt_heatmap_ticklabels()
@@ -621,6 +628,13 @@ class NetworkTrainer:
                         pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                         stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                         stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
+                        # Plot points colourised by UMAP embeddings
+                        pcl_depth_j_umap_colours = colourise_points_by_similarity(
+                            local_feats_depth_j_masked, mode='umap',
+                        )
+                        pcl_depth_j_umap_colours *= 255.0
+                        pcl_depth_j_umap_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_umap_colours], axis=1)
+                        stats['pointcloud_umap'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_umap_combined)
             return stats
         def log_octformer() -> tp.Dict:
             """
@@ -631,7 +645,7 @@ class NetworkTrainer:
                 stats = {'ct_attn_map': {}, 'local_attn_map': {}, 'local_rpe': {},
                         'ct_token_unique_sim': {}, 'local_token_unique_sim': {},
                         'ct_token_sim_matrix': {}, 'local_token_sim_matrix': {},
-                        'pointcloud': {}, 'pca_variance': {}}
+                        'pointcloud': {}, 'pca_variance': {}, 'pointcloud_umap': {}}
                 for j, depth_j in enumerate(feats_and_attn_maps.keys()): 
                     block_indices = np.unique(np.linspace(0, len(feats_and_attn_maps[depth_j])-1,
                                               VIZ_BLOCKS, dtype=np.int32)).tolist()
@@ -724,6 +738,13 @@ class NetworkTrainer:
                         pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                         stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                         stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
+                        # Plot points colourised by UMAP embeddings
+                        pcl_depth_j_umap_colours = colourise_points_by_similarity(
+                            local_feats_depth_j_masked, mode='umap',
+                        )
+                        pcl_depth_j_umap_colours *= 255.0
+                        pcl_depth_j_umap_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_umap_colours], axis=1)
+                        stats['pointcloud_umap'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_umap_combined)
             return stats
 
         if 'octformer' in self.params.model_params.model.lower():
@@ -1203,6 +1224,8 @@ class NetworkTrainer:
             metrics['pointcloud'] = epoch_stats['global']['pointcloud']
         if 'pca_variance' in epoch_stats['global']:
             metrics['pca_variance'] = epoch_stats['global']['pca_variance']
+        if 'pointcloud_umap' in epoch_stats['global']:
+            metrics['pointcloud_umap'] = epoch_stats['global']['pointcloud_umap']
         # Local Metrics
         if not (self.params.local.enable_local and 'local' in epoch_stats):
             return metrics
