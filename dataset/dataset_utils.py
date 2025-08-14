@@ -118,6 +118,7 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
             cloud_points_obj = Points(cloud)
             points.append(cloud_points_obj)
             octree = Octree(params.octree_depth, params.full_depth)
+            assert torch.all(torch.abs(cloud_points_obj.points) <= 1.0), "Point cloud must be normalized"
             octree.build_octree(cloud_points_obj)
             octrees.append(octree)
         octrees_merged = ocnn.octree.merge_octrees(octrees)
