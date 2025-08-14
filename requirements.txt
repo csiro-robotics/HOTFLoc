@@ -17,7 +17,8 @@ wandb
 open3d
 shapely
 cloth-simulation-filter
-numba
+numba==0.59.1
 easydict
 submitit
 coloredlogs
+umap
