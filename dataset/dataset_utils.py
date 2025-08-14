@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.neighbors import KDTree
 from ocnn.octree import Octree, Points
 
-from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset, Eval6DOFDataset
+from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset, Eval6DOFDataset, clip_points
 from dataset.augmentation import TrainTransform, TrainSetTransform, Train6DOFTransform, ValTransform, Val6DOFTransform
 from dataset.samplers import BatchSampler, BatchSampler6DOF
 from misc.utils import TrainingParams
@@ -115,10 +115,12 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
         points = []
         # Convert to ocnn Points object, then create Octree
         for cloud in clouds:
+            # Ensure no pts outside [-1, 1] after set augmentations
+            cloud = clip_points(cloud, params.model_params.coordinates)
             cloud_points_obj = Points(cloud)
+            assert torch.all(torch.abs(cloud_points_obj.points) <= 1.0), "Point cloud must be normalized"
             points.append(cloud_points_obj)
             octree = Octree(params.octree_depth, params.full_depth)
-            assert torch.all(torch.abs(cloud_points_obj.points) <= 1.0), "Point cloud must be normalized"
             octree.build_octree(cloud_points_obj)
             octrees.append(octree)
         octrees_merged = ocnn.octree.merge_octrees(octrees)
