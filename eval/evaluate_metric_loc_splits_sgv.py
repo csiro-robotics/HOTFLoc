@@ -191,6 +191,8 @@ def evaluate_dataset(
             else:
                 split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
             temp_global_metrics, temp_local_metrics = get_metrics(
+                m=i,
+                n=j,
                 database_global_embeddings=database_embeddings[i],
                 query_global_embeddings=query_embeddings[j],
                 database_local_embeddings=database_local_embeddings[i],
@@ -313,6 +315,8 @@ def compute_embedding(model: torch.nn.Module, batch: Dict, only_global: bool = F
 
 
 def get_metrics(
+    m: int,
+    n: int,
     database_global_embeddings: np.ndarray,
     query_global_embeddings: np.ndarray,
     database_local_embeddings: Dict[str, List[torch.Tensor]],
@@ -392,10 +396,14 @@ def get_metrics(
                                disable=(not show_progress)):
         query_metadata = query_set[query_idx]  # {'query': path, 'northing': , 'easting': , 'pose': }
         query_position = np.array((query_metadata['northing'], query_metadata['easting']))
-        # query_pose = query_metadata['pose']
-        true_neighbors = query_metadata
-        if len(true_neighbors) == 0:
-            continue
+        if m in query_metadata:  # old tuples store true neighbours directly
+            true_neighbors = query_metadata[m]
+            if len(true_neighbors) == 0:
+                continue
+        else:  # expected that new tuples filter queries, but do here just in case
+            min_neighbor_dist = np.linalg.norm(query_position - database_positions, axis=-1).min()
+            if min_neighbor_dist > min(radius):
+                continue
         num_evaluated += 1
 
         # Find nearest neightbours
