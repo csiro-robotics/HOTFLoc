@@ -1,5 +1,5 @@
 [MODEL]
-model=MinkLoc
+model=MinkLoc_big_quant0.8m_polar
 planes=64,128,128,128,64
 layers=1,1,1,1,1
 num_top_down=2
