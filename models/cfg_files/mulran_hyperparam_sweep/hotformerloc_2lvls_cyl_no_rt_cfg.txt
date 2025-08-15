@@ -1,0 +1,24 @@
+[MODEL]
+model = HOTFormerLoc-cyl-ch192-pyrmd-2lvls-no-RT
+channels = 96,192,96
+num_blocks = 4,10
+num_heads = 6,12,6
+num_pyramid_levels = 2
+disable_rt=True
+patch_size = 64
+input_features = P
+downsample_input_embeddings = True
+num_input_downsamples = 2
+disable_RPE = False
+grad_checkpoint = True
+conv_norm = layernorm
+feature_size = 256
+output_dim = 256
+pooling = PyramidAttnPoolMixer
+k_pooled_tokens = 48,16
+
+coordinates = cylindrical
+
+normalize_embeddings = True
+
+return_feats_and_attn_maps = True

@@ -1,0 +1,29 @@
+[MODEL]
+model = HOTFormerLoc-cyl-ch128-ch-up-2octf-3hotf-ds0
+channels = 32,64,64,128,128
+num_blocks = 4,4,10
+num_heads = 2,4,4,8,8
+num_pyramid_levels = 3
+num_octf_levels = 2
+ct_size = 1
+ct_propagation = False
+rt_init_type = max_pool
+ADaPE_mode = cov
+ADaPE_use_accurate_point_stats = False
+patch_size = 64
+input_features = P
+downsample_input_embeddings = False
+num_input_downsamples = 2
+disable_RPE = False
+grad_checkpoint = True
+conv_norm = layernorm
+feature_size = 256
+output_dim = 256
+pooling = PyramidAttnPoolMixer
+k_pooled_tokens = 74,36,18
+
+coordinates = cylindrical
+
+normalize_embeddings = True
+
+return_feats_and_attn_maps = True

@@ -1,0 +1,33 @@
+[DEFAULT]
+# Follow README instructions to install dataset
+dataset_folder = ../data/MulRan
+
+[TRAIN]
+num_workers = 4
+batch_size = 2048
+batch_split_size = 256
+val_batch_size = 256
+save_freq = 10
+eval_freq = 10
+eval_radius = 5, 20
+
+lr = 8e-4
+epochs = 100
+scheduler_milestones = 50
+warmup_epochs = 2
+aug_mode = 2
+set_aug_mode = 2
+random_rot_theta = 180
+normalize_points = True
+scale_factor = 80
+octree_depth = 8
+weight_decay = 1e-4
+loss = TruncatedSmoothAP
+tau1 = 0.01
+positives_per_query = 4
+
+dataset_name = MulRan
+skip_same_run = False
+train_file = train_Sejong_01_Sejong_02_2_10.pickle
+val_file = val_Sejong_01_Sejong_02_2_10.pickle
+validation = True

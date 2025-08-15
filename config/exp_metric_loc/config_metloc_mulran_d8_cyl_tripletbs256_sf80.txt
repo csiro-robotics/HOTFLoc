@@ -1,0 +1,63 @@
+[DEFAULT]
+# Follow README instructions to install dataset
+dataset_folder = ../data/MulRan
+
+[TRAIN]
+num_workers = 4
+batch_size = 32
+batch_size_limit = 256
+batch_expansion_rate = 1.4
+batch_expansion_th = 0.7
+val_batch_size = 256
+save_freq = 10
+eval_freq = 10
+eval_radius = 5, 20
+
+lr = 8e-4
+epochs = 100
+scheduler_milestones = 50
+warmup_epochs = 2
+aug_mode = 2
+set_aug_mode = 2
+random_rot_theta = 180
+normalize_points = True
+scale_factor = 80
+octree_depth = 8
+weight_decay = 1e-4
+loss = BatchHardTripletMarginLoss
+margin = 0.2
+
+dataset_name = MulRan
+skip_same_run = False
+train_file = train_Sejong_01_Sejong_02_2_10.pickle
+val_file = val_Sejong_01_Sejong_02_2_10.pickle
+validation = True
+
+[LOCAL]
+enable_local = True
+local_batch_size = 10
+local_aug_mode = 1
+eval_num_workers = 10
+max_eval_threshold = 20
+# ICP already done in training tuples
+icp_train = False
+icp_eval = True
+weight_coarse_loss = 1.0
+weight_fine_loss = 1.0
+
+acceptance_overlap = 0.0
+acceptance_radius = 1.0
+inlier_ratio_threshold = 0.05
+rre_threshold = 5.0
+rte_threshold = 2.0
+
+[COARSE LOSS]
+positive_margin = 0.1
+negative_margin = 1.4
+positive_optimal = 0.1
+negative_optimal = 1.4
+log_scale = 40
+positive_overlap = 0.1
+
+[FINE LOSS]
+positive_radius = 0.6
