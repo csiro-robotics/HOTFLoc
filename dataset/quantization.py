@@ -10,6 +10,10 @@ class Quantizer(ABC):
     def __call__(self, pc):
         pass
 
+    @abstractmethod
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
+        pass
+
 class PolarQuantizer(Quantizer):
     def __init__(self, quant_step: List[float]):
         assert len(quant_step) == 3, '3 quantization steps expected: for sector (in degrees), ring and z-coordinate (in meters)'
@@ -34,6 +38,20 @@ class PolarQuantizer(Quantizer):
         # Return quantized coordinates and indices of selected elements
         return quantized_polar_pc, ndx
 
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
+        """
+        Undo the operation done when this class is called.
+        """
+        assert pc.ndim == 2
+        assert pc.shape[1] == 3
+        pc = pc * self.quant_step
+        # pc stored in (theta, dist, z) format
+        x = pc[:, 1] * torch.cos(pc[:, 0])
+        y = pc[:, 1] * torch.sin(pc[:, 0])
+        z = pc[:, 2]
+        cartesian_pc = torch.stack([x, y, z], dim=1)
+        return cartesian_pc        
+
 
 class CartesianQuantizer(Quantizer):
     def __init__(self, quant_step: float):
@@ -47,3 +65,5 @@ class CartesianQuantizer(Quantizer):
         # Return quantized coordinates and index of selected elements
         return quantized_pc, ndx
 
+    def undo_conversion(self, pc: torch.Tensor) -> torch.Tensor:
+        return pc

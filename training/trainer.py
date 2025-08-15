@@ -417,6 +417,7 @@ class NetworkTrainer:
             # Log query and positive (queries and positives are neighbour pairs within the batch)
             assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
             query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+            umap_dict = {j: {'query': {}, 'positive': {}} for j in range(len(feature_maps))}
             for i, batch_idx in enumerate(query_pos_indices):
                 pcl_type = 'query' if i == 0 else 'positive'
                 # Log the point cloud itself (in this case using the quantized point cloud)
@@ -428,29 +429,50 @@ class NetworkTrainer:
                 # Log embedding similarities and colourised point cloud for each layer
                 for j, feats_j in enumerate(feature_maps):
                     pcl_j, feature_map_j = feats_j.coordinates_and_features_at(batch_index=batch_idx)
-                    pcl_j, feature_map_j = release_cuda(pcl_j, to_numpy=True), release_cuda(feature_map_j)
+                    pcl_j, feature_map_j = release_cuda(pcl_j), release_cuda(feature_map_j)
+                    pcl_j = self.params.model_params.quantizer.undo_conversion(pcl_j)
+                    pcl_j = pcl_j.numpy()
                     if i == 0:  # currently only logging similarity for one point cloud
                         temp_sim = rowwise_cosine_sim(feature_map_j, feature_map_j)
-                        stats['local_token_sim_matrix'][f'layer_{j}'] = wandb.Image(create_heatmap(temp_sim, title=f'Layer {j}'))
+                        stats['local_token_sim_matrix'][f'stage_{j}'] = wandb.Image(create_heatmap(temp_sim, title=f'Stage {j}'))
                         plt.close()
                         # Collect unique values of token similarity (off diagonal)
-                        stats['local_token_unique_sim'][f'layer_{j}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
+                        stats['local_token_unique_sim'][f'stage_{j}'] = wandb.Histogram(off_diagonal(temp_sim).numpy())
                     # Plot points colourised by PCA embeddings
                     pcl_j_pca_colours, feature_map_j_variance = colourise_points_by_similarity(
                         feature_map_j.numpy(), mode='pca', return_explained_variance=True
                     )
                     pcl_j_pca_colours *= 255.0
                     pcl_j_pca_combined = np.concatenate([pcl_j, pcl_j_pca_colours], axis=1)
-                    stats['pointcloud'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_pca_combined)
-                    stats['pca_variance'][f'{pcl_type}_layer_{j}'] = wandb.Histogram(feature_map_j_variance)
+                    stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_j_pca_combined)
+                    stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(feature_map_j_variance)
                     # Plot points colourised by UMAP embeddings
-                    pcl_j_umap_colours = colourise_points_by_similarity(
-                        feature_map_j.numpy(), mode='umap',
-                    )
-                    pcl_j_umap_colours *= 255.0
-                    pcl_j_umap_combined = np.concatenate([pcl_j, pcl_j_umap_colours], axis=1)
-                    stats['pointcloud_umap'][f'{pcl_type}_layer_{j}'] = wandb.Object3D(pcl_j_umap_combined)
-                
+                    umap_dict[j][pcl_type]['pcl'] = pcl_j
+                    umap_dict[j][pcl_type]['local_feats'] = feature_map_j.numpy()
+
+            for j in range(len(feature_maps)):
+                query_pcl_j = umap_dict[j]['query']['pcl']
+                positive_pcl_j = umap_dict[j]['positive']['pcl']
+                # Combine features to produce consistent UMAP colours
+                combined_feats_j = np.concatenate(
+                    (umap_dict[j]['query']['local_feats'], umap_dict[j]['positive']['local_feats']),
+                    axis=0,
+                )
+                combined_j_umap_colours = colourise_points_by_similarity(
+                    combined_feats_j, mode='umap',
+                )
+                query_j_umap_colours, positive_j_umap_colours = np.split(
+                    combined_j_umap_colours,
+                    [umap_dict[j]['query']['local_feats'].shape[0]],
+                    axis=0,
+                )
+                query_j_umap_colours *= 255.0
+                query_pcl_j_umap_colourised = np.concatenate([query_pcl_j, query_j_umap_colours], axis=1)
+                stats['pointcloud_umap'][f'query_stage_{j}'] = wandb.Object3D(query_pcl_j_umap_colourised)
+                positive_j_umap_colours *= 255.0
+                positive_pcl_j_umap_colourised = np.concatenate([positive_pcl_j, positive_j_umap_colours], axis=1)
+                stats['pointcloud_umap'][f'positive_stage_{j}'] = wandb.Object3D(positive_pcl_j_umap_colourised)
+
         self.logger.debug(f'Logged feats in {time.time() - tic:.4f}s')
         return stats
 
@@ -601,6 +623,7 @@ class NetworkTrainer:
                 # Log query and positive (queries and positives are neighbour pairs within the batch)
                 assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
                 query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+                umap_dict = {depth_j: {'query': {}, 'positive': {}} for depth_j in octree_local.pyramid_depths}
                 for i, batch_idx in enumerate(query_pos_indices):
                     pcl_type = 'query' if i == 0 else 'positive'
                     batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == batch_idx
@@ -628,13 +651,33 @@ class NetworkTrainer:
                         pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                         stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                         stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
-                        # Plot points colourised by UMAP embeddings
-                        pcl_depth_j_umap_colours = colourise_points_by_similarity(
-                            local_feats_depth_j_masked, mode='umap',
-                        )
-                        pcl_depth_j_umap_colours *= 255.0
-                        pcl_depth_j_umap_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_umap_colours], axis=1)
-                        stats['pointcloud_umap'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_umap_combined)
+                        if 'local_feats' in feats_and_attn_maps[-1]:
+                            # Plot points colourised by UMAP embeddings
+                            umap_dict[depth_j][pcl_type]['pcl'] = pcl_depth_j_masked
+                            umap_dict[depth_j][pcl_type]['local_feats'] = local_feats_depth_j_masked
+
+                for j, depth_j in enumerate(octree_local.pyramid_depths):
+                    query_pcl_depth_j = umap_dict[depth_j]['query']['pcl']
+                    positive_pcl_depth_j = umap_dict[depth_j]['positive']['pcl']
+                    # Combine features to produce consistent UMAP colours
+                    combined_feats_depth_j = np.concatenate(
+                        (umap_dict[depth_j]['query']['local_feats'], umap_dict[depth_j]['positive']['local_feats']),
+                        axis=0,
+                    )
+                    combined_depth_j_umap_colours = colourise_points_by_similarity(
+                        combined_feats_depth_j, mode='umap',
+                    )
+                    query_depth_j_umap_colours, positive_depth_j_umap_colours = np.split(
+                        combined_depth_j_umap_colours,
+                        [umap_dict[depth_j]['query']['local_feats'].shape[0]],
+                        axis=0,
+                    )
+                    query_depth_j_umap_colours *= 255.0
+                    query_pcl_depth_j_umap_colourised = np.concatenate([query_pcl_depth_j, query_depth_j_umap_colours], axis=1)
+                    stats['pointcloud_umap'][f'query_stage_{j}'] = wandb.Object3D(query_pcl_depth_j_umap_colourised)
+                    positive_depth_j_umap_colours *= 255.0
+                    positive_pcl_depth_j_umap_colourised = np.concatenate([positive_pcl_depth_j, positive_depth_j_umap_colours], axis=1)
+                    stats['pointcloud_umap'][f'positive_stage_{j}'] = wandb.Object3D(positive_pcl_depth_j_umap_colourised)
             return stats
         def log_octformer() -> tp.Dict:
             """
@@ -711,6 +754,7 @@ class NetworkTrainer:
                 # Log query and positive (queries and positives are neighbour pairs within the batch)
                 assert BATCH_IDX % 2 == 0, "Queries are even indices, positives are odd indices"
                 query_pos_indices = [BATCH_IDX, BATCH_IDX + 1]
+                umap_dict = {depth_j: {'query': {}, 'positive': {}} for depth_j in feats_and_attn_maps.keys()}
                 for i, batch_idx in enumerate(query_pos_indices):
                     pcl_type = 'query' if i == 0 else 'positive'
                     batch_mask_max_depth = octree_local.batch_id(self.params.octree_depth, octree_local.nempty) == batch_idx
@@ -738,13 +782,33 @@ class NetworkTrainer:
                         pcl_depth_j_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_colours], axis=1)
                         stats['pointcloud'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_combined)
                         stats['pca_variance'][f'{pcl_type}_stage_{j}'] = wandb.Histogram(local_feats_depth_j_variance)
-                        # Plot points colourised by UMAP embeddings
-                        pcl_depth_j_umap_colours = colourise_points_by_similarity(
-                            local_feats_depth_j_masked, mode='umap',
-                        )
-                        pcl_depth_j_umap_colours *= 255.0
-                        pcl_depth_j_umap_combined = np.concatenate([pcl_depth_j_masked, pcl_depth_j_umap_colours], axis=1)
-                        stats['pointcloud_umap'][f'{pcl_type}_stage_{j}'] = wandb.Object3D(pcl_depth_j_umap_combined)
+                        if 'local_feats' in feats_and_attn_maps[depth_j][-1]:
+                            # Plot points colourised by UMAP embeddings
+                            umap_dict[depth_j][pcl_type]['pcl'] = pcl_depth_j_masked
+                            umap_dict[depth_j][pcl_type]['local_feats'] = local_feats_depth_j_masked
+
+                for j, depth_j in enumerate(feats_and_attn_maps.keys()):
+                    query_pcl_depth_j = umap_dict[depth_j]['query']['pcl']
+                    positive_pcl_depth_j = umap_dict[depth_j]['positive']['pcl']
+                    # Combine features to produce consistent UMAP colours
+                    combined_feats_depth_j = np.concatenate(
+                        (umap_dict[depth_j]['query']['local_feats'], umap_dict[depth_j]['positive']['local_feats']),
+                        axis=0,
+                    )
+                    combined_depth_j_umap_colours = colourise_points_by_similarity(
+                        combined_feats_depth_j, mode='umap',
+                    )
+                    query_depth_j_umap_colours, positive_depth_j_umap_colours = np.split(
+                        combined_depth_j_umap_colours,
+                        [umap_dict[depth_j]['query']['local_feats'].shape[0]],
+                        axis=0,
+                    )
+                    query_depth_j_umap_colours *= 255.0
+                    query_pcl_depth_j_umap_colourised = np.concatenate([query_pcl_depth_j, query_depth_j_umap_colours], axis=1)
+                    stats['pointcloud_umap'][f'query_stage_{j}'] = wandb.Object3D(query_pcl_depth_j_umap_colourised)
+                    positive_depth_j_umap_colours *= 255.0
+                    positive_pcl_depth_j_umap_colourised = np.concatenate([positive_pcl_depth_j, positive_depth_j_umap_colours], axis=1)
+                    stats['pointcloud_umap'][f'positive_stage_{j}'] = wandb.Object3D(positive_pcl_depth_j_umap_colourised)
             return stats
 
         if 'octformer' in self.params.model_params.model.lower():

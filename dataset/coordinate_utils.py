@@ -27,7 +27,8 @@ class CoordinateSystem(ABC):
     def __call__(self, pc: torch.Tensor) -> torch.Tensor:
         pass
 
-    def cartesian_to_cylindrical(self, pc: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def cartesian_to_cylindrical(pc: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pc (torch.Tensor): (N, 3) point cloud with Cartesian coordinates
@@ -45,7 +46,8 @@ class CoordinateSystem(ABC):
         cylindrical_pc = torch.stack([rho, phi, z], dim=1)
         return cylindrical_pc
     
-    def cylindrical_to_cartesian(self, pc: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def cylindrical_to_cartesian(pc: torch.Tensor) -> torch.Tensor:
         """
         Args:
             cylindrical_pc (torch.Tensor): (N, 3) point cloud with Cylindrical
