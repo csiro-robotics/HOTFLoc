@@ -13,4 +13,4 @@ quantization_step=0.01
 
 normalize_embeddings=False
 
-return_feats_and_attn_maps=True
+return_feats_and_attn_maps=False
