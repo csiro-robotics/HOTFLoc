@@ -1,5 +1,5 @@
 """
-Visualises correspondences from HOTFormerMetricLoc.
+Visualises correspondences from HOTFormerMetricLoc (only on validation set).
 """
 import argparse
 import logging
@@ -62,7 +62,7 @@ def main():
     metric_loc_evaluator = Evaluator(params)
 
     for ii, local_batch in enumerate(dataloader):
-        log_str = f"{ii}: "
+        log_str = f"ID {ii}: "
         local_batch = to_device(local_batch, device, non_blocking=True, construct_octree_neigh=True)
         with torch.inference_mode():
             output_dict = model(local_batch)[0]
@@ -78,9 +78,11 @@ def main():
         anc_points_coarse = release_cuda(output_dict['anc_points_coarse'])
         anc_points_fine = release_cuda(output_dict['anc_points_fine'])
         anc_point_to_node = release_cuda(output_dict['anc_point_to_node'])
-        pos_points_coarse = release_cuda(output_dict['pos_points_coarse'])
+        anc_feats_coarse = release_cuda(output_dict['anc_feats_coarse'], to_numpy=True)
+        pos_points_coarse = release_cuda(output_dict['pos_points_coarse'], to_numpy=True)
         pos_points_fine = release_cuda(output_dict['pos_points_fine'])
         pos_point_to_node = release_cuda(output_dict['pos_point_to_node'])
+        pos_feats_coarse = release_cuda(output_dict['pos_feats_coarse'])
         gt_node_corr_indices = release_cuda(output_dict['gt_node_corr_indices'])
         gt_node_corr_overlaps = release_cuda(output_dict['gt_node_corr_overlaps'])  # NOTE: Only averaged on non-zero overlap patches
         anc_node_corr_indices = release_cuda(output_dict['anc_node_corr_indices'])
@@ -111,19 +113,22 @@ def main():
 
         print(log_str, flush=True)
 
-        save_filename = None
+        save_dir_ii = None
         if args.save_dir is not None:
-            save_filename = os.path.join(args.save_dir, f'{ii}-superpoints')
+            save_dir_ii = os.path.join(args.save_dir, f'{ii}')
+            os.makedirs(save_dir_ii, exist_ok=True)
+
         # draw_point_to_node(
         #     release_cuda(output_dict["anc_points_fine"], to_numpy=True),
         #     release_cuda(output_dict["anc_points_coarse"], to_numpy=True),
         #     release_cuda(output_dict["anc_point_to_node"], to_numpy=True),
-        #     save_basepath=save_filename,
+        #     save_basepath=os.path.join(f'{save_filename}', 'coarse'),
         #     viz=True,
         # )
         
         # TODO: get corr indices in valid format (perhaps filter by unique indices), and also plot estimated corr indices `node_corr_indices`
 
+        # TODO: add param to disable animation + saving
         # Ground truth
         visualise_correspondences(
             anc_points_coarse=anc_points_coarse,
@@ -135,20 +140,17 @@ def main():
             transform=T_gt.numpy(),
             anc_point_to_node=anc_point_to_node,
             pos_point_to_node=pos_point_to_node,
-            translate=[0,0,50]
+            anc_feats_coarse=anc_feats_coarse,
+            pos_feats_coarse=pos_feats_coarse,
+            translate=[0,0,50],
+            # coarse_colourmode='patch',
+            # coarse_colourmode='tsne',
+            coarse_colourmode='umap',
+            save_dir=save_dir_ii,
         )
 
-        # # Estimated TF
-        visualise_registration(
-            anc_points_coarse=anc_points_coarse,
-            pos_points_coarse=pos_points_coarse,
-            anc_points_fine=anc_points_fine,
-            pos_points_fine=pos_points_fine,
-            node_corr_indices=node_corr_indices.numpy(),
-            gt_node_corr_indices=gt_node_corr_indices.numpy(),
-            transform=T_estimated.numpy(),
-        )
-        # visualise_correspondences(
+        # Estimated TF
+        # visualise_registration(
         #     anc_points_coarse=anc_points_coarse,
         #     pos_points_coarse=pos_points_coarse,
         #     anc_points_fine=anc_points_fine,
@@ -156,11 +158,13 @@ def main():
         #     node_corr_indices=node_corr_indices.numpy(),
         #     gt_node_corr_indices=gt_node_corr_indices.numpy(),
         #     transform=T_estimated.numpy(),
-        #     # anc_point_to_node=anc_point_to_node,
-        #     # pos_point_to_node=pos_point_to_node,
-        #     translate=[0,0,0]
+        #     # transform=T_gt.numpy(),  # for debugging GT pose
         # )
 
+
+
+
+        
         #       - Plot coarse correspondences
         #       - Plot (some) fine correspondences
         #       - Plot estimated TF

@@ -4,7 +4,7 @@ Utility functions for visualising HOTFormerLoc and octrees.
 Ethan Griffiths (Data61, Pullenvale)
 """
 from typing import List, Optional, Union
-import logging
+import os
 
 import numpy as np
 from numpy import ndarray
@@ -15,6 +15,8 @@ from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 import open3d as o3d
+import umap
+from scipy.spatial.transform import Rotation as R
 
 from models.octree import OctreeT
 from misc.point_clouds import make_open3d_point_cloud
@@ -169,24 +171,31 @@ def colourise_points_by_height(
     colours = colourise_points(z_values, colourmap_name=colourmap_name)
     return colours
 
-def get_colours_with_tsne(data: ndarray) -> ndarray:
+def get_colours_by_embedding_similarity(data: ndarray, mode='tsne') -> ndarray:
     r"""
     TODO: Use this func for colourisation  
-    Use t-SNE to project high-dimension feats to rgb
+    Use t-SNE/umap to project high-dimension feats to rgb
 
     Args:
         data (ndarray): (N, C)
+        mode (str): tsne or umap
 
     Returns:
         colors (ndarray): (N, 3)
     """
-    tsne = TSNE(n_components=1, perplexity=40, n_iter=300, random_state=0)
-    tsne_results = tsne.fit_transform(data).reshape(-1)
-    tsne_min = np.min(tsne_results)
-    tsne_max = np.max(tsne_results)
-    normalized_tsne_results = (tsne_results - tsne_min) / (tsne_max - tsne_min)
-    colors = plt.cm.Spectral(normalized_tsne_results)[:, :3]
-    return colors
+    mode = mode.lower()
+    assert mode in ('tsne', 'umap')
+    if mode == 'tsne':
+        proj_func = TSNE(n_components=1, perplexity=40, n_iter=300, random_state=0)
+    elif mode == 'umap':
+        proj_func = umap.UMAP(n_components=1, n_neighbors=15, min_dist=0.1, metric='euclidean')
+    proj_results = proj_func.fit_transform(data).reshape(-1)
+    proj_min = np.min(proj_results)
+    proj_max = np.max(proj_results)
+    normalized_proj_results = (proj_results - proj_min) / (proj_max - proj_min)
+    # colours = plt.cm.Spectral(normalized_proj_results)[:, :3]
+    colours = plt.cm.rainbow(normalized_proj_results)[:, :3]
+    return colours
 
 def colourise_points_by_similarity(
     embeddings: ndarray, mode: str = 'tsne', return_explained_variance=False,
@@ -197,19 +206,21 @@ def colourise_points_by_similarity(
     
     Args:
         embeddings: numpy array of shape (N, D) containing embeddings for each point
-        mode: tSNE or PCA projection
+        mode: tSNE, UMAP, or PCA projection
         return_explained_variance: if using PCA, returns explained variance of each component
     
     Returns:
         colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
     """
-    assert mode.lower() in ('tsne', 'pca'), "mode must be 'tsne' or 'pca'"
+    assert mode.lower() in ('tsne', 'pca', 'umap'), "mode must be 'tsne', 'umap', or 'pca'"
     assert embeddings.ndim == 2
     eps = 1e-8
     if mode.lower() == 'tsne':
         # NOTE: perplexity is not meant to be lower than n_samples, so may need to adjust this
         #       for shallow octree levels with only a handful of octants
-        colours = get_colours_with_tsne(embeddings)
+        colours = get_colours_by_embedding_similarity(embeddings, 'tsne')
+    elif mode.lower() == 'umap':
+        colours = get_colours_by_embedding_similarity(embeddings, 'umap')
     elif mode.lower() == 'pca':
         pca = PCA(n_components=3)
         colours = pca.fit_transform(embeddings)
@@ -237,17 +248,77 @@ def create_heatmap(values: Tensor, ticklabels: Optional[List] = None,
         ax.set_title(title)
     return fig
 
-def custom_draw_geometry_load_option(
-    vis_list: List, width=1600, height=900, fov_step=-90,
-):
+def custom_draw_geometry_with_z_rotation(vis_list: List[o3d.geometry.Geometry],
+                                         rot_step=1., width=1600, height=900,
+                                         fov_step=-90, save_dir: Optional[str] = None):
     """
-    Draw multiple open3d geometry objects in a single window.
+    Animate rotation around z axis (rot_step in degrees)
     """
+    if save_dir is not None:
+        frame_dir = os.path.join(save_dir, 'corr_frames')
+        os.makedirs(frame_dir, exist_ok=True)
+    view_json_path = os.path.join(os.path.split(__file__)[0], 'o3d_viz.json')
+    custom_draw_geometry_with_z_rotation.index = 0
+    num_steps = 360 // rot_step
+    # Assume first geometry item is point cloud - get centre for rotation
+    pcd = np.asarray(vis_list[0].points)
+    bbmin = pcd.min(axis=0)
+    bbmax = pcd.max(axis=0)
+    rot_centre = (bbmin + bbmax) * 0.5
+    # rot_centre = np.zeros((3, 1), dtype=np.float64)  # origin
+
+    def rotate_geometry(vis: o3d.visualization.Visualizer):
+        glb = custom_draw_geometry_with_z_rotation
+        if glb.index == 0:
+            ctr = vis.get_view_control()
+            ctr.change_field_of_view(step=fov_step)  # make view orthographic
+            ctr.rotate(0.0, -350.0)  # set camera angle
+            ctr.set_zoom(0.5)
+        rot = R.from_euler('z', rot_step, degrees=True).as_matrix()
+        for geom in vis_list:
+            geom.rotate(rot, rot_centre)
+            vis.update_geometry(geom)
+        # TODO: save img to file
+        if glb.index < num_steps:
+            vis.capture_screen_image(os.path.join(frame_dir, f'{glb.index:05d}.png'), True)
+            # image = vis.capture_screen_float_buffer(False)
+            # plt.imsave(os.path.join(frame_dir, f'{glb.index:05d}.png'),
+            #            np.asarray(image),
+            #            dpi=1)
+        else:  # quit after saving animation
+            vis.destroy_window()
+        glb.index += 1
+        return True
+        
     vis = o3d.visualization.Visualizer()
     vis.create_window(width=width, height=height)
     for geom in vis_list:
         vis.add_geometry(geom)
-    # vis.get_render_option().load_from_json("./render_option.json")
+    vis.get_render_option().load_from_json(view_json_path)
+    vis.register_animation_callback(rotate_geometry)
+    vis.run()
+    vis.destroy_window()
+
+def custom_draw_geometry_with_rotation(vis_list: List[o3d.geometry.Geometry]):
+    def rotate_view(vis):
+        ctr = vis.get_view_control()
+        ctr.rotate(10.0, 0.0)
+        return False
+    o3d.visualization.draw_geometries_with_animation_callback(vis_list,
+                                                              rotate_view)
+
+def custom_draw_geometry_load_option(
+    vis_list: List[o3d.geometry.Geometry], width=1600, height=900, fov_step=-90,
+):
+    """
+    Draw multiple open3d geometry objects in a single window.
+    """
+    view_json_path = os.path.join(os.path.split(__file__)[0], 'o3d_viz.json')
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(width=width, height=height)
+    for geom in vis_list:
+        vis.add_geometry(geom)
+    vis.get_render_option().load_from_json(view_json_path)
     
     # NOTE: code for changing FoV currently does nothing, so manually do it in GUI with '['and ']'
     # ctr = vis.get_view_control()
@@ -309,7 +380,7 @@ def random_non_red_colors(N):
         b = colors[:, 2]
 
         # Boolean mask to filter out red-dominant colors
-        non_red_mask = ~((r > 0.7) & (r > g + 0.2) & (r > b + 0.2))
+        non_red_mask = ~((r > 0.8) & (r > g + 0.3) & (r > b + 0.3))
 
         filtered_colors = colors[non_red_mask]
 
@@ -337,7 +408,12 @@ def visualise_correspondences(
     transform: ndarray,
     anc_point_to_node: Union[Tensor, ndarray, None] = None,
     pos_point_to_node: Union[Tensor, ndarray, None] = None,
+    anc_feats_coarse: Optional[ndarray] = None,
+    pos_feats_coarse: Optional[ndarray] = None,
     translate=[0, 0, 40],
+    plot_coarse=False,
+    coarse_colourmode: str = 'patch',
+    save_dir: Optional[str] = None
 ):
     """
     Helper function for visualising keypoint correspondences.
@@ -352,16 +428,25 @@ def visualise_correspondences(
         transform: SE(3) transform from source to target
         anc_point_to_node: Index of points belonging to each source keypoint, used for colourising by patch instead of height
         pos_point_to_node: Index of points belonging to each target keypoint, used for colourising by patch instead of height
+        anc_feats_coarse: Source feats (nodes)
+        pos_feats_coarse: Target feats (nodes)
         translate: Translation applied to target for correspondence visualisation
+        plot_coarse: Plot coarse points (patch centroids)
+        coarse_colourmode: Mode for colourising patches ('height', 'patch', 'tsne', 'umap')
+        save_dir: Directory to save plots
 
     """
+    coarse_colourmode = coarse_colourmode.lower()
+    assert coarse_colourmode in ('height', 'patch', 'tsne', 'umap')
+    if coarse_colourmode != 'height':
+        assert pos_point_to_node is not None and anc_point_to_node is not None
+    if coarse_colourmode == 'tsne':
+        assert anc_feats_coarse is not None and pos_feats_coarse is not None
     # PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     # PC_TARGET_COLOUR = [0, 0.629, 0.9]
     PC_SOURCE_COLOURMAP = 'viridis'
     PC_TARGET_COLOURMAP = 'gray'
     
-    # KP_INLIER_COLOUR = [0.87, 0, 0.84]
-    # KP_OUTLIER_COLOUR = [0.3, 0.3, 0.3]
     KP_UNUSED_COLOUR = [0.3, 0.3, 0.3]
     KP_INLIER_COLOUR = [0.0, 1.0, 0.0]
     KP_OUTLIER_COLOUR = [1.0, 0, 0]
@@ -395,12 +480,6 @@ def visualise_correspondences(
     inlier_corr = node_corr_indices[inlier_mask]
     outlier_corr = node_corr_indices[~inlier_mask]
 
-    # TODO: Filter unique correspondences, and perhaps only mutual ones? 
-    #       (although I think mutual only applies to fine corr, not coarse, need
-    #       to verify)
-    #       ANSWER: No mutual filtering. Multiple coarse corr allowed, all are 
-    #       then evaluated in LGR.
-    
     # Create lineset between correspondences
     inlier_node_corr_lineset = o3d.geometry.LineSet.create_from_point_cloud_correspondences(
         anc_points_coarse_o3d, pos_points_coarse_o3d, inlier_corr
@@ -423,24 +502,25 @@ def visualise_correspondences(
     pos_points_coarse_outliers = np.asarray(pos_points_coarse_o3d.points)[outlier_corr[:,1]]
 
     # Plot spheres for the keypoints, and change colours appropriately
-    anc_points_coarse_inliers_spheres_o3d = create_spheres(
-        anc_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_inliers_spheres_o3d = create_spheres(
-        pos_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    )
-    anc_points_coarse_outliers_spheres_o3d = create_spheres(
-        anc_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_outliers_spheres_o3d = create_spheres(
-        pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    )
-    anc_points_coarse_unused_spheres_o3d = create_spheres(
-        anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_unused_spheres_o3d = create_spheres(
-        pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    )
+    if plot_coarse:
+        anc_points_coarse_inliers_spheres_o3d = create_spheres(
+            anc_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
+        )
+        pos_points_coarse_inliers_spheres_o3d = create_spheres(
+            pos_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
+        )
+        anc_points_coarse_outliers_spheres_o3d = create_spheres(
+            anc_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
+        )
+        pos_points_coarse_outliers_spheres_o3d = create_spheres(
+            pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
+        )
+        anc_points_coarse_unused_spheres_o3d = create_spheres(
+            anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+        )
+        pos_points_coarse_unused_spheres_o3d = create_spheres(
+            pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+        )
 
     # Set colours
     ## pc_source_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
@@ -448,32 +528,41 @@ def visualise_correspondences(
     inlier_node_corr_lineset.paint_uniform_color(INLIER_CORRESPONDENCE_COLOUR)
     outlier_node_corr_lineset.paint_uniform_color(OUTLIER_CORRESPONDENCE_COLOUR)
 
-    # Colourise point clouds by z-coordinate
-    if anc_point_to_node is not None:
+    # Colourise point clouds
+    if coarse_colourmode in ('tsne', 'umap'):
+        combined_feats_coarse = np.concatenate([anc_feats_coarse, pos_feats_coarse], axis=0)
+        combined_node_colours = colourise_points_by_similarity(combined_feats_coarse, mode=coarse_colourmode)
+        anc_node_colours, pos_node_colours = np.split(combined_node_colours, [anc_feats_coarse.shape[0]], axis=0)
+    elif coarse_colourmode == 'patch':
         anc_node_colours = random_non_red_colors(anc_points_coarse.shape[0])
-        anc_points_colours = anc_node_colours[anc_point_to_node]
-    else:
-        anc_points_colours = colourise_points_by_height(np.asarray(anc_points_fine_o3d.points), PC_SOURCE_COLOURMAP)
-    if pos_point_to_node is not None:
         pos_node_colours = random_non_red_colors(pos_points_coarse.shape[0])
+    if coarse_colourmode != 'height':
+        anc_points_colours = anc_node_colours[anc_point_to_node]
         pos_points_colours = pos_node_colours[pos_point_to_node]
     else:
+        anc_points_colours = colourise_points_by_height(np.asarray(anc_points_fine_o3d.points), PC_SOURCE_COLOURMAP)
         pos_points_colours = colourise_points_by_height(np.asarray(pos_points_fine_o3d.points), PC_TARGET_COLOURMAP)
     anc_points_fine_o3d.colors = o3d.utility.Vector3dVector(anc_points_colours)
     pos_points_fine_o3d.colors = o3d.utility.Vector3dVector(pos_points_colours)    
 
-    # Add axes
-    anc_axes = make_open3d_axes(scale=2.0)
-    pos_axes = make_open3d_axes(origin=np.array([translate]), scale=2.0)
+    # # Add axes
+    # anc_axes = make_open3d_axes(scale=2.0)
+    # pos_axes = make_open3d_axes(origin=np.array([translate]), scale=2.0)
 
     # Draw all with Open3D
-    vis_list = [anc_points_fine_o3d, pos_points_fine_o3d, inlier_node_corr_lineset, outlier_node_corr_lineset,
-                *anc_points_coarse_unused_spheres_o3d, *pos_points_coarse_unused_spheres_o3d,
-                *anc_points_coarse_outliers_spheres_o3d, *pos_points_coarse_outliers_spheres_o3d,
-                *anc_points_coarse_inliers_spheres_o3d, *pos_points_coarse_inliers_spheres_o3d,
-                anc_axes, pos_axes]
+    vis_list = [anc_points_fine_o3d, pos_points_fine_o3d,
+                inlier_node_corr_lineset, outlier_node_corr_lineset,]
+                # anc_axes, pos_axes]
+    if plot_coarse:
+        vis_list.extend([
+            *anc_points_coarse_unused_spheres_o3d, *pos_points_coarse_unused_spheres_o3d,
+            *anc_points_coarse_outliers_spheres_o3d, *pos_points_coarse_outliers_spheres_o3d,
+            *anc_points_coarse_inliers_spheres_o3d, *pos_points_coarse_inliers_spheres_o3d,
+          ])
     # vis_list = [anc_points_coarse_o3d, pos_points_coarse_o3d, gt_inliers_o3d]
-    custom_draw_geometry_load_option(vis_list)
+
+    # custom_draw_geometry_load_option(vis_list)  # static  
+    custom_draw_geometry_with_z_rotation(vis_list, save_dir=save_dir)  # with rotation
 
 def visualise_registration(
     anc_points_coarse: Union[Tensor, ndarray],
@@ -500,11 +589,7 @@ def visualise_registration(
     """
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
-    # PC_SOURCE_COLOURMAP = 'viridis'
-    # PC_TARGET_COLOURMAP = 'gray'
     
-    # KP_INLIER_COLOUR = [0.87, 0, 0.84]
-    # KP_OUTLIER_COLOUR = [0.3, 0.3, 0.3]
     KP_UNUSED_COLOUR = [0.3, 0.3, 0.3]
     KP_INLIER_COLOUR = [0.0, 1.0, 0.0]
     KP_OUTLIER_COLOUR = [1.0, 0, 0]
@@ -512,7 +597,7 @@ def visualise_registration(
     INLIER_CORRESPONDENCE_COLOUR = [0, 0.9, 0.1]
     OUTLIER_CORRESPONDENCE_COLOUR = [0.9, 0.1, 0]
 
-    KP_RADIUS = 1.0
+    # KP_RADIUS = 1.0
 
     # VOXEL_SIZE = 0.6
 
@@ -549,37 +634,37 @@ def visualise_registration(
     )
 
     # Separate unused keypoints
-    anc_points_coarse_full_ndx = np.arange(len(anc_points_coarse))
-    pos_points_coarse_full_ndx = np.arange(len(pos_points_coarse))
-    anc_points_coarse_unused_indices = np.setdiff1d(anc_points_coarse_full_ndx, node_corr_indices[:,0])
-    pos_points_coarse_unused_indices = np.setdiff1d(pos_points_coarse_full_ndx, node_corr_indices[:,1])
-    anc_points_coarse_unused = np.asarray(anc_points_coarse_o3d.points)[anc_points_coarse_unused_indices]
-    pos_points_coarse_unused = np.asarray(pos_points_coarse_o3d.points)[pos_points_coarse_unused_indices]
-    # Separate inliers and outliers
-    anc_points_coarse_inliers = np.asarray(anc_points_coarse_o3d.points)[inlier_corr[:,0]]
-    pos_points_coarse_inliers = np.asarray(pos_points_coarse_o3d.points)[inlier_corr[:,1]]
-    anc_points_coarse_outliers = np.asarray(anc_points_coarse_o3d.points)[outlier_corr[:,0]]
-    pos_points_coarse_outliers = np.asarray(pos_points_coarse_o3d.points)[outlier_corr[:,1]]
+    # anc_points_coarse_full_ndx = np.arange(len(anc_points_coarse))
+    # pos_points_coarse_full_ndx = np.arange(len(pos_points_coarse))
+    # anc_points_coarse_unused_indices = np.setdiff1d(anc_points_coarse_full_ndx, node_corr_indices[:,0])
+    # pos_points_coarse_unused_indices = np.setdiff1d(pos_points_coarse_full_ndx, node_corr_indices[:,1])
+    # anc_points_coarse_unused = np.asarray(anc_points_coarse_o3d.points)[anc_points_coarse_unused_indices]
+    # pos_points_coarse_unused = np.asarray(pos_points_coarse_o3d.points)[pos_points_coarse_unused_indices]
+    # # Separate inliers and outliers
+    # anc_points_coarse_inliers = np.asarray(anc_points_coarse_o3d.points)[inlier_corr[:,0]]
+    # pos_points_coarse_inliers = np.asarray(pos_points_coarse_o3d.points)[inlier_corr[:,1]]
+    # anc_points_coarse_outliers = np.asarray(anc_points_coarse_o3d.points)[outlier_corr[:,0]]
+    # pos_points_coarse_outliers = np.asarray(pos_points_coarse_o3d.points)[outlier_corr[:,1]]
 
-    # Plot spheres for the keypoints, and change colours appropriately
-    anc_points_coarse_inliers_spheres_o3d = create_spheres(
-        anc_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_inliers_spheres_o3d = create_spheres(
-        pos_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    )
-    anc_points_coarse_outliers_spheres_o3d = create_spheres(
-        anc_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_outliers_spheres_o3d = create_spheres(
-        pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    )
-    anc_points_coarse_unused_spheres_o3d = create_spheres(
-        anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    )
-    pos_points_coarse_unused_spheres_o3d = create_spheres(
-        pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    )
+    # # Plot spheres for the keypoints, and change colours appropriately
+    # anc_points_coarse_inliers_spheres_o3d = create_spheres(
+    #     anc_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
+    # )
+    # pos_points_coarse_inliers_spheres_o3d = create_spheres(
+    #     pos_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
+    # )
+    # anc_points_coarse_outliers_spheres_o3d = create_spheres(
+    #     anc_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
+    # )
+    # pos_points_coarse_outliers_spheres_o3d = create_spheres(
+    #     pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
+    # )
+    # anc_points_coarse_unused_spheres_o3d = create_spheres(
+    #     anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+    # )
+    # pos_points_coarse_unused_spheres_o3d = create_spheres(
+    #     pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+    # )
 
     # Set colours
     ## pc_source_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
