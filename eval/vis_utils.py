@@ -124,7 +124,7 @@ def get_rt_boundary_idx(
         return rt_boundary_idx, rt_boundary_idx_cumsum
 
 def colourise_points(
-    values: ndarray, colourmap_name='viridis',
+    values: ndarray, colourmap_name='viridis', normalise=True,
 ) -> ndarray:
     """
     Colourise a point cloud based on scalar values using a matplotlib colourmap.
@@ -132,22 +132,24 @@ def colourise_points(
     Args:
         values: numpy array of shape (N, 1) containing scalar values to colourise each point by
         colourmap_name: name of the matplotlib colourmap to use (default: 'viridis')
+        normalise: normalise values before applying colourmap
     
     Returns:
         colours: numpy array of shape (N, 3) containing RGB values in range [0, 1]
     """
-    # Normalize values to range [0, 1]
-    if np.max(values) > np.min(values):
-        normalised = (values - np.min(values)) / (np.max(values) - np.min(values))
-    else:
-        # Handle the case where all points have the same value
-        normalised = np.zeros_like(values)
+    # Normalise values to range [0, 1]
+    if normalise:
+        if np.max(values) > np.min(values):
+            values = (values - np.min(values)) / (np.max(values) - np.min(values))
+        else:
+            # Handle the case where all points have the same value
+            values = np.zeros_like(values)
     
     # Get the colormap from matplotlib
     cmap = plt.get_cmap(colourmap_name)
     
     # Convert normalized values to colors
-    colours = cmap(normalised)[:, :3]  # Only take RGB, discard alpha
+    colours = cmap(values)[:, :3]  # Only take RGB, discard alpha
     return colours
 
 def colourise_points_by_height(
@@ -233,8 +235,12 @@ def colourise_points_by_similarity(
         return colours, pca_explained_variance
     return colours
 
-def create_heatmap(values: Tensor, ticklabels: Optional[List] = None,
-                   min_value: Optional[float] = None, title: Optional[str] = None) -> plt.Figure:
+def create_heatmap(
+    values: Tensor,
+    ticklabels: Optional[List] = None,
+    min_value: Optional[float] = None,
+    title: Optional[str] = None,
+) -> plt.Figure:
     CMAP = 'viridis'
     vmin = None
     if ticklabels is None:
@@ -248,15 +254,51 @@ def create_heatmap(values: Tensor, ticklabels: Optional[List] = None,
         ax.set_title(title)
     return fig
 
-def custom_draw_geometry_with_z_rotation(vis_list: List[o3d.geometry.Geometry],
-                                         rot_step=1., width=1600, height=900,
-                                         fov_step=-90, save_dir: Optional[str] = None):
+def set_view_control(vis: o3d.visualization.Visualizer, fov_step=-90, zoom=0.55):
+    """
+    Set default viewpoint for open3d Visualizer (orthographic view, 35 deg angle).
+    """
+    ctr = vis.get_view_control()
+    ctr.change_field_of_view(step=fov_step)  # make view orthographic
+    ctr.rotate(0.0, -380.0)  # set camera angle (~38deg)
+    ctr.set_zoom(zoom)
+
+def set_initial_rotation(
+    vis: o3d.visualization.Visualizer,
+    vis_list: List[o3d.geometry.Geometry],
+    rotation: float = 45.0,
+):
+    """
+    Set initial z rotation of geometries
+    """
+    # Assume first geometry item is point cloud - get centre for rotation
+    # NOTE: use this instead of origin to ensure viewing window stays more consistent
+    pcd = np.asarray(vis_list[0].points)
+    bbmin = pcd.min(axis=0)
+    bbmax = pcd.max(axis=0)
+    rot_centre = (bbmin + bbmax) * 0.5
+    # rot_centre = np.zeros((3, 1), dtype=np.float64)  # origin
+    rotation_matrix = R.from_euler('z', rotation, degrees=True).as_matrix()
+
+    # Set rotation
+    for geom in vis_list:
+        geom.rotate(rotation_matrix, rot_centre)
+        vis.update_geometry(geom)
+
+def custom_draw_geometry_with_z_rotation(
+    vis_list: List[o3d.geometry.Geometry],
+    rot_step=1.0,
+    width=1600,
+    height=900,
+    fov_step=-90,
+    zoom=0.55,
+    save_dir: Optional[str] = None,
+):
     """
     Animate rotation around z axis (rot_step in degrees)
     """
     if save_dir is not None:
-        frame_dir = os.path.join(save_dir, 'corr_frames')
-        os.makedirs(frame_dir, exist_ok=True)
+        os.makedirs(save_dir, exist_ok=True)
     view_json_path = os.path.join(os.path.split(__file__)[0], 'o3d_viz.json')
     custom_draw_geometry_with_z_rotation.index = 0
     num_steps = 360 // rot_step
@@ -270,23 +312,22 @@ def custom_draw_geometry_with_z_rotation(vis_list: List[o3d.geometry.Geometry],
     def rotate_geometry(vis: o3d.visualization.Visualizer):
         glb = custom_draw_geometry_with_z_rotation
         if glb.index == 0:
-            ctr = vis.get_view_control()
-            ctr.change_field_of_view(step=fov_step)  # make view orthographic
-            ctr.rotate(0.0, -350.0)  # set camera angle
-            ctr.set_zoom(0.5)
+            set_view_control(vis, fov_step, zoom)
+            set_initial_rotation(vis, vis_list)
         rot = R.from_euler('z', rot_step, degrees=True).as_matrix()
         for geom in vis_list:
             geom.rotate(rot, rot_centre)
             vis.update_geometry(geom)
         # TODO: save img to file
-        if glb.index < num_steps:
-            vis.capture_screen_image(os.path.join(frame_dir, f'{glb.index:05d}.png'), True)
-            # image = vis.capture_screen_float_buffer(False)
-            # plt.imsave(os.path.join(frame_dir, f'{glb.index:05d}.png'),
-            #            np.asarray(image),
-            #            dpi=1)
-        else:  # quit after saving animation
-            vis.destroy_window()
+        if save_dir is not None:
+            if glb.index < num_steps:
+                vis.capture_screen_image(os.path.join(save_dir, f'{glb.index:05d}.png'), True)
+                # image = vis.capture_screen_float_buffer(False)
+                # plt.imsave(os.path.join(frame_dir, f'{glb.index:05d}.png'),
+                #            np.asarray(image),
+                #            dpi=1)
+            else:  # quit after saving animation
+                vis.destroy_window()
         glb.index += 1
         return True
         
@@ -308,23 +349,39 @@ def custom_draw_geometry_with_rotation(vis_list: List[o3d.geometry.Geometry]):
                                                               rotate_view)
 
 def custom_draw_geometry_load_option(
-    vis_list: List[o3d.geometry.Geometry], width=1600, height=900, fov_step=-90,
+    vis_list: List[o3d.geometry.Geometry],
+    width=1600,
+    height=900,
+    fov_step=-90,
+    zoom=0.55,
+    save_dir: Optional[str] = None,
+    filename: str = 'frame',
+    non_interactive=False,
 ):
     """
     Draw multiple open3d geometry objects in a single window.
     """
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+    custom_draw_geometry_load_option.index = 0
+    def viz_callback(vis: o3d.visualization.Visualizer):
+        glb = custom_draw_geometry_load_option
+        if glb.index == 0:
+            set_view_control(vis, fov_step, zoom)
+            set_initial_rotation(vis, vis_list)
+            if save_dir is not None:
+                vis.capture_screen_image(os.path.join(save_dir, f'{filename}.png'), True)
+            if non_interactive:
+                vis.destroy_window()
+        glb.index += 1
+        return False
     view_json_path = os.path.join(os.path.split(__file__)[0], 'o3d_viz.json')
     vis = o3d.visualization.Visualizer()
     vis.create_window(width=width, height=height)
     for geom in vis_list:
         vis.add_geometry(geom)
     vis.get_render_option().load_from_json(view_json_path)
-    
-    # NOTE: code for changing FoV currently does nothing, so manually do it in GUI with '['and ']'
-    # ctr = vis.get_view_control()
-    # print("Field of view (before changing) %.2f" % ctr.get_field_of_view())
-    # ctr.change_field_of_view(step=fov_step)  # min fov is 5 deg, so a step of -90 will automatically step to the min fov
-    # print("Field of view (after changing) %.2f" % ctr.get_field_of_view())
+    vis.register_animation_callback(viz_callback)
     vis.run()
     vis.destroy_window()
 
@@ -398,7 +455,7 @@ def isin_rowwise(arr1: ndarray, arr2: ndarray):
     arr2_view = arr2.view([('', arr2.dtype)] * arr2.shape[1])
     return np.isin(arr1_view, arr2_view)[:,0]
 
-def visualise_correspondences(
+def visualise_coarse_correspondences(
     anc_points_coarse: Union[Tensor, ndarray],
     pos_points_coarse: Union[Tensor, ndarray],
     anc_points_fine: Union[Tensor, ndarray],
@@ -413,7 +470,9 @@ def visualise_correspondences(
     translate=[0, 0, 40],
     plot_coarse=False,
     coarse_colourmode: str = 'patch',
-    save_dir: Optional[str] = None
+    save_dir: Optional[str] = None,
+    disable_animation=False,
+    non_interactive=False,
 ):
     """
     Helper function for visualising keypoint correspondences.
@@ -434,13 +493,13 @@ def visualise_correspondences(
         plot_coarse: Plot coarse points (patch centroids)
         coarse_colourmode: Mode for colourising patches ('height', 'patch', 'tsne', 'umap')
         save_dir: Directory to save plots
-
+        disable_animation: Disables animation
     """
     coarse_colourmode = coarse_colourmode.lower()
     assert coarse_colourmode in ('height', 'patch', 'tsne', 'umap')
     if coarse_colourmode != 'height':
         assert pos_point_to_node is not None and anc_point_to_node is not None
-    if coarse_colourmode == 'tsne':
+    if coarse_colourmode in ('tsne', 'umap'):
         assert anc_feats_coarse is not None and pos_feats_coarse is not None
     # PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     # PC_TARGET_COLOUR = [0, 0.629, 0.9]
@@ -561,116 +620,250 @@ def visualise_correspondences(
           ])
     # vis_list = [anc_points_coarse_o3d, pos_points_coarse_o3d, gt_inliers_o3d]
 
-    # custom_draw_geometry_load_option(vis_list)  # static  
-    custom_draw_geometry_with_z_rotation(vis_list, save_dir=save_dir)  # with rotation
+    if disable_animation:
+        custom_draw_geometry_load_option(  # static
+            vis_list,
+            save_dir=save_dir,
+            filename=f'coarse_corr_{coarse_colourmode}',
+            non_interactive=non_interactive,
+        )
+    else:
+        custom_draw_geometry_with_z_rotation(
+            vis_list, save_dir=os.path.join(save_dir, 'coarse_corr_frames')
+        )  # with rotation
 
-def visualise_registration(
-    anc_points_coarse: Union[Tensor, ndarray],
-    pos_points_coarse: Union[Tensor, ndarray],
+
+def visualise_fine_correspondences(
     anc_points_fine: Union[Tensor, ndarray],
     pos_points_fine: Union[Tensor, ndarray],
-    node_corr_indices: ndarray,
-    gt_node_corr_indices: ndarray,
+    anc_corr_points: Union[Tensor, ndarray],
+    pos_corr_points: Union[Tensor, ndarray],
+    corr_scores: ndarray,
     transform: ndarray,
+    score_threshold: float = 0.0,
+    anc_feats_fine: Optional[ndarray] = None,
+    pos_feats_fine: Optional[ndarray] = None,
+    translate=[0, 0, 40],
+    colourmode: str = 'umap',
+    save_dir: Optional[str] = None,
+    disable_animation=False,
+    non_interactive=False,
 ):
     """
-    WARNING: UNFINISHED
+    Helper function for visualising fine correspondences.
+
+    Args:
+        anc_points_fine: Source points
+        pos_points_fine: Target points
+        anc_corr_points: Source point correspondences
+        pos_corr_points: Target point correspondences
+        corr_scores: Correspondence scores
+        transform: SE(3) transform from source to target
+        score_threshold: threshold to filter correspondences with score less than threshold
+        anc_feats_fine: Source feats
+        pos_feats_fine: Target feats
+        translate: Translation applied to target for correspondence visualisation
+        plot_coarse: Plot coarse points (patch centroids)
+        colourmode: Mode for colourising patches ('height', 'tsne', 'umap')
+        save_dir: Directory to save plots
+        disable_animation: Disables animation
+    """
+    colourmode = colourmode.lower()
+    assert colourmode in ('height', 'tsne', 'umap')
+    if colourmode in ('tsne', 'umap'):
+        assert anc_feats_fine is not None and pos_feats_fine is not None
+
+    PC_SOURCE_COLOURMAP = 'viridis'
+    PC_TARGET_COLOURMAP = 'gray'
+    PC_SOURCE_COLOUR = [1, 0.7, 0.05]
+    PC_TARGET_COLOUR = [0, 0.629, 0.9]
+    # CORRESPONDENCE_COLOURMAP = 'coolwarm'
+    CORRESPONDENCE_COLOURMAP = 'RdYlGn'
+
+    # VOXEL_SIZE = 0.6
+
+    # Filter low confidence correspondences
+    score_mask = corr_scores >= score_threshold
+    corr_scores = corr_scores[score_mask]
+    anc_corr_points = anc_corr_points[score_mask]
+    pos_corr_points = pos_corr_points[score_mask]
+
+    anc_points_fine_o3d = make_open3d_point_cloud(anc_points_fine)
+    pos_points_fine_o3d = make_open3d_point_cloud(pos_points_fine)
+    anc_corr_points_o3d = make_open3d_point_cloud(anc_corr_points)
+    pos_corr_points_o3d = make_open3d_point_cloud(pos_corr_points)
+
+    # Align point clouds with gt transform
+    anc_points_fine_o3d.transform(transform)
+    anc_corr_points_o3d.transform(transform)
+    
+    # Manually add offset to positive for ease of visualisation
+    pos_points_fine_o3d.translate(translate)
+    pos_corr_points_o3d.translate(translate)
+
+    # # Downsample point clouds for ease of visualisation
+    # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
+    # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
+
+    # Create lineset between correspondences
+    assert len(anc_corr_points) == len(pos_corr_points)
+    corr_indices = [(i, i) for i in range(len(anc_corr_points))]
+    corr_points_lineset = o3d.geometry.LineSet.create_from_point_cloud_correspondences(
+        anc_corr_points_o3d, pos_corr_points_o3d, corr_indices,
+    )
+
+    # Set colours
+    # inlier_node_corr_lineset.paint_uniform_color(INLIER_CORRESPONDENCE_COLOUR)
+    # outlier_node_corr_lineset.paint_uniform_color(OUTLIER_CORRESPONDENCE_COLOUR)
+
+    # Colourise correspondences by scores
+    corr_points_lineset.colors = o3d.utility.Vector3dVector(
+        colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=False)
+    )
+
+    # Colourise point clouds
+    if colourmode in ('tsne', 'umap'):
+        combined_feats_fine = np.concatenate([anc_feats_fine, pos_feats_fine], axis=0)
+        combined_points_fine_colours = colourise_points_by_similarity(combined_feats_fine, mode=colourmode)
+        anc_points_fine_colours, pos_points_fine_colours = np.split(
+            combined_points_fine_colours, [anc_feats_fine.shape[0]], axis=0,
+        )
+    else:
+        anc_points_fine_colours = colourise_points_by_height(np.asarray(anc_points_fine_o3d.points), PC_SOURCE_COLOURMAP)
+        pos_points_fine_colours = colourise_points_by_height(np.asarray(pos_points_fine_o3d.points), PC_TARGET_COLOURMAP)
+    anc_points_fine_o3d.colors = o3d.utility.Vector3dVector(anc_points_fine_colours)
+    pos_points_fine_o3d.colors = o3d.utility.Vector3dVector(pos_points_fine_colours)    
+
+    # # Solid colours
+    # anc_points_fine_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
+    # pos_points_fine_o3d.paint_uniform_color(PC_TARGET_COLOUR)
+    anc_corr_points_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
+    pos_corr_points_o3d.paint_uniform_color(PC_TARGET_COLOUR)
+
+    # Draw all with Open3D
+    vis_list = [
+        anc_points_fine_o3d, pos_points_fine_o3d,
+        # anc_corr_points_o3d, pos_corr_points_o3d,
+        corr_points_lineset,
+    ]
+
+    if disable_animation:
+        custom_draw_geometry_load_option(  # static
+            vis_list,
+            save_dir=save_dir,
+            filename=f'fine_corr_{colourmode}',
+            non_interactive=non_interactive,
+        )
+    else:
+        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'fine_corr_frames'))  # with rotation
+
+
+def visualise_similarity(
+    anc_points_fine: Union[Tensor, ndarray],
+    pos_points_fine: Union[Tensor, ndarray],
+    transform: ndarray,
+    anc_point_to_node: Union[Tensor, ndarray],
+    pos_point_to_node: Union[Tensor, ndarray],
+    anc_feats_coarse: ndarray,
+    pos_feats_coarse: ndarray,
+    translate=[0, 0, 40],
+    coarse_colourmode: str = 'patch',
+    save_dir: Optional[str] = None,
+    disable_animation=False,
+    non_interactive=False,
+):
+    """
+    Helper function for visualising similarity of point cloud features
+
+    Args:
+        anc_points_fine: Source points
+        pos_points_fine: Target Points
+        transform: SE(3) transform from source to target
+        anc_point_to_node: Index of points belonging to each source keypoint, used for colourising points by their patch feature
+        pos_point_to_node: Index of points belonging to each target keypoint, used for colourising points by their patch feature
+        anc_feats_coarse: Source feats (nodes)
+        pos_feats_coarse: Target feats (nodes)
+        translate: Translation applied to target for correspondence visualisation
+        coarse_colourmode: Mode for colourising patches ('tsne', 'umap')
+        save_dir: Directory to save plots
+        disable_animation: Disables animation
+    """
+    coarse_colourmode = coarse_colourmode.lower()
+    assert coarse_colourmode in ('tsne', 'umap')
+    # VOXEL_SIZE = 0.6
+
+    anc_points_fine_o3d = make_open3d_point_cloud(anc_points_fine)
+    pos_points_fine_o3d = make_open3d_point_cloud(pos_points_fine)
+
+    # Align point clouds with gt transform
+    anc_points_fine_o3d.transform(transform)
+    
+    # Manually add offset to positive for ease of visualisation
+    pos_points_fine_o3d.translate(translate)
+
+    # # Downsample point clouds for ease of visualisation
+    # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
+    # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
+
+    # Colourise point clouds
+    if coarse_colourmode in ('tsne', 'umap'):
+        combined_feats_coarse = np.concatenate([anc_feats_coarse, pos_feats_coarse], axis=0)
+        combined_node_colours = colourise_points_by_similarity(combined_feats_coarse, mode=coarse_colourmode)
+        anc_node_colours, pos_node_colours = np.split(combined_node_colours, [anc_feats_coarse.shape[0]], axis=0)
+    anc_points_colours = anc_node_colours[anc_point_to_node]
+    pos_points_colours = pos_node_colours[pos_point_to_node]
+    anc_points_fine_o3d.colors = o3d.utility.Vector3dVector(anc_points_colours)
+    pos_points_fine_o3d.colors = o3d.utility.Vector3dVector(pos_points_colours)    
+
+    # Draw all with Open3D
+    vis_list = [anc_points_fine_o3d, pos_points_fine_o3d,]
+
+    if disable_animation:
+        custom_draw_geometry_load_option(  # static
+            vis_list,
+            save_dir=save_dir,
+            filename=f'coarse_sim_{coarse_colourmode}',
+            non_interactive=non_interactive,
+        )
+    else:
+        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'coarse_sim_frames'))  # with rotation
+
+
+def visualise_registration(
+    anc_points_fine: Union[Tensor, ndarray],
+    pos_points_fine: Union[Tensor, ndarray],
+    transform: ndarray,
+    save_dir: Optional[str] = None,
+    non_interactive=False,
+):
+    """
     Helper function for visualising registration.
 
     Args:
-        anc_points_coarse: Source keypoints (nodes)
-        pos_points_coarse: Target keypoints (nodes)
         anc_points_fine: Source points
         pos_points_fine: Target Points
-        node_corr_indices: Node correspondences
-        gt_node_corr_indices: Ground truth node correspondences
         transform: SE(3) transform from source to target
+        save_dir: Directory to save plots
 
     """
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
-    
-    KP_UNUSED_COLOUR = [0.3, 0.3, 0.3]
-    KP_INLIER_COLOUR = [0.0, 1.0, 0.0]
-    KP_OUTLIER_COLOUR = [1.0, 0, 0]
-    
-    INLIER_CORRESPONDENCE_COLOUR = [0, 0.9, 0.1]
-    OUTLIER_CORRESPONDENCE_COLOUR = [0.9, 0.1, 0]
-
-    # KP_RADIUS = 1.0
 
     # VOXEL_SIZE = 0.6
 
     anc_points_fine_o3d = make_open3d_point_cloud(anc_points_fine)
     pos_points_fine_o3d = make_open3d_point_cloud(pos_points_fine)
-    anc_points_coarse_o3d = make_open3d_point_cloud(anc_points_coarse)
-    pos_points_coarse_o3d = make_open3d_point_cloud(pos_points_coarse)
 
     # Align point clouds with gt transform
     anc_points_fine_o3d.transform(transform)
-    anc_points_coarse_o3d.transform(transform)
     
     # # Downsample point clouds for ease of visualisation
     # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
     # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
 
-    # Filter inlier correspondences
-    inlier_mask = isin_rowwise(node_corr_indices, gt_node_corr_indices)
-    inlier_corr = node_corr_indices[inlier_mask]
-    outlier_corr = node_corr_indices[~inlier_mask]
-
-    # TODO: Filter unique correspondences, and perhaps only mutual ones? 
-    #       (although I think mutual only applies to fine corr, not coarse, need
-    #       to verify)
-    #       ANSWER: No mutual filtering. Multiple coarse corr allowed, all are 
-    #       then evaluated in LGR.
-    
-    # Create lineset between correspondences
-    inlier_node_corr_lineset = o3d.geometry.LineSet.create_from_point_cloud_correspondences(
-        anc_points_coarse_o3d, pos_points_coarse_o3d, inlier_corr
-    )
-    outlier_node_corr_lineset = o3d.geometry.LineSet.create_from_point_cloud_correspondences(
-        anc_points_coarse_o3d, pos_points_coarse_o3d, outlier_corr
-    )
-
-    # Separate unused keypoints
-    # anc_points_coarse_full_ndx = np.arange(len(anc_points_coarse))
-    # pos_points_coarse_full_ndx = np.arange(len(pos_points_coarse))
-    # anc_points_coarse_unused_indices = np.setdiff1d(anc_points_coarse_full_ndx, node_corr_indices[:,0])
-    # pos_points_coarse_unused_indices = np.setdiff1d(pos_points_coarse_full_ndx, node_corr_indices[:,1])
-    # anc_points_coarse_unused = np.asarray(anc_points_coarse_o3d.points)[anc_points_coarse_unused_indices]
-    # pos_points_coarse_unused = np.asarray(pos_points_coarse_o3d.points)[pos_points_coarse_unused_indices]
-    # # Separate inliers and outliers
-    # anc_points_coarse_inliers = np.asarray(anc_points_coarse_o3d.points)[inlier_corr[:,0]]
-    # pos_points_coarse_inliers = np.asarray(pos_points_coarse_o3d.points)[inlier_corr[:,1]]
-    # anc_points_coarse_outliers = np.asarray(anc_points_coarse_o3d.points)[outlier_corr[:,0]]
-    # pos_points_coarse_outliers = np.asarray(pos_points_coarse_o3d.points)[outlier_corr[:,1]]
-
-    # # Plot spheres for the keypoints, and change colours appropriately
-    # anc_points_coarse_inliers_spheres_o3d = create_spheres(
-    #     anc_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    # )
-    # pos_points_coarse_inliers_spheres_o3d = create_spheres(
-    #     pos_points_coarse_inliers, color=KP_INLIER_COLOUR, radius=KP_RADIUS,
-    # )
-    # anc_points_coarse_outliers_spheres_o3d = create_spheres(
-    #     anc_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    # )
-    # pos_points_coarse_outliers_spheres_o3d = create_spheres(
-    #     pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
-    # )
-    # anc_points_coarse_unused_spheres_o3d = create_spheres(
-    #     anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    # )
-    # pos_points_coarse_unused_spheres_o3d = create_spheres(
-    #     pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-    # )
-
     # Set colours
     ## pc_source_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
     ## pc_target_o3d.paint_uniform_color(PC_TARGET_COLOUR)
-    inlier_node_corr_lineset.paint_uniform_color(INLIER_CORRESPONDENCE_COLOUR)
-    outlier_node_corr_lineset.paint_uniform_color(OUTLIER_CORRESPONDENCE_COLOUR)
 
     anc_points_fine_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
     pos_points_fine_o3d.paint_uniform_color(PC_TARGET_COLOUR)
@@ -682,10 +875,73 @@ def visualise_registration(
 
     # Draw all with Open3D
     vis_list = [anc_points_fine_o3d, pos_points_fine_o3d,
-                # inlier_node_corr_lineset, outlier_node_corr_lineset,
-                # *anc_points_coarse_unused_spheres_o3d, *pos_points_coarse_unused_spheres_o3d,
-                # *anc_points_coarse_outliers_spheres_o3d, *pos_points_coarse_outliers_spheres_o3d,
-                # *anc_points_coarse_inliers_spheres_o3d, *pos_points_coarse_inliers_spheres_o3d,
                 anc_axes]
-    # vis_list = [anc_points_coarse_o3d, pos_points_coarse_o3d, gt_inliers_o3d]
-    custom_draw_geometry_load_option(vis_list)
+    custom_draw_geometry_load_option(
+        vis_list,
+        save_dir=save_dir,
+        filename='registration',
+        non_interactive=non_interactive,
+    )
+
+def visualise_LGR_initial_registration(
+    anc_corr_points: Union[Tensor, ndarray],
+    pos_corr_points: Union[Tensor, ndarray],
+    transform: ndarray,
+    translate=[0, 0, 0],
+    save_dir: Optional[str] = None,
+    non_interactive=False,
+):
+    """
+    Helper function for visualising fine correspondences.
+
+    Args:
+        anc_corr_points: Source point correspondences
+        pos_corr_points: Target point correspondences
+        transform: SE(3) transform from source to target
+        save_dir: Directory to save plots
+    """
+    PC_SOURCE_COLOUR = [1, 0.7, 0.05]
+    PC_TARGET_COLOUR = [0, 0.629, 0.9]
+    CORRESPONDENCE_COLOUR = [0, 1.0, 0]
+
+    # VOXEL_SIZE = 0.6
+    anc_corr_points_o3d = make_open3d_point_cloud(anc_corr_points)
+    pos_corr_points_o3d = make_open3d_point_cloud(pos_corr_points)
+
+    # Align point clouds with transform
+    anc_corr_points_o3d.transform(transform)
+
+    # Manually add offset to positive for ease of visualisation
+    pos_corr_points_o3d.translate(translate)
+
+    # Create lineset between correspondences
+    assert len(anc_corr_points) == len(pos_corr_points)
+    corr_indices = [(i, i) for i in range(len(anc_corr_points))]
+    corr_points_lineset = o3d.geometry.LineSet.create_from_point_cloud_correspondences(
+        anc_corr_points_o3d, pos_corr_points_o3d, corr_indices,
+    )
+
+    # Set colours
+    corr_points_lineset.paint_uniform_color(CORRESPONDENCE_COLOUR)
+
+    # # Colourise correspondences by scores
+    # corr_points_lineset.colors = o3d.utility.Vector3dVector(
+    #     colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=False)
+    # )
+
+    # # Solid colours
+    anc_corr_points_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
+    pos_corr_points_o3d.paint_uniform_color(PC_TARGET_COLOUR)
+
+    # Draw all with Open3D
+    vis_list = [
+        anc_corr_points_o3d, pos_corr_points_o3d,
+        corr_points_lineset,
+    ]
+
+    custom_draw_geometry_load_option(
+        vis_list,
+        save_dir=save_dir,
+        filename='registration_LGR_initial_corr',
+        non_interactive=non_interactive,
+    )

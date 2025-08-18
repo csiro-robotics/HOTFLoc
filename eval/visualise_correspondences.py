@@ -9,7 +9,14 @@ import numpy as np
 import torch
 
 from dataset.dataset_utils import make_dataloaders
-from eval.vis_utils import colourise_points_by_similarity, visualise_correspondences, visualise_registration
+from eval.vis_utils import (
+    colourise_points_by_similarity,
+    visualise_coarse_correspondences,
+    visualise_fine_correspondences,
+    visualise_registration,
+    visualise_LGR_initial_registration,
+    visualise_similarity,
+)
 from models.model_factory import model_factory
 from models.losses.geotransformer_loss import Evaluator
 from misc.torch_utils import set_seed, release_cuda, to_device
@@ -74,15 +81,18 @@ def main():
         if args.failures and eval_metrics['RR'] > 0:
             continue
 
-        # TODO: - Plot point_to_node groupings
         anc_points_coarse = release_cuda(output_dict['anc_points_coarse'])
         anc_points_fine = release_cuda(output_dict['anc_points_fine'])
         anc_point_to_node = release_cuda(output_dict['anc_point_to_node'])
         anc_feats_coarse = release_cuda(output_dict['anc_feats_coarse'], to_numpy=True)
+        anc_feats_coarse_pre_refinement = release_cuda(output_dict['anc_feats_coarse_pre_refinement'], to_numpy=True)
+        anc_feats_fine = release_cuda(output_dict['anc_feats_fine'], to_numpy=True)
         pos_points_coarse = release_cuda(output_dict['pos_points_coarse'], to_numpy=True)
         pos_points_fine = release_cuda(output_dict['pos_points_fine'])
         pos_point_to_node = release_cuda(output_dict['pos_point_to_node'])
         pos_feats_coarse = release_cuda(output_dict['pos_feats_coarse'])
+        pos_feats_coarse_pre_refinement = release_cuda(output_dict['pos_feats_coarse_pre_refinement'], to_numpy=True)
+        pos_feats_fine = release_cuda(output_dict['pos_feats_fine'])
         gt_node_corr_indices = release_cuda(output_dict['gt_node_corr_indices'])
         gt_node_corr_overlaps = release_cuda(output_dict['gt_node_corr_overlaps'])  # NOTE: Only averaged on non-zero overlap patches
         anc_node_corr_indices = release_cuda(output_dict['anc_node_corr_indices'])
@@ -92,7 +102,14 @@ def main():
         pos_node_corr_knn_masks = release_cuda(output_dict['pos_node_corr_knn_masks'])
         anc_corr_points = release_cuda(output_dict['anc_corr_points'])
         pos_corr_points = release_cuda(output_dict['pos_corr_points'])
-        corr_scores = release_cuda(output_dict['corr_scores'])
+        best_anc_corr_points = release_cuda(output_dict['best_anc_corr_points'])
+        best_anc_corr_points = best_anc_corr_points[torch.nonzero(best_anc_corr_points)[:,0].unique()]
+        best_pos_corr_points = release_cuda(output_dict['best_pos_corr_points'])
+        best_pos_corr_points = best_pos_corr_points[torch.nonzero(best_pos_corr_points)[:,0].unique()]
+        T_best_corr = release_cuda(output_dict['best_corr_transform'])
+        matching_scores = release_cuda(output_dict['matching_scores'], to_numpy=True)
+        corr_scores = release_cuda(output_dict['corr_scores'], to_numpy=True)
+        num_corr_points = np.array(output_dict['num_corr_points'])
         T_gt = release_cuda(local_batch['transform'][0])
         T_estimated = release_cuda(output_dict['estimated_transform'])
 
@@ -105,11 +122,14 @@ def main():
         
         # Print metrics as well
 
-        log_str += f'mean pts per patch: {num_points_per_patch.mean():.1f} (±{num_points_per_patch.std():.1f})'
-        log_str += f' -- mean patch overlap: {gt_node_corr_overlaps.mean()*100:.1f}% (±{gt_node_corr_overlaps.std()*100:.1f}%)'
-        log_str += f' -- pos dist: {pos_dist:.2f}m'
+        log_str += f'pos dist: {pos_dist:.2f}m'
         log_str += f' -- RTE: {eval_metrics['RTE']:.2f}m -- RRE: {eval_metrics['RRE']:.2f}deg'
         log_str += f' -- Coarse IR: {eval_metrics['PIR']*100:.1f}% -- Fine IR: {eval_metrics['IR']*100:.1f}%'
+        log_str += f' -- mean pts per patch: {num_points_per_patch.mean():.1f} (±{num_points_per_patch.std():.1f})'
+        log_str += f' -- mean patch overlap: {gt_node_corr_overlaps.mean()*100:.1f}% (±{gt_node_corr_overlaps.std()*100:.1f}%)'
+        log_str += f' -- num corr patches (after OT): {len(num_corr_points)}'
+        log_str += f' -- mean corr pts per patch: {num_corr_points.mean():.1f} (±{num_corr_points.std():.1f})'
+        log_str += f' -- mean corr score: {corr_scores.mean():.3f} (±{corr_scores.std():.3f})'
 
         print(log_str, flush=True)
 
@@ -118,19 +138,7 @@ def main():
             save_dir_ii = os.path.join(args.save_dir, f'{ii}')
             os.makedirs(save_dir_ii, exist_ok=True)
 
-        # draw_point_to_node(
-        #     release_cuda(output_dict["anc_points_fine"], to_numpy=True),
-        #     release_cuda(output_dict["anc_points_coarse"], to_numpy=True),
-        #     release_cuda(output_dict["anc_point_to_node"], to_numpy=True),
-        #     save_basepath=os.path.join(f'{save_filename}', 'coarse'),
-        #     viz=True,
-        # )
-        
-        # TODO: get corr indices in valid format (perhaps filter by unique indices), and also plot estimated corr indices `node_corr_indices`
-
-        # TODO: add param to disable animation + saving
-        # Ground truth
-        visualise_correspondences(
+        visualise_coarse_correspondences(
             anc_points_coarse=anc_points_coarse,
             pos_points_coarse=pos_points_coarse,
             anc_points_fine=anc_points_fine,
@@ -147,19 +155,63 @@ def main():
             # coarse_colourmode='tsne',
             coarse_colourmode='umap',
             save_dir=save_dir_ii,
+            disable_animation=args.disable_animation,
+            non_interactive=args.non_interactive,
         )
 
+        visualise_similarity(
+            anc_points_fine=anc_points_fine,
+            pos_points_fine=pos_points_fine,
+            transform=T_gt.numpy(),
+            anc_point_to_node=anc_point_to_node,
+            pos_point_to_node=pos_point_to_node,
+            anc_feats_coarse=anc_feats_coarse_pre_refinement,
+            pos_feats_coarse=pos_feats_coarse_pre_refinement,
+            translate=[0,0,50],
+            # coarse_colourmode='tsne',
+            coarse_colourmode='umap',
+            save_dir=save_dir_ii,
+            disable_animation=args.disable_animation,
+            non_interactive=args.non_interactive,
+        )
+
+        visualise_fine_correspondences(
+            anc_points_fine=anc_points_fine,
+            pos_points_fine=pos_points_fine,
+            anc_corr_points=anc_corr_points,
+            pos_corr_points=pos_corr_points,
+            corr_scores=corr_scores,
+            transform=T_gt.numpy(),
+            score_threshold=0.0,
+            anc_feats_fine=anc_feats_fine,
+            pos_feats_fine=pos_feats_fine,
+            translate=[0,0,50],
+            colourmode='umap',
+            save_dir=save_dir_ii,
+            disable_animation=args.disable_animation,
+            non_interactive=args.non_interactive,
+        )
+
+        # Best (initial) correspondence from LGR
+        visualise_LGR_initial_registration(
+            anc_corr_points=best_anc_corr_points,
+            pos_corr_points=best_pos_corr_points,
+            # transform=T_best_corr.numpy(),
+            transform=T_gt.numpy(),
+            translate=[0,0,5],
+            save_dir=save_dir_ii,
+            non_interactive=args.non_interactive,
+        )
+        
         # Estimated TF
-        # visualise_registration(
-        #     anc_points_coarse=anc_points_coarse,
-        #     pos_points_coarse=pos_points_coarse,
-        #     anc_points_fine=anc_points_fine,
-        #     pos_points_fine=pos_points_fine,
-        #     node_corr_indices=node_corr_indices.numpy(),
-        #     gt_node_corr_indices=gt_node_corr_indices.numpy(),
-        #     transform=T_estimated.numpy(),
-        #     # transform=T_gt.numpy(),  # for debugging GT pose
-        # )
+        visualise_registration(
+            anc_points_fine=anc_points_fine,
+            pos_points_fine=pos_points_fine,
+            transform=T_estimated.numpy(),
+            # transform=T_gt.numpy(),  # for debugging GT pose
+            save_dir=save_dir_ii,
+            non_interactive=args.non_interactive,
+        )
 
 
 
@@ -168,7 +220,6 @@ def main():
         #       - Plot coarse correspondences
         #       - Plot (some) fine correspondences
         #       - Plot estimated TF
-        #       - Compute GT overlaps and print
         pass
     
 
@@ -179,6 +230,9 @@ if __name__ == "__main__":
     parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
     parser.add_argument('--save_dir', type=str, required=False, help='Save visualisations/pcds to directory (creates subdirectories for each model)')
     parser.add_argument('--failures', action='store_true', help='Only visualise metric loc failures')
+    parser.add_argument('--idx_list', type=int, nargs='+', default=[], help='Only visualise given list of indices (ordered by val dataloader)')
+    parser.add_argument('--disable_animation', action='store_true', help='Disables animations')
+    parser.add_argument('--non_interactive', action='store_true', help='Saves visualisations instantly, then closes viewer.')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
@@ -200,6 +254,11 @@ if __name__ == "__main__":
             raise ValueError('Must provide valid path to weights if `--save_dir` is set')
     print('Save dir: {}'.format(args.save_dir))
     print('Failures only: {}'.format(args.failures))
+    print('Idx list: {}'.format(args.idx_list))
+    if args.failures and len(args.idx_list) > 0:
+        print('WARNING: Ignoring `--failures` as `--idx_list` was specified')
+    print('Disable animation: {}'.format(args.disable_animation))
+    print('Non interactive: {}'.format(args.non_interactive))
     print('Debug mode: {}'.format(args.debug))
     print('')
 

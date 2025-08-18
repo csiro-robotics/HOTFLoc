@@ -21,6 +21,7 @@ from models.octree import get_octant_centroids_from_points, split_and_pad_data, 
 from models.hotformerloc import HOTFormerLoc
 from misc.utils import ModelParams
 from misc.torch_utils import release_cuda
+from models.layers.local_global_registration import LocalGlobalRegistration
 from geotransformer.modules.ops import point_to_node_partition, index_select
 from geotransformer.modules.registration import get_node_correspondences
 from geotransformer.modules.sinkhorn import LearnableLogOptimalTransport
@@ -28,7 +29,6 @@ from geotransformer.modules.geotransformer import (
     GeometricTransformer,
     SuperPointMatching,
     SuperPointTargetGenerator,
-    LocalGlobalRegistration,
 )
 from geotransformer.utils.visualization import (
     draw_point_to_node,
@@ -291,6 +291,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
             pos_points_coarse_ii = pos_points_coarse[pos_batch_mask_coarse]
             anc_feats_coarse_norm_ii = anc_feats_coarse_norm[anc_batch_mask_coarse]
             pos_feats_coarse_norm_ii = pos_feats_coarse_norm[pos_batch_mask_coarse]
+            anc_feats_coarse_pre_refinement_ii = anc_feats_coarse[anc_batch_mask_coarse]
+            pos_feats_coarse_pre_refinement_ii = pos_feats_coarse[pos_batch_mask_coarse]
             anc_points_fine_ii = anc_points_fine[anc_batch_mask_fine]
             pos_points_fine_ii = pos_points_fine[pos_batch_mask_fine]
             anc_feats_fine_ii = anc_feats_fine[anc_batch_mask_fine]
@@ -300,6 +302,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
             # Separate dict for each batch item
             output_dicts[batch_idx]['anc_feats_coarse'] = anc_feats_coarse_norm_ii
             output_dicts[batch_idx]['pos_feats_coarse'] = pos_feats_coarse_norm_ii
+            output_dicts[batch_idx]['anc_feats_coarse_pre_refinement'] = anc_feats_coarse_pre_refinement_ii
+            output_dicts[batch_idx]['pos_feats_coarse_pre_refinement'] = pos_feats_coarse_pre_refinement_ii
             output_dicts[batch_idx]['anc_feats_fine'] = anc_feats_fine_ii
             output_dicts[batch_idx]['pos_feats_fine'] = pos_feats_fine_ii
             output_dicts[batch_idx]['anc_points_coarse'] = anc_points_coarse_ii
@@ -424,7 +428,16 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     matching_scores_ii = matching_scores_ii[:, :-1, :-1]
 
                 # NOTE: estimated transform is from pos to anc
-                anc_corr_points_ii, pos_corr_points_ii, corr_scores_ii, estimated_transform_ii = self.fine_matching(
+                (
+                    anc_corr_points_ii,
+                    pos_corr_points_ii,
+                    corr_scores_ii,
+                    estimated_transform_ii,
+                    num_corr_points_ii,
+                    best_anc_corr_points_ii,
+                    best_pos_corr_points_ii,
+                    best_transform_ii,
+                ) = self.fine_matching(
                     anc_node_corr_knn_points_ii,
                     pos_node_corr_knn_points_ii,
                     anc_node_corr_knn_masks_ii,
@@ -436,8 +449,12 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 output_dicts[batch_idx]['anc_corr_points'] = anc_corr_points_ii
                 output_dicts[batch_idx]['pos_corr_points'] = pos_corr_points_ii
                 output_dicts[batch_idx]['corr_scores'] = corr_scores_ii
+                output_dicts[batch_idx]['num_corr_points'] = num_corr_points_ii
+                output_dicts[batch_idx]['best_anc_corr_points'] = best_anc_corr_points_ii
+                output_dicts[batch_idx]['best_pos_corr_points'] = best_pos_corr_points_ii
                 # Ensure estimated transform is from anc to pos, not vice-versa
                 output_dicts[batch_idx]['estimated_transform'] = torch.inverse(estimated_transform_ii)
+                output_dicts[batch_idx]['best_corr_transform'] = torch.inverse(best_transform_ii)
 
         toc = time.time()
         time_dict['local global reg'] = toc - tic
