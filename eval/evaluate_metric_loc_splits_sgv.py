@@ -21,13 +21,13 @@ from dataset.dataset_utils import make_eval_dataloader, make_eval_dataloader_6DO
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
 from eval.sgv.sgv_utils import sgv_fn
+from eval.geotransformer_utils import compute_geotransformer_metrics
 from misc.logger import create_logger
 from misc.point_clouds import icp
 from misc.torch_utils import set_seed, to_device, release_cuda
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
-from models.losses.geotransformer_loss import Evaluator
 
 DISABLE_ICP = False
 # EVAL_MODES = ['Initial', 'Re-Ranked']
@@ -46,14 +46,12 @@ def evaluate(
     num_neighbors: int = 20,
     show_progress: bool = False,
     only_global: bool = False,
+    use_ransac: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
 ):
     # Run evaluation on all eval datasets
     eval_database_files, eval_query_files = get_query_database_splits(params)
-    metric_loc_evaluator = None
-    if not only_global:
-        metric_loc_evaluator = Evaluator(params)
 
     assert len(eval_database_files) == len(eval_query_files)
     global_metrics, local_metrics = {}, {}
@@ -86,7 +84,6 @@ def evaluate(
         temp_global_metrics, temp_local_metrics = evaluate_dataset(
             model,
             device,
-            metric_loc_evaluator,
             params,
             database_sets,
             query_sets,
@@ -99,6 +96,7 @@ def evaluate(
             num_neighbors=num_neighbors,
             show_progress=show_progress,
             only_global=only_global,
+            use_ransac=use_ransac,
             save_embeddings=save_embeddings,
             load_embeddings=load_embeddings,
         )
@@ -118,7 +116,6 @@ def evaluate(
 def evaluate_dataset(
     model: torch.nn.Module,
     device,
-    metric_loc_evaluator: Optional[Evaluator],
     params: TrainingParams,
     database_sets: List[Dict],
     query_sets: List[Dict],
@@ -131,6 +128,7 @@ def evaluate_dataset(
     num_neighbors: int = 20,
     show_progress: bool = False,
     only_global: bool = False,
+    use_ransac: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
 ):
@@ -202,7 +200,6 @@ def evaluate_dataset(
                 query_set=query_sets[j],
                 model=model,
                 device=device,
-                metric_loc_evaluator=metric_loc_evaluator,
                 params=params,
                 radius=radius,
                 icp_refine=icp_refine,
@@ -212,6 +209,7 @@ def evaluate_dataset(
                 model_name=model_name,
                 show_progress=show_progress,
                 only_global=only_global,
+                use_ransac=use_ransac,
             )
             # Report per-split metrics
             global_metrics[split_name] = temp_global_metrics
@@ -326,7 +324,6 @@ def get_metrics(
     query_set: Dict[int, Dict],
     model: torch.nn.Module,
     device: str,
-    metric_loc_evaluator: Optional[Evaluator],
     params: TrainingParams,
     radius: Sequence[float] = [5., 20.],
     icp_refine: bool = False,
@@ -336,6 +333,7 @@ def get_metrics(
     model_name: str = "model",
     show_progress: bool = False,
     only_global: bool = False,
+    use_ransac: bool = False,
 ):
     # ### TEMP FOR DEBUGGING ###
     # return np.ones(25, np.float32), 1.0, 1.0
@@ -363,16 +361,28 @@ def get_metrics(
                 'success': [],
                 'coarse_IR': [],
                 'fine_IR': [],
+                'fine_overlap': [],
+                'fine_residual': [],
+                'fine_num_corr': [],
+                'num_pts_per_patch': [],
+                'num_corr_patches_lgr': [],
+                'num_corr_pts_per_patch_lgr': [],
+                'corr_score_lgr': [],
                 'failure_query_pos_ndx': [],
                 't_metloc': [],
             }
+            if use_ransac:
+                local_metrics[eval_mode].update({
+                'rre_ransac': [],
+                'rte_ransac': [],
+                'success_ransac': [],
+                't_ransac': [],
+                })
             if icp_refine:
                 local_metrics[eval_mode].update({
                 'rre_refined': [],
                 'rte_refined': [],
                 'success_refined': [],
-                'coarse_IR_refined': [],
-                'fine_IR_refined': [],
                 'failure_query_pos_ndx_refined': [],
                 't_metloc_refined': []
                 })
@@ -611,35 +621,55 @@ def get_metrics(
                 )
                 t_icp = time() - tic
 
+            # TODO: Re-add support for non-geotransformer variants
+
             # Compute metrics with and without ICP refinement
             batch_temp = {'transform': batch['transform'][0]}  # temp fix since loss func expects a single batch item
-            temp_metrics = release_cuda(metric_loc_evaluator(model_out[0], batch_temp))
-            local_metrics[eval_mode]['rre'].append(temp_metrics['RRE'])
-            local_metrics[eval_mode]['rte'].append(temp_metrics['RTE'])
+
+            model_out_np = release_cuda(model_out[0], to_numpy=True)
+            batch_temp_np = release_cuda(batch_temp, to_numpy=True)
+            temp_metrics = compute_geotransformer_metrics(
+                model_out_np, batch_temp_np, params, use_ransac=use_ransac
+            )
             local_metrics[eval_mode]['coarse_IR'].append(temp_metrics['PIR'])
             local_metrics[eval_mode]['fine_IR'].append(temp_metrics['IR'])
-            local_metrics[eval_mode]['success'].append(temp_metrics['RR'])
-            if temp_metrics['RR'] == 0:
+            local_metrics[eval_mode]['fine_overlap'].append(temp_metrics['OV'])
+            local_metrics[eval_mode]['fine_residual'].append(temp_metrics['residual'])
+            local_metrics[eval_mode]['fine_num_corr'].append(temp_metrics['num_corr'])
+            local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
+            local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
+            local_metrics[eval_mode]['success'].append(temp_metrics['success_lgr'])
+            local_metrics[eval_mode]['num_pts_per_patch'].append(temp_metrics['num_pts_per_patch'])
+            local_metrics[eval_mode]['num_corr_patches_lgr'].append(temp_metrics['num_corr_patches_lgr'])
+            local_metrics[eval_mode]['num_corr_pts_per_patch_lgr'].append(temp_metrics['num_corr_pts_per_patch_lgr'])
+            local_metrics[eval_mode]['corr_score_lgr'].append(temp_metrics['corr_score_lgr'])
+            if temp_metrics['success_lgr'] == 0:  # NOTE: Check this actually works, may be invalid
                 local_metrics[eval_mode]['failure_query_pos_ndx'].append((query_idx, nn_idx))
             local_metrics[eval_mode]['t_metloc'].append(t_metloc)  # Metric Loc time
+            if use_ransac:
+                local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
+                local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
+                local_metrics[eval_mode]['success_ransac'].append(temp_metrics['success_ransac'])
+                local_metrics[eval_mode]['t_ransac'].append(temp_metrics['t_ransac'])
 
             if icp_refine:
                 model_out[0]['estimated_transform'] = torch.tensor(
                     T_estimated_refined, dtype=T_gt.dtype, device=device
                 )
-                temp_metrics_refined = release_cuda(metric_loc_evaluator(model_out[0], batch_temp))
-                local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['RRE'])
-                local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['RTE'])
-                local_metrics[eval_mode]['coarse_IR_refined'].append(temp_metrics_refined['PIR'])
-                local_metrics[eval_mode]['fine_IR_refined'].append(temp_metrics_refined['IR'])
-                local_metrics[eval_mode]['success_refined'].append(temp_metrics_refined['RR'])
-                if temp_metrics_refined['RR'] == 0:
+                model_out_np = release_cuda(model_out[0], to_numpy=True)
+                temp_metrics_refined = compute_geotransformer_metrics(
+                    model_out_np, batch_temp_np, params, use_ransac=False,  # RANSAC already computed once
+                )
+                local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
+                local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
+                local_metrics[eval_mode]['success_refined'].append(temp_metrics_refined['success_lgr'])
+                if temp_metrics_refined['success_lgr'] == 0:
                     local_metrics[eval_mode]['failure_query_pos_ndx_refined'].append((query_idx, nn_idx))
                 local_metrics[eval_mode]['t_metloc_refined'].append(t_metloc + t_icp)  # Metric Loc Refined time
 
             torch.cuda.empty_cache()
 
-
+    # TODO: ADD METRICS TO TRAINER.py WANDB
     # Calculate mean global metrics
     global_metrics['recall'] = {r: [intermediate_metrics['tp'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
     # global_metrics['recall_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
@@ -667,6 +697,8 @@ def get_metrics(
                         mean_local_metrics[eval_mode][metric] = m_l
                         continue
                     if 't_metloc' in metric:
+                        mean_local_metrics[eval_mode][f'{metric}_sd'] = np.std(m_l)
+                    elif 't_ransac' in metric:
                         mean_local_metrics[eval_mode][f'{metric}_sd'] = np.std(m_l)
                     mean_local_metrics[eval_mode][metric] = np.mean(m_l)
 
@@ -879,7 +911,7 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--radius', type=float, nargs='+', default=[5., 20.], help='True Positive thresholds in meters')
-    parser.add_argument('--icp_refine', action='store_true', help='Refine estimated pose with ICP')
+    parser.add_argument('--icp_refine', action='store_true', help='Refine estimated pose with ICP (unlike EgoNN, which refines GT pose [we handle this in dataloader])')
     parser.add_argument('--local_max_eval_threshold', type=float, default=np.inf,
                         help=('Maximum nn threshold to continue with local eval step '
                               'metric localisation not computed if distance to nearest retrieval is > thresh'))
@@ -889,6 +921,7 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--log', action='store_true', help='Log false positives and top-5 retrievals')
     parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
+    parser.add_argument('--use_ransac', action='store_true', help='Compare LGR with RANSAC in metric loc evaluation')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
@@ -901,6 +934,7 @@ if __name__ == "__main__":
     print(f'ICP refine: {args.icp_refine}')
     print(f'Local max eval threshold: {args.local_max_eval_threshold}')
     print(f'Num neighbors: {args.num_neighbors}')
+    print(f'Use RANSAC: {args.use_ransac}')
     if args.weights is None:
         if args.save_embeddings or args.load_embeddings:
             raise ValueError('Cannot save or load embeddings for random weights')
@@ -970,6 +1004,7 @@ if __name__ == "__main__":
         num_neighbors=args.num_neighbors,
         show_progress=True,
         only_global=args.only_global,
+        use_ransac=args.use_ransac,
         save_embeddings=args.save_embeddings,
         load_embeddings=args.load_embeddings,
     )

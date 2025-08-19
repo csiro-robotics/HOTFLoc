@@ -6,6 +6,8 @@ import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
 
+from misc.poses import apply_transform
+
 
 def draw_registration_result(source, target, transformation):
     if not isinstance(source, o3d.geometry.PointCloud):
@@ -46,6 +48,31 @@ def plot_points(points: np.ndarray, show=True):
     fig = plt.figure(figsize=(9,8))
     ax = fig.add_subplot(1, 1, 1, projection='3d')
     ax.scatter(*points.T, c=points.T[2])
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax.set_aspect('equal', adjustable='box')
+    if show:
+        plt.show()
+
+
+def plot_registration_result(source: np.ndarray, target: np.ndarray, transform: np.ndarray, show=True):
+    """
+    Plots registration between two point clouds using matplotlib. 
+
+    Args:
+        source (ndarray): Point cloud of shape (N, 3), with (x,y,z) coords.
+        target (ndarray): Point cloud of shape (M, 3), with (x,y,z) coords.
+        transform (ndarray): SE(3) transformation of shape (4,4) from src->tgt
+    """    
+    assert transform.shape == (4,4)
+    source_colour = np.array([[1, 0.706, 0]])
+    target_colour = np.array([[0, 0.651, 0.929]])
+    source_temp = apply_transform(source, transform)
+    fig = plt.figure(figsize=(9,8))
+    ax = fig.add_subplot(1, 1, 1, projection='3d')
+    ax.scatter(*source_temp.T, c=source_colour)
+    ax.scatter(*target.T, c=target_colour)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
@@ -153,9 +180,10 @@ def compute_fpfh(pcd, voxel_size: Optional[float] = 0.4):
     return pcd_fpfh
 
 
-def make_open3d_feature(data, dim, npts):
+def make_open3d_feature(data, dim=None, npts=None):
     feature = o3d.pipelines.registration.Feature()
-    feature.resize(dim, npts)
+    if not(dim is None or npts is None):
+        feature.resize(dim, npts)
     feature.data = data.cpu().numpy().astype('d').transpose()
     return feature
 
@@ -166,6 +194,75 @@ def make_open3d_point_cloud(xyz, color=None):
     if color is not None:
         pcd.colors = o3d.utility.Vector3dVector(color)
     return pcd
+
+
+def registration_with_ransac_from_feats(
+    src_points,
+    ref_points,
+    src_feats,
+    ref_feats,
+    distance_threshold=0.05,
+    ransac_n=3,
+    num_iterations=50000,
+    confidence=0.999,
+):
+    r"""
+    Compute the transformation matrix from src_points to ref_points
+    """
+    src_pcd = make_open3d_point_cloud(src_points)
+    ref_pcd = make_open3d_point_cloud(ref_points)
+    src_feats = make_open3d_feature(src_feats)
+    ref_feats = make_open3d_feature(ref_feats)
+
+    result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+        src_pcd,
+        ref_pcd,
+        src_feats,
+        ref_feats,
+        distance_threshold,
+        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+        ransac_n=ransac_n,
+        checkers=[
+            o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+            o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold),
+        ],
+        criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(num_iterations, confidence),
+    )
+
+    return result.transformation
+
+
+def registration_with_ransac_from_correspondences(
+    src_points,
+    ref_points,
+    correspondences=None,
+    distance_threshold=0.05,
+    ransac_n=3,
+    num_iterations=10000,
+    confidence=0.999,
+):
+    r"""
+    Compute the transformation matrix from src_points to ref_points
+    """
+    src_pcd = make_open3d_point_cloud(src_points)
+    ref_pcd = make_open3d_point_cloud(ref_points)
+
+    if correspondences is None:
+        indices = np.arange(src_points.shape[0])
+        correspondences = np.stack([indices, indices], axis=1)
+    correspondences = o3d.utility.Vector2iVector(correspondences)
+
+    result = o3d.pipelines.registration.registration_ransac_based_on_correspondence(
+        src_pcd,
+        ref_pcd,
+        correspondences,
+        distance_threshold,
+        estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
+        ransac_n=ransac_n,
+        criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(num_iterations, confidence),
+    )
+
+    return result.transformation
 
 
 def preprocess_pointcloud(

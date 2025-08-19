@@ -386,9 +386,13 @@ class TrainingParams:
             # eval config
             self.local.acceptance_overlap = params.getfloat('acceptance_overlap', 0.0)  # min overlap to consider a ground truth coarse correspondence
             self.local.acceptance_radius = params.getfloat('acceptance_radius', 1.0)  # distance threshold for inlier fine correspondences
-            self.local.inlier_ratio_threshold = params.getfloat('inlier_ratio_threshold', 0.05)
+            self.local.inlier_ratio_threshold = params.getfloat('inlier_ratio_threshold', 0.05)  # min inlier ratio for FMR metric
             self.local.rre_threshold = params.getfloat('rre_threshold', 5.0)  # Rotation threshold to classify successful metric loc
             self.local.rte_threshold = params.getfloat('rte_threshold', 2.0)  # Translation threshold to classify successful metric loc
+            # eval with ransac
+            self.local.ransac_distance_threshold = params.getfloat('ransac_distance_threshold', 0.3)
+            self.local.ransac_num_points = params.getint('ransac_num_points', 4)
+            self.local.ransac_num_iterations = params.getint('ransac_num_iterations', 50000)
 
         # loss - Coarse level
         if 'COARSE LOSS' in config:

@@ -1151,7 +1151,8 @@ class NetworkTrainer:
                     icp_refine=False,
                     local_max_eval_threshold=self.params.local.max_eval_threshold,
                     show_progress=self.params.verbose,
-                    only_global=(not self.params.local.enable_local)
+                    only_global=(not self.params.local.enable_local),
+                    use_ransac=False,
                 )
                 print_eval_stats(global_eval_stats, local_eval_stats)
                 metrics['test'] = self.log_eval_stats(global_eval_stats, local_eval_stats)
@@ -1204,7 +1205,8 @@ class NetworkTrainer:
             icp_refine=False,
             local_max_eval_threshold=self.params.local.max_eval_threshold,
             show_progress=self.params.verbose,
-            only_global=(not self.params.local.enable_local)
+            only_global=(not self.params.local.enable_local),
+            use_ransac=True,  # Enable RANSAC for final evaluation (if doing metric loc evaluation)
         )
         print_eval_stats(final_global_stats, final_local_stats)
 
