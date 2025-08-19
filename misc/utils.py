@@ -69,6 +69,9 @@ class ModelParams:
             self.coarse_idx = params.getint('coarse_idx')
             self.fine_idx = params.getint('fine_idx')
             assert self.coarse_idx is not None and self.fine_idx is not None
+            self.coarse_feat_embed_dim = params.getint('coarse_feat_embed_dim', None)  # Dimension to project coarse features with MLP before metric localisation (None to disable)
+            self.fine_feat_embed_dim = params.getint('fine_feat_embed_dim', None)  # Dimension to project fine features with MLP before metric localisation (None to disable)
+            self.metloc_mlp_ratio = params.getfloat('metloc_mlp_ratio', 2.0)  # Hidden dim ratio of MLP used for coarse and/or fine features
 
         if 'minkloc' in self.model.lower():
         #######################################################################
@@ -145,7 +148,7 @@ class ModelParams:
                     if 'GEOTRANSFORMER' in config:
                         params = config['GEOTRANSFORMER']
                         self.geotransformer = edict()
-                        self.geotransformer.input_dim = params.getint('input_dim', 2048)
+                        self.geotransformer.input_dim = params.getint('input_dim', 2048)  # NOTE: set this to `coarse_feat_embed_dim` if used, otherwise `channels[coarse_idx]`
                         self.geotransformer.hidden_dim = params.getint('hidden_dim', 128)
                         self.geotransformer.output_dim = params.getint('output_dim', 256)
                         self.geotransformer.num_heads = params.getint('num_heads', 4)

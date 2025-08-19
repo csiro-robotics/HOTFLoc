@@ -739,6 +739,7 @@ class HOTFormerBase(torch.nn.Module):
                  return_feats_and_attn_maps: bool = False, **kwargs):
         super().__init__()
         self.patch_size = patch_size
+        self.channels = channels
         self.dilation = dilation
         self.nempty = nempty
         self.num_pyramid_levels = num_pyramid_levels

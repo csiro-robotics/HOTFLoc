@@ -11,6 +11,7 @@ import logging
 from typing import Optional, List
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from ocnn.octree import Points, Octree
@@ -22,6 +23,7 @@ from models.hotformerloc import HOTFormerLoc
 from misc.utils import ModelParams
 from misc.torch_utils import release_cuda
 from models.layers.local_global_registration import LocalGlobalRegistration
+from models.layers.octformer_layers import MLP
 from geotransformer.modules.ops import point_to_node_partition, index_select
 from geotransformer.modules.registration import get_node_correspondences
 from geotransformer.modules.sinkhorn import LearnableLogOptimalTransport
@@ -40,7 +42,6 @@ VIZ = False
 SAVE_VIZ_PCL = True
 SAVE_DIR = './node_coloring_pcls'
 
-# TODO: Adapt for metric localisation (using existing HOTFormerLoc wrapper)
 class HOTFormerMetricLoc(torch.nn.Module):
     def __init__(
         self,
@@ -50,6 +51,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
         octree_depth: int,
         coarse_idx: int,
         fine_idx: int,
+        coarse_feat_embed_dim: Optional[int] = None,
+        fine_feat_embed_dim: Optional[int] = None,
+        mlp_ratio: float = 2.0,
         quantizer: Optional[CoordinateSystem] = None,
         grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
@@ -67,6 +71,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
                               (sorted from finest to coarsest). Supports negative indices.
             fine_idx (int): Index corresponding to depth of fine features, ranging from [0, num_pyramid_levels)
                             (sorted from finest to coarsest). Supports negative indices.
+            coarse_feat_embed_dim (int): Embedding dim for coarse features (using MLP), set None to disable
+            fine_feat_embed_dim (int): Embedding dim for fine features (using MLP), set None to disable
+            mlp_ratio: float = 2.0,
             depth_coarse (int): Octree depth of coarse features (must correspond to depth of OctFormer/HOTFormer blocks))
             depth_fine (int): Octree depth of fine features (must correspond to depth of OctFormer/HOTFormer blocks))
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
@@ -83,8 +90,12 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.model_params = model_params
         self.coarse_idx = coarse_idx
         self.fine_idx = fine_idx
+        self.coarse_feat_embed_dim = coarse_feat_embed_dim
+        self.fine_feat_embed_dim = fine_feat_embed_dim
+        self.mlp_ratio = mlp_ratio
         self.octree_depth = octree_depth
         self.compute_depth_from_idx()
+        self.get_input_dim()
         self.quantizer = quantizer
         self.grad_checkpoint = grad_checkpoint
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
@@ -96,6 +107,17 @@ class HOTFormerMetricLoc(torch.nn.Module):
         if self.depth_coarse < 1:
             err_str = 'Select a valid feature depth (minimum 1)'
             raise ValueError(err_str)
+
+        self.coarse_feat_decoder = MLP(
+            self.coarse_feat_input_dim,
+            int(self.coarse_feat_input_dim * self.mlp_ratio),
+            self.coarse_feat_embed_dim,
+        ) if self.coarse_feat_embed_dim is not None else nn.Identity()
+        self.fine_feat_decoder = MLP(
+            self.fine_feat_input_dim,
+            int(self.fine_feat_input_dim * self.mlp_ratio),
+            self.fine_feat_embed_dim,
+        ) if self.fine_feat_embed_dim is not None else nn.Identity()
 
         self.coarse_target = SuperPointTargetGenerator(
             model_params.coarse_matching.num_targets,
@@ -143,6 +165,19 @@ class HOTFormerMetricLoc(torch.nn.Module):
             self.depth_fine = depth_start - self.fine_idx
         else:
             self.depth_fine = depth_start - num_stages - self.fine_idx
+
+    def get_input_dim(self):
+        """
+        Determing coarse and fine feature input dimensions based on HOTFormerLoc
+        parameters.
+        """
+        channels = list(self.hotformerloc_global.backbone.backbone.channels)
+        num_octf_levels = self.hotformerloc_global.backbone.backbone.num_octf_levels
+        num_pyramid_levels = self.hotformerloc_global.backbone.backbone.num_pyramid_levels
+        if len(channels[num_octf_levels:]) == 1:
+            channels[num_octf_levels:] = channels[num_octf_levels:] * num_pyramid_levels
+        self.coarse_feat_input_dim = channels[self.coarse_idx]
+        self.fine_feat_input_dim = channels[self.fine_idx]
         
     def forward(self, batch, global_only=False, **kwargs) -> List[dict]:
         """
@@ -184,6 +219,12 @@ class HOTFormerMetricLoc(torch.nn.Module):
             anc_feats_fine = anc_global_out['local'][self.depth_fine]
             pos_feats_coarse = pos_global_out['local'][self.depth_coarse]
             pos_feats_fine = pos_global_out['local'][self.depth_fine]
+
+        # Embed coarse and fine feats
+        anc_feats_coarse = self.coarse_feat_decoder(anc_feats_coarse)
+        anc_feats_fine = self.fine_feat_decoder(anc_feats_fine)
+        pos_feats_coarse = self.coarse_feat_decoder(pos_feats_coarse)
+        pos_feats_fine = self.fine_feat_decoder(pos_feats_fine)
 
         # Get accurate centroids for octants (instead of naively using octant centres)
         tic = time.time()
@@ -516,5 +557,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
         print(f'  Embedding normalization: {self.hotformerloc_global.normalize_embeddings}')
         # Metric Loc Head
         print('Metric Localisation Head:')
+        n_params = sum([param.nelement() for param in self.coarse_feat_decoder.parameters()])
+        print(f'  Coarse Feat Decoder: {type(self.coarse_feat_decoder).__name__}\t# parameters: {n_params}')
+        n_params = sum([param.nelement() for param in self.fine_feat_decoder.parameters()])
+        print(f'  Fine Feat Decoder: {type(self.fine_feat_decoder).__name__}\t# parameters: {n_params}')
         n_params = sum([param.nelement() for param in self.coarse_feat_refiner.parameters()])
         print(f'  Coarse Feat Refiner: {type(self.coarse_feat_refiner).__name__}\t# parameters: {n_params}')
