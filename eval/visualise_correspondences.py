@@ -118,7 +118,8 @@ def main():
              pos_node_corr_knn_masks.float().sum(1),),
             dim=0,
         )
-        pos_dist = T_gt[:3,3].norm().item()
+        # Only measure horizontal distance
+        pos_dist = T_gt[:2,3].norm().item()
         
         # Print metrics as well
 
@@ -153,6 +154,7 @@ def main():
             translate=[0,0,50],
             # coarse_colourmode='patch',
             # coarse_colourmode='tsne',
+            zoom=args.zoom,
             coarse_colourmode='umap',
             save_dir=save_dir_ii,
             disable_animation=args.disable_animation,
@@ -168,6 +170,7 @@ def main():
             anc_feats_coarse=anc_feats_coarse_pre_refinement,
             pos_feats_coarse=pos_feats_coarse_pre_refinement,
             translate=[0,0,50],
+            zoom=args.zoom,
             # coarse_colourmode='tsne',
             coarse_colourmode='umap',
             save_dir=save_dir_ii,
@@ -186,6 +189,7 @@ def main():
             anc_feats_fine=anc_feats_fine,
             pos_feats_fine=pos_feats_fine,
             translate=[0,0,50],
+            zoom=args.zoom,
             colourmode='umap',
             save_dir=save_dir_ii,
             disable_animation=args.disable_animation,
@@ -199,6 +203,7 @@ def main():
             # transform=T_best_corr.numpy(),
             transform=T_gt.numpy(),
             translate=[0,0,5],
+            zoom=args.zoom,
             save_dir=save_dir_ii,
             non_interactive=args.non_interactive,
         )
@@ -209,6 +214,7 @@ def main():
             pos_points_fine=pos_points_fine,
             transform=T_estimated.numpy(),
             # transform=T_gt.numpy(),  # for debugging GT pose
+            zoom=args.zoom,
             save_dir=save_dir_ii,
             non_interactive=args.non_interactive,
         )
@@ -231,6 +237,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_dir', type=str, required=False, help='Save visualisations/pcds to directory (creates subdirectories for each model)')
     parser.add_argument('--failures', action='store_true', help='Only visualise metric loc failures')
     parser.add_argument('--idx_list', type=int, nargs='+', default=[], help='Only visualise given list of indices (ordered by val dataloader)')
+    parser.add_argument('--zoom', type=float, default=0.55, help='Zoom level for open3d viewer')
     parser.add_argument('--disable_animation', action='store_true', help='Disables animations')
     parser.add_argument('--non_interactive', action='store_true', help='Saves visualisations instantly, then closes viewer.')
     parser.add_argument('--debug', action='store_true')
@@ -257,6 +264,7 @@ if __name__ == "__main__":
     print('Idx list: {}'.format(args.idx_list))
     if args.failures and len(args.idx_list) > 0:
         print('WARNING: Ignoring `--failures` as `--idx_list` was specified')
+    print('Zoom {}'.format(args.zoom))
     print('Disable animation: {}'.format(args.disable_animation))
     print('Non interactive: {}'.format(args.non_interactive))
     print('Debug mode: {}'.format(args.debug))

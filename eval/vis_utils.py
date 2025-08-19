@@ -468,6 +468,7 @@ def visualise_coarse_correspondences(
     anc_feats_coarse: Optional[ndarray] = None,
     pos_feats_coarse: Optional[ndarray] = None,
     translate=[0, 0, 40],
+    zoom=0.55,
     plot_coarse=False,
     coarse_colourmode: str = 'patch',
     save_dir: Optional[str] = None,
@@ -626,10 +627,11 @@ def visualise_coarse_correspondences(
             save_dir=save_dir,
             filename=f'coarse_corr_{coarse_colourmode}',
             non_interactive=non_interactive,
+            zoom=zoom,
         )
     else:
         custom_draw_geometry_with_z_rotation(
-            vis_list, save_dir=os.path.join(save_dir, 'coarse_corr_frames')
+            vis_list, save_dir=os.path.join(save_dir, 'coarse_corr_frames'), zoom=zoom,
         )  # with rotation
 
 
@@ -644,6 +646,7 @@ def visualise_fine_correspondences(
     anc_feats_fine: Optional[ndarray] = None,
     pos_feats_fine: Optional[ndarray] = None,
     translate=[0, 0, 40],
+    zoom=0.55,
     colourmode: str = 'umap',
     save_dir: Optional[str] = None,
     disable_animation=False,
@@ -753,9 +756,10 @@ def visualise_fine_correspondences(
             save_dir=save_dir,
             filename=f'fine_corr_{colourmode}',
             non_interactive=non_interactive,
+            zoom=zoom,
         )
     else:
-        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'fine_corr_frames'))  # with rotation
+        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'fine_corr_frames'), zoom=zoom)  # with rotation
 
 
 def visualise_similarity(
@@ -767,6 +771,7 @@ def visualise_similarity(
     anc_feats_coarse: ndarray,
     pos_feats_coarse: ndarray,
     translate=[0, 0, 40],
+    zoom=0.55,
     coarse_colourmode: str = 'patch',
     save_dir: Optional[str] = None,
     disable_animation=False,
@@ -824,15 +829,17 @@ def visualise_similarity(
             save_dir=save_dir,
             filename=f'coarse_sim_{coarse_colourmode}',
             non_interactive=non_interactive,
+            zoom=zoom,
         )
     else:
-        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'coarse_sim_frames'))  # with rotation
+        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'coarse_sim_frames'), zoom=zoom)  # with rotation
 
 
 def visualise_registration(
     anc_points_fine: Union[Tensor, ndarray],
     pos_points_fine: Union[Tensor, ndarray],
     transform: ndarray,
+    zoom=0.55,
     save_dir: Optional[str] = None,
     non_interactive=False,
 ):
@@ -881,6 +888,7 @@ def visualise_registration(
         save_dir=save_dir,
         filename='registration',
         non_interactive=non_interactive,
+        zoom=zoom,
     )
 
 def visualise_LGR_initial_registration(
@@ -888,6 +896,7 @@ def visualise_LGR_initial_registration(
     pos_corr_points: Union[Tensor, ndarray],
     transform: ndarray,
     translate=[0, 0, 0],
+    zoom=0.55,
     save_dir: Optional[str] = None,
     non_interactive=False,
 ):
@@ -944,4 +953,5 @@ def visualise_LGR_initial_registration(
         save_dir=save_dir,
         filename='registration_LGR_initial_corr',
         non_interactive=non_interactive,
+        zoom=zoom,
     )
