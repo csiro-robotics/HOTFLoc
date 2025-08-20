@@ -172,7 +172,7 @@ class LocalGlobalRegistration(nn.Module):
         chunks = [
             (x, y) for x, y in zip(unique_indices[:-1], unique_indices[1:]) if y - x >= self.correspondence_threshold
         ]
-        num_corr_points = [y - x for (x, y) in chunks]
+        num_corr_points = [y - x for (x, y) in chunks] if len(chunks) > 0 else 0
 
         batch_size = len(chunks)
         best_ref_corr_points, best_src_corr_points, best_transform = [None]*3

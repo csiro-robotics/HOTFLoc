@@ -495,7 +495,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 output_dicts[batch_idx]['best_pos_corr_points'] = best_pos_corr_points_ii
                 # Ensure estimated transform is from anc to pos, not vice-versa
                 output_dicts[batch_idx]['estimated_transform'] = torch.inverse(estimated_transform_ii)
-                output_dicts[batch_idx]['best_corr_transform'] = torch.inverse(best_transform_ii)
+                if best_transform_ii is not None:
+                    best_transform_ii = torch.inverse(best_transform_ii)
+                output_dicts[batch_idx]['best_corr_transform'] = best_transform_ii
 
         toc = time.time()
         time_dict['local global reg'] = toc - tic
