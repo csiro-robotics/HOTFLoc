@@ -45,21 +45,38 @@ class TrainTransform:
         t = []
         # NOTE: Normalization before other augs will cause some border points to be
         #       clipped, which is fine as it is effectively additional augmentation
-        if self.normalize_points:
-            t.append(Normalize(scale_factor=self.scale_factor,
-                               unit_sphere_norm=self.unit_sphere_norm,
-                               zero_mean=self.zero_mean))
         if self.aug_mode == 1:
             # Augmentations without random rotation around z-axis (values assume [-1, 1] range)
-            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
+            if self.normalize_points:
+                t.append(Normalize(scale_factor=self.scale_factor,
+                                   unit_sphere_norm=self.unit_sphere_norm,
+                                   zero_mean=self.zero_mean))
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 2:
             # Augmentations with random rotation around z-axis 
-            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.1)),
+            if self.normalize_points:
+                t.append(Normalize(scale_factor=self.scale_factor,
+                                   unit_sphere_norm=self.unit_sphere_norm,
+                                   zero_mean=self.zero_mean))
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
+        elif self.aug_mode == 3:
+            # Augmentations with random rotation around z-axis, and random occlusions
+            t.append(RandomOcclusion(p=0.5))  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
+            if self.normalize_points:
+                t.append(Normalize(scale_factor=self.scale_factor,
+                                   unit_sphere_norm=self.unit_sphere_norm,
+                                   zero_mean=self.zero_mean))
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
+                      RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
+                      RandomTranslation(max_delta=0.01)])
         elif self.aug_mode == 0:    # No augmentations
-            pass
+            if self.normalize_points:
+                t.append(Normalize(scale_factor=self.scale_factor,
+                                   unit_sphere_norm=self.unit_sphere_norm,
+                                   zero_mean=self.zero_mean))
         else:
             raise NotImplementedError('Unknown aug_mode: {}'.format(self.aug_mode))
         if len(t) == 0:
@@ -124,6 +141,30 @@ class Train6DOFTransform:
             # Augmentations with random rotation around z-axis 
             # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
             t.extend([JitterPoints(sigma=0.1)])
+            self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
+                                                     axis=np.array([0, 0, 1]),
+                                                     return_rotation=True)
+            # Translation only in xy plane
+            self.translation_transform = RandomTranslation(axis=np.array([1, 1, 0]),
+                                                           max_delta=5,
+                                                           return_translation=True)
+        elif self.local_aug_mode == 2:
+            # Same as above but with random point and block removal
+            # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
+            t.extend([JitterPoints(sigma=0.1), RemoveRandomPoints(r=(0.0, 0.2)),
+                      RemoveRandomBlock(p=0.4)])
+            self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
+                                                     axis=np.array([0, 0, 1]),
+                                                     return_rotation=True)
+            # Translation only in xy plane
+            self.translation_transform = RandomTranslation(axis=np.array([1, 1, 0]),
+                                                           max_delta=5,
+                                                           return_translation=True)
+        elif self.local_aug_mode == 3:
+            # Same as above but with random point removal and occlusions instead of block removal
+            # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
+            t.extend([JitterPoints(sigma=0.1), RemoveRandomPoints(r=(0.0, 0.2)),
+                      RandomOcclusion(p=0.5)])
             self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
                                                      axis=np.array([0, 0, 1]),
                                                      return_rotation=True)
@@ -290,7 +331,7 @@ class JitterPoints:
 
 
 class RemoveRandomPoints:
-    def __init__(self, r):
+    def __init__(self, r, true_remove=True):
         if type(r) is list or type(r) is tuple:
             assert len(r) == 2
             assert 0 <= r[0] <= 1
@@ -301,6 +342,7 @@ class RemoveRandomPoints:
             assert 0 <= r <= 1
             self.r_min = None
             self.r_max = float(r)
+        self.true_remove = true_remove
 
     def __call__(self, e):
         n = len(e)
@@ -311,7 +353,11 @@ class RemoveRandomPoints:
             r = random.uniform(self.r_min, self.r_max)
 
         mask = np.random.choice(range(n), size=int(n*r), replace=False)   # select elements to remove
-        e[mask] = torch.zeros_like(e[mask])
+        if self.true_remove:
+            mask = torch.isin(torch.arange(n), torch.tensor(mask))  # Convert to boolean mask (slightly hacky but I'm lazy)
+            e = e[~mask]
+        else:
+            e[mask] = torch.zeros_like(e[mask])
         return e
 
 
@@ -321,10 +367,11 @@ class RemoveRandomBlock:
     Erases fronto-parallel cuboid.
     Instead of erasing we set coords of removed points to (0, 0, 0) to retain the same number of points
     """
-    def __init__(self, p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3)):
+    def __init__(self, p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), true_remove=True):
         self.p = p
         self.scale = scale
         self.ratio = ratio
+        self.true_remove = true_remove
 
     def get_params(self, coords):
         # Find point cloud 3D bounding box
@@ -348,8 +395,53 @@ class RemoveRandomBlock:
         if random.random() < self.p:
             x, y, w, h = self.get_params(coords)     # Fronto-parallel cuboid to remove
             mask = (x < coords[..., 0]) & (coords[..., 0] < x+w) & (y < coords[..., 1]) & (coords[..., 1] < y+h)
+            if self.true_remove:
+                coords = coords[~mask]
+            else:
+                coords[mask] = torch.zeros_like(coords[mask])
+        return coords
+
+
+class RandomOcclusion:
+    """
+    Remove points within a random sector (angle in degrees).
+    Adapted from LoGG3D-Net:
+    https://github.com/csiro-robotics/LoGG3D-Net/blob/cfbe064e36a4c39ef1bf6bb2d0304c6f9c7a0905/utils/data_loaders/pointcloud_dataset.py#L65
+    """
+    def __init__(self, p=0.5, theta_range=(10., 120.), true_remove=True):
+        self.p = p
+        if type(theta_range) is list or type(theta_range) is tuple:
+            assert len(theta_range) == 2
+            assert 0 <= theta_range[0] <= theta_range[1] <= 360
+            self.theta_min = float(theta_range[0])
+            self.theta_max = float(theta_range[1])
+        else:
+            assert 0 <= theta_range <= 360
+            self.theta_min = None
+            self.theta_max = float(theta_range)
+        self.true_remove = true_remove
+
+    def __call__(self, coords: torch.Tensor):
+        if self.theta_min is None:
+            angle = self.theta_max
+        else:
+            # Randomly select removal ratio
+            angle = random.uniform(self.theta_min, self.theta_max)
+
+        thetas = torch.rad2deg(torch.atan2(coords[:, 1], coords[:, 0]))
+        heading = (180 - angle/2) * np.random.uniform(-1, 1)
+        mask = ~((thetas < (heading - angle/2)) | (thetas > (heading + angle/2)))
+
+        # Bail if occlusion would remove all points
+        if mask.count_nonzero() == len(coords):
+            return coords
+
+        if self.true_remove:
+            coords = coords[~mask]
+        else:
             coords[mask] = torch.zeros_like(coords[mask])
         return coords
+
 
 class Normalize:
     """
