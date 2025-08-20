@@ -197,17 +197,18 @@ def main():
         )
 
         # Best (initial) correspondence from LGR
-        visualise_LGR_initial_registration(
-            anc_corr_points=best_anc_corr_points,
-            pos_corr_points=best_pos_corr_points,
-            # transform=T_best_corr.numpy(),
-            transform=T_gt.numpy(),
-            translate=[0,0,5],
-            zoom=args.zoom,
-            save_dir=save_dir_ii,
-            non_interactive=args.non_interactive,
-        )
-        
+        if T_best_corr is not None:
+            visualise_LGR_initial_registration(
+                anc_corr_points=best_anc_corr_points,
+                pos_corr_points=best_pos_corr_points,
+                # transform=T_best_corr.numpy(),
+                transform=T_gt.numpy(),
+                translate=[0,0,3],
+                zoom=args.zoom,
+                save_dir=save_dir_ii,
+                non_interactive=args.non_interactive,
+            )
+
         # Estimated TF
         visualise_registration(
             anc_points_fine=anc_points_fine,
