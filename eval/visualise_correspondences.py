@@ -106,6 +106,8 @@ def main():
         best_anc_corr_points = best_anc_corr_points[torch.nonzero(best_anc_corr_points)[:,0].unique()]
         best_pos_corr_points = release_cuda(output_dict['best_pos_corr_points'])
         best_pos_corr_points = best_pos_corr_points[torch.nonzero(best_pos_corr_points)[:,0].unique()]
+        best_corr_scores = release_cuda(output_dict['best_corr_scores'])
+        best_corr_scores = best_corr_scores[torch.nonzero(best_corr_scores)[:,0].unique()].numpy()
         T_best_corr = release_cuda(output_dict['best_corr_transform'])
         matching_scores = release_cuda(output_dict['matching_scores'], to_numpy=True)
         corr_scores = release_cuda(output_dict['corr_scores'], to_numpy=True)
@@ -152,10 +154,11 @@ def main():
             anc_feats_coarse=anc_feats_coarse,
             pos_feats_coarse=pos_feats_coarse,
             translate=[0,0,50],
-            # coarse_colourmode='patch',
-            # coarse_colourmode='tsne',
             zoom=args.zoom,
-            coarse_colourmode='umap',
+            plot_coarse=False,  # Plot keypoints as spheres
+            coarse_colourmode='patch',
+            # coarse_colourmode='tsne',
+            # coarse_colourmode='umap',
             save_dir=save_dir_ii,
             disable_animation=args.disable_animation,
             non_interactive=args.non_interactive,
@@ -201,10 +204,12 @@ def main():
             visualise_LGR_initial_registration(
                 anc_corr_points=best_anc_corr_points,
                 pos_corr_points=best_pos_corr_points,
-                # transform=T_best_corr.numpy(),
-                transform=T_gt.numpy(),
-                translate=[0,0,3],
+                corr_scores=best_corr_scores,
+                transform=T_best_corr.numpy(),
+                # transform=T_gt.numpy(),
+                # translate=[0,0,3],
                 zoom=args.zoom,
+                angle=-380,  # ~deg*10
                 save_dir=save_dir_ii,
                 non_interactive=args.non_interactive,
             )

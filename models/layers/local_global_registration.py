@@ -172,7 +172,7 @@ class LocalGlobalRegistration(nn.Module):
         chunks = [
             (x, y) for x, y in zip(unique_indices[:-1], unique_indices[1:]) if y - x >= self.correspondence_threshold
         ]
-        num_corr_points = [y - x for (x, y) in chunks] if len(chunks) > 0 else 0
+        num_corr_points = [y - x for (x, y) in chunks] if len(chunks) > 0 else [0]
 
         batch_size = len(chunks)
         best_ref_corr_points, best_src_corr_points, best_transform = [None]*3
@@ -190,6 +190,7 @@ class LocalGlobalRegistration(nn.Module):
             best_index = batch_inlier_masks.sum(dim=1).argmax()
             best_ref_corr_points = batch_ref_corr_points[best_index]
             best_src_corr_points = batch_src_corr_points[best_index]
+            best_corr_scores = batch_corr_scores[best_index]
             best_transform = batch_transforms[best_index]
             cur_corr_scores = corr_scores * batch_inlier_masks[best_index].float()
         else:
@@ -215,6 +216,7 @@ class LocalGlobalRegistration(nn.Module):
             num_corr_points,
             best_ref_corr_points,
             best_src_corr_points,
+            best_corr_scores,
             best_transform,
         )
 
@@ -265,6 +267,7 @@ class LocalGlobalRegistration(nn.Module):
             num_corr_points,
             best_ref_corr_points,
             best_src_corr_points,
+            best_corr_scores,
             best_transform,
         ) = self.local_to_global_registration(
             ref_knn_points, src_knn_points, score_mat, corr_mat
@@ -278,5 +281,6 @@ class LocalGlobalRegistration(nn.Module):
             num_corr_points,
             best_ref_corr_points,
             best_src_corr_points,
+            best_corr_scores,
             best_transform,
         )

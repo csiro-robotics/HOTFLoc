@@ -254,13 +254,13 @@ def create_heatmap(
         ax.set_title(title)
     return fig
 
-def set_view_control(vis: o3d.visualization.Visualizer, fov_step=-90, zoom=0.55):
+def set_view_control(vis: o3d.visualization.Visualizer, fov_step=-90, zoom=0.55, angle=-380.0):
     """
     Set default viewpoint for open3d Visualizer (orthographic view, 35 deg angle).
     """
     ctr = vis.get_view_control()
     ctr.change_field_of_view(step=fov_step)  # make view orthographic
-    ctr.rotate(0.0, -380.0)  # set camera angle (~38deg)
+    ctr.rotate(0.0, angle)  # set camera angle (~38deg)
     ctr.set_zoom(zoom)
 
 def set_initial_rotation(
@@ -292,6 +292,7 @@ def custom_draw_geometry_with_z_rotation(
     height=900,
     fov_step=-90,
     zoom=0.55,
+    angle=-380.0,
     save_dir: Optional[str] = None,
 ):
     """
@@ -312,7 +313,7 @@ def custom_draw_geometry_with_z_rotation(
     def rotate_geometry(vis: o3d.visualization.Visualizer):
         glb = custom_draw_geometry_with_z_rotation
         if glb.index == 0:
-            set_view_control(vis, fov_step, zoom)
+            set_view_control(vis, fov_step, zoom, angle)
             set_initial_rotation(vis, vis_list)
         rot = R.from_euler('z', rot_step, degrees=True).as_matrix()
         for geom in vis_list:
@@ -354,6 +355,7 @@ def custom_draw_geometry_load_option(
     height=900,
     fov_step=-90,
     zoom=0.55,
+    angle=-380.0,
     save_dir: Optional[str] = None,
     filename: str = 'frame',
     non_interactive=False,
@@ -367,7 +369,7 @@ def custom_draw_geometry_load_option(
     def viz_callback(vis: o3d.visualization.Visualizer):
         glb = custom_draw_geometry_load_option
         if glb.index == 0:
-            set_view_control(vis, fov_step, zoom)
+            set_view_control(vis, fov_step, zoom, angle)
             set_initial_rotation(vis, vis_list)
             if save_dir is not None:
                 vis.capture_screen_image(os.path.join(save_dir, f'{filename}.png'), True)
@@ -894,9 +896,11 @@ def visualise_registration(
 def visualise_LGR_initial_registration(
     anc_corr_points: Union[Tensor, ndarray],
     pos_corr_points: Union[Tensor, ndarray],
+    corr_scores: ndarray,
     transform: ndarray,
     translate=[0, 0, 0],
     zoom=0.55,
+    angle=-380.0,
     save_dir: Optional[str] = None,
     non_interactive=False,
 ):
@@ -906,12 +910,14 @@ def visualise_LGR_initial_registration(
     Args:
         anc_corr_points: Source point correspondences
         pos_corr_points: Target point correspondences
+        corr_scores: Correspondence scores
         transform: SE(3) transform from source to target
         save_dir: Directory to save plots
     """
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
     CORRESPONDENCE_COLOUR = [0, 1.0, 0]
+    CORRESPONDENCE_COLOURMAP = 'RdYlGn'
 
     # VOXEL_SIZE = 0.6
     anc_corr_points_o3d = make_open3d_point_cloud(anc_corr_points)
@@ -931,12 +937,12 @@ def visualise_LGR_initial_registration(
     )
 
     # Set colours
-    corr_points_lineset.paint_uniform_color(CORRESPONDENCE_COLOUR)
+    # corr_points_lineset.paint_uniform_color(CORRESPONDENCE_COLOUR)
 
-    # # Colourise correspondences by scores
-    # corr_points_lineset.colors = o3d.utility.Vector3dVector(
-    #     colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=False)
-    # )
+    # Colourise correspondences by scores
+    corr_points_lineset.colors = o3d.utility.Vector3dVector(
+        colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=True)
+    )
 
     # # Solid colours
     anc_corr_points_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
@@ -954,4 +960,5 @@ def visualise_LGR_initial_registration(
         filename='registration_LGR_initial_corr',
         non_interactive=non_interactive,
         zoom=zoom,
+        angle=angle,
     )

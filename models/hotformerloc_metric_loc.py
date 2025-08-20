@@ -478,6 +478,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     num_corr_points_ii,
                     best_anc_corr_points_ii,
                     best_pos_corr_points_ii,
+                    best_corr_scores_ii,
                     best_transform_ii,
                 ) = self.fine_matching(
                     anc_node_corr_knn_points_ii,
@@ -494,6 +495,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 output_dicts[batch_idx]['num_corr_points'] = num_corr_points_ii
                 output_dicts[batch_idx]['best_anc_corr_points'] = best_anc_corr_points_ii
                 output_dicts[batch_idx]['best_pos_corr_points'] = best_pos_corr_points_ii
+                output_dicts[batch_idx]['best_corr_scores'] = best_corr_scores_ii
                 # Ensure estimated transform is from anc to pos, not vice-versa
                 output_dicts[batch_idx]['estimated_transform'] = torch.inverse(estimated_transform_ii)
                 if best_transform_ii is not None:
