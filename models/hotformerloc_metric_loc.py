@@ -46,7 +46,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
     def __init__(
         self,
         hotformerloc_global: HOTFormerLoc,
-        coarse_feat_refiner: GeometricTransformer,
+        coarse_feat_refiner: Optional[GeometricTransformer],
         model_params: ModelParams,
         octree_depth: int,
         coarse_idx: int,
@@ -289,26 +289,27 @@ class HOTFormerMetricLoc(torch.nn.Module):
         # NOTE: Padding does change the output slightly, as it softens the softmax
         #       output, but is a difference on the order of 0.01-0.1 on average.
         tic = time.time()
-        if self.grad_checkpoint and self.training:
-            anc_feats_coarse_padded, pos_feats_coarse_padded = checkpoint(
-                self.coarse_feat_refiner,
-                anc_points_coarse_padded,
-                pos_points_coarse_padded,
-                anc_feats_coarse_padded,
-                pos_feats_coarse_padded,
-                anc_coarse_mask,
-                pos_coarse_mask,
-                use_reentrant=False,
-            )
-        else:
-            anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
-                anc_points_coarse_padded,
-                pos_points_coarse_padded,
-                anc_feats_coarse_padded,
-                pos_feats_coarse_padded,
-                anc_coarse_mask,
-                pos_coarse_mask,
-            )
+        if self.coarse_feat_refiner is not None:
+            if self.grad_checkpoint and self.training:
+                anc_feats_coarse_padded, pos_feats_coarse_padded = checkpoint(
+                    self.coarse_feat_refiner,
+                    anc_points_coarse_padded,
+                    pos_points_coarse_padded,
+                    anc_feats_coarse_padded,
+                    pos_feats_coarse_padded,
+                    anc_coarse_mask,
+                    pos_coarse_mask,
+                    use_reentrant=False,
+                )
+            else:
+                anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
+                    anc_points_coarse_padded,
+                    pos_points_coarse_padded,
+                    anc_feats_coarse_padded,
+                    pos_feats_coarse_padded,
+                    anc_coarse_mask,
+                    pos_coarse_mask,
+                )
         anc_feats_coarse_norm_padded = F.normalize(anc_feats_coarse_padded, p=2, dim=1)
         pos_feats_coarse_norm_padded = F.normalize(pos_feats_coarse_padded, p=2, dim=1)
         time_dict['geotrans forward'] = time.time() - tic
@@ -563,5 +564,6 @@ class HOTFormerMetricLoc(torch.nn.Module):
         print(f'  Coarse Feat Decoder: {type(self.coarse_feat_decoder).__name__}\t# parameters: {n_params}')
         n_params = sum([param.nelement() for param in self.fine_feat_decoder.parameters()])
         print(f'  Fine Feat Decoder: {type(self.fine_feat_decoder).__name__}\t# parameters: {n_params}')
-        n_params = sum([param.nelement() for param in self.coarse_feat_refiner.parameters()])
-        print(f'  Coarse Feat Refiner: {type(self.coarse_feat_refiner).__name__}\t# parameters: {n_params}')
+        if self.coarse_feat_refiner is not None:
+            n_params = sum([param.nelement() for param in self.coarse_feat_refiner.parameters()])
+            print(f'  Coarse Feat Refiner: {type(self.coarse_feat_refiner).__name__}\t# parameters: {n_params}')

@@ -148,6 +148,7 @@ class ModelParams:
                     if 'GEOTRANSFORMER' in config:
                         params = config['GEOTRANSFORMER']
                         self.geotransformer = edict()
+                        self.geotransformer.disable = params.getboolean('disable', False)  # disable geotransformer for coarse feat refinement (still does LGR with raw feats)
                         self.geotransformer.input_dim = params.getint('input_dim', 2048)  # NOTE: set this to `coarse_feat_embed_dim` if used, otherwise `channels[coarse_idx]`
                         self.geotransformer.hidden_dim = params.getint('hidden_dim', 128)
                         self.geotransformer.output_dim = params.getint('output_dim', 256)

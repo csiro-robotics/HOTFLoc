@@ -107,18 +107,21 @@ def model_factory(params: TrainingParams):
             input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
-        coarse_feat_refiner = GeometricTransformer(
-            input_dim=model_params.geotransformer.input_dim,
-            output_dim=model_params.geotransformer.output_dim,
-            hidden_dim=model_params.geotransformer.hidden_dim,
-            num_heads=model_params.geotransformer.num_heads,
-            blocks=model_params.geotransformer.blocks,
-            sigma_d=model_params.geotransformer.sigma_d,
-            sigma_a=model_params.geotransformer.sigma_a,
-            angle_k=model_params.geotransformer.angle_k,
-            activation_fn=model_params.geotransformer.activation_fn,
-            reduction_a=model_params.geotransformer.reduction_a,
-        )
+        if not model_params.geotransformer.disable:
+            coarse_feat_refiner = GeometricTransformer(
+                input_dim=model_params.geotransformer.input_dim,
+                output_dim=model_params.geotransformer.output_dim,
+                hidden_dim=model_params.geotransformer.hidden_dim,
+                num_heads=model_params.geotransformer.num_heads,
+                blocks=model_params.geotransformer.blocks,
+                sigma_d=model_params.geotransformer.sigma_d,
+                sigma_a=model_params.geotransformer.sigma_a,
+                angle_k=model_params.geotransformer.angle_k,
+                activation_fn=model_params.geotransformer.activation_fn,
+                reduction_a=model_params.geotransformer.reduction_a,
+            )
+        else:
+            coarse_feat_refiner = None
         model = HOTFormerMetricLoc(
             hotformerloc_global=hotformerloc_global,
             coarse_feat_refiner=coarse_feat_refiner,
