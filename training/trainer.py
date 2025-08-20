@@ -145,6 +145,7 @@ class NetworkTrainer:
             model_name = self.params.model_params.model
             if self.params.finetune:
                 # Save new model_pathname (combining weights name and model name)
+                self.params.finetune_path = self.model_pathname
                 orig_model_name = os.path.splitext(os.path.basename(self.model_pathname))[0]
                 model_name += f'--FINETUNE--{orig_model_name}'
             s = get_datetime()
