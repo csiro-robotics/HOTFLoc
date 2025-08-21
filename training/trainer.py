@@ -105,6 +105,7 @@ class NetworkTrainer:
             self.model_pathname = checkpoint_path.split(self.checkpoint_extension)[0]
             state = torch.load(checkpoint_path)
             if self.params.finetune:  # Finetuning
+                print(f'Begin fine-tuning of {self.model_pathname}')
                 if os.path.splitext(checkpoint_path)[1] == '.ckpt':
                     state = state['model_state_dict']
                 try:
@@ -118,11 +119,11 @@ class NetworkTrainer:
                 # Need to re-init model_ema to checkpoint weights
                 if self.model_ema is not None:
                     self.init_model_ema()
-                print(f'Begin fine-tuning of {self.model_pathname}')
 
             else:  # Resume training
                 try:
                     self.start_epoch = state['epoch']
+                    print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
                     self.curr_epoch = self.start_epoch
                     self.wandb_id = state['wandb_id']
                     self.best_avg_AR_1 = state['best_avg_AR_1']
@@ -138,7 +139,6 @@ class NetworkTrainer:
                         "in '.ckpt' are valid for resuming training."
                     )
                     raise ValueError(error_msg)
-                print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
 
         if (not self.resume) or self.params.finetune:
             # Create model class
