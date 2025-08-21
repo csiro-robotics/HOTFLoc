@@ -11,7 +11,7 @@ batch_expansion_th = 0.7
 val_batch_size = 256
 save_freq = 10
 eval_freq = 10
-eval_radius = 3, 20
+eval_radius = 3
 finetune = True
 
 lr = 3e-3
