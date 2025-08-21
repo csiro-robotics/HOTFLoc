@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-Oxford-up4fine-featembed256-conf0.20
+model = HOTFormerMetricLoc-Oxford-up4fine-featembed256-freezehotfloc
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
@@ -28,6 +28,7 @@ fine_idx = -4
 coarse_feat_embed_dim = 256
 fine_feat_embed_dim = 256
 metloc_mlp_ratio = 2.0
+freeze_hotformerloc = True
 
 [GEOTRANSFORMER]
 input_dim = 256
@@ -53,7 +54,7 @@ num_points_in_patch = 128
 topk = 2
 acceptance_radius = 0.6
 mutual = True
-confidence_threshold = 0.20
+confidence_threshold = 0.05
 use_dustbin = False
 use_global_score = False
 correspondence_threshold = 3

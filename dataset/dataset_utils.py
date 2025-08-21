@@ -230,54 +230,62 @@ def make_dataloaders(params: TrainingParams, local=False, validation=True) -> Di
     :rtype: dict
     """
     datasets = make_datasets(params, local=local, validation=validation)
+    quantizer = params.model_params.quantizer
 
     dataloaders = {}
-    train_sampler = BatchSampler(
-        datasets['global_train'],
-        batch_size=params.batch_size,
-        batch_size_limit=params.batch_size_limit,
-        batch_expansion_rate=params.batch_expansion_rate,
-        only_ground_aerial=params.only_ground_aerial,
-    )
 
-    # Collate function collates items into a batch and applies a 'set transform' on the entire batch
-    quantizer = params.model_params.quantizer
-    train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
-    dataloaders['global_train'] = DataLoader(
-        datasets['global_train'], batch_sampler=train_sampler,
-        collate_fn=train_collate_fn, num_workers=params.num_workers, pin_memory=True,
-    )
-    if validation and 'global_val' in datasets:
-        val_collate_fn = make_collate_fn(datasets['global_val'], quantizer, params)
-        val_sampler = BatchSampler(
-            datasets['global_val'], batch_size=params.val_batch_size,
-            only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
-        )
-        # Collate function collates items into a batch and applies a 'set transform' on the entire batch
-        # Currently validation dataset has empty set_transform function, but it may change in the future
-        dataloaders['global_val'] = DataLoader(
-            datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
-            num_workers=params.num_workers, pin_memory=True,
-        )
-
-    if params.secondary_dataset_name is not None:
-        secondary_train_sampler = BatchSampler(
-            datasets['secondary_train'],
+    if not params.model_params.freeze_hotformerloc:
+        train_sampler = BatchSampler(
+            datasets['global_train'],
             batch_size=params.batch_size,
-            batch_size_limit=params.secondary_batch_size_limit,
+            batch_size_limit=params.batch_size_limit,
             batch_expansion_rate=params.batch_expansion_rate,
             only_ground_aerial=params.only_ground_aerial,
-            max_batches=2000,
-        )  # NOTE: max batches should change for diff batch sizes
-
-        secondary_train_collate_fn = make_collate_fn(datasets['secondary_train'], quantizer, params)
-        dataloaders['secondary_train'] = DataLoader(
-            datasets['secondary_train'], batch_sampler=secondary_train_sampler,
-            collate_fn=secondary_train_collate_fn, num_workers=params.num_workers,
-            pin_memory=True,
         )
-        # No local phase for secondary (for now), so endlessly loop
-        dataloaders['local_secondary_train'] = repeat(None)
+
+        # Collate function collates items into a batch and applies a 'set transform' on the entire batch
+        train_collate_fn = make_collate_fn(datasets['global_train'], quantizer, params)
+        dataloaders['global_train'] = DataLoader(
+            datasets['global_train'], batch_sampler=train_sampler,
+            collate_fn=train_collate_fn, num_workers=params.num_workers, pin_memory=True,
+        )
+        if validation and 'global_val' in datasets:
+            val_collate_fn = make_collate_fn(datasets['global_val'], quantizer, params)
+            val_sampler = BatchSampler(
+                datasets['global_val'], batch_size=params.val_batch_size,
+                only_ground_aerial=params.is_cross_source_dataset,  # val is only ground-aerial for cross-source data
+            )
+            # Collate function collates items into a batch and applies a 'set transform' on the entire batch
+            # Currently validation dataset has empty set_transform function, but it may change in the future
+            dataloaders['global_val'] = DataLoader(
+                datasets['global_val'], batch_sampler=val_sampler, collate_fn=val_collate_fn,
+                num_workers=params.num_workers, pin_memory=True,
+            )
+
+        if params.secondary_dataset_name is not None:
+            secondary_train_sampler = BatchSampler(
+                datasets['secondary_train'],
+                batch_size=params.batch_size,
+                batch_size_limit=params.secondary_batch_size_limit,
+                batch_expansion_rate=params.batch_expansion_rate,
+                only_ground_aerial=params.only_ground_aerial,
+                max_batches=2000,
+            )  # NOTE: max batches should change for diff batch sizes
+
+            secondary_train_collate_fn = make_collate_fn(datasets['secondary_train'], quantizer, params)
+            dataloaders['secondary_train'] = DataLoader(
+                datasets['secondary_train'], batch_sampler=secondary_train_sampler,
+                collate_fn=secondary_train_collate_fn, num_workers=params.num_workers,
+                pin_memory=True,
+            )
+            # No local phase for secondary (for now), so endlessly loop
+            dataloaders['local_secondary_train'] = repeat(None)
+    else:  # Endlessly return None for global dataloader
+        dataloaders['global_train'] = repeat(None)
+        if params.secondary_dataset_name is not None:
+            dataloaders['secondary_train'] = repeat(None)
+        if validation:
+            dataloaders['global_val'] = repeat(None)
 
     if local:
         train_collate_fn_loc = make_collate_fn_6DOF(quantizer, params)

@@ -79,10 +79,14 @@ class NetworkTrainer:
         """
         self.params = params
         checkpoint_path = kwargs.get('checkpoint_path')
+        finetune_path = kwargs.get('finetune_path')
         self.resume = checkpoint_path is not None
-        if self.params.finetune and not self.resume:
-            raise ValueError('Cannot fine-tune without specifying weights (use `--resume_from`)')
+        self.finetune = finetune_path is not None
+        assert not (self.resume and self.finetune), 'Cannot resume training and finetune'
 
+        if self.finetune:
+            self.params.finetune = True
+            self.params.finetune_path = finetune_path
         # Set params for hyperparam search
         if not self.resume:
             if self.params.hyperparam_search:
@@ -101,51 +105,50 @@ class NetworkTrainer:
         self.init_model_optim_sched()
         
         # Load state from ckpt if resubmitted, otherwise start from scratch
-        if self.resume:
+        if self.finetune:  # Finetuning
+            self.model_pathname = finetune_path
+            print(f'Begin fine-tuning of {self.model_pathname}')
+            state = torch.load(finetune_path)
+            if os.path.splitext(finetune_path)[1] == '.ckpt':
+                state = state['model_state_dict']
+            try:
+                self.model.load_state_dict(state)
+            except RuntimeError:
+                # Check if HOTFormerLoc weights are being loaded for HOTFormerMetricLoc
+                if isinstance(self.model, HOTFormerMetricLoc):
+                    self.model.hotformerloc_global.load_state_dict(state)
+                else:
+                    raise
+            # Need to re-init model_ema to checkpoint weights
+            if self.model_ema is not None:
+                self.init_model_ema()
+        elif self.resume:  # Resume training
             self.model_pathname = checkpoint_path.split(self.checkpoint_extension)[0]
             state = torch.load(checkpoint_path)
-            if self.params.finetune:  # Finetuning
-                print(f'Begin fine-tuning of {self.model_pathname}')
-                if os.path.splitext(checkpoint_path)[1] == '.ckpt':
-                    state = state['model_state_dict']
-                try:
-                    self.model.load_state_dict(state)
-                except RuntimeError:
-                    # Check if HOTFormerLoc weights are being loaded for HOTFormerMetricLoc
-                    if isinstance(self.model, HOTFormerMetricLoc):
-                        self.model.hotformerloc_global.load_state_dict(state)
-                    else:
-                        raise
-                # Need to re-init model_ema to checkpoint weights
+            try:
+                self.start_epoch = state['epoch']
+                print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
+                self.curr_epoch = self.start_epoch
+                self.wandb_id = state['wandb_id']
+                self.best_avg_AR_1 = state['best_avg_AR_1']
+                self.model.load_state_dict(state['model_state_dict'])
+                self.optimizer.load_state_dict(state['optim_state_dict'])
+                if self.scheduler is not None:
+                    self.scheduler.load_state_dict(state['sched_state_dict'])
                 if self.model_ema is not None:
-                    self.init_model_ema()
+                    self.model_ema.load_state_dict(state['model_ema_state_dict'])
+            except KeyError:
+                error_msg = (
+                    "Invalid checkpoint file provided. Only files ending "
+                    "in '.ckpt' are valid for resuming training."
+                )
+                raise ValueError(error_msg)
 
-            else:  # Resume training
-                try:
-                    self.start_epoch = state['epoch']
-                    print(f'Resuming training of {self.model_pathname} from epoch {self.start_epoch}')
-                    self.curr_epoch = self.start_epoch
-                    self.wandb_id = state['wandb_id']
-                    self.best_avg_AR_1 = state['best_avg_AR_1']
-                    self.model.load_state_dict(state['model_state_dict'])
-                    self.optimizer.load_state_dict(state['optim_state_dict'])
-                    if self.scheduler is not None:
-                        self.scheduler.load_state_dict(state['sched_state_dict'])
-                    if self.model_ema is not None:
-                        self.model_ema.load_state_dict(state['model_ema_state_dict'])
-                except KeyError:
-                    error_msg = (
-                        "Invalid checkpoint file provided. Only files ending "
-                        "in '.ckpt' are valid for resuming training."
-                    )
-                    raise ValueError(error_msg)
-
-        if (not self.resume) or self.params.finetune:
+        if (not self.resume) or self.finetune:
             # Create model class
             model_name = self.params.model_params.model
-            if self.params.finetune:
+            if self.finetune:
                 # Save new model_pathname (combining weights name and model name)
-                self.params.finetune_path = self.model_pathname
                 orig_model_name = os.path.splitext(os.path.basename(self.model_pathname))[0]
                 model_name += f'--FINETUNE--{orig_model_name}'
             s = get_datetime()
@@ -317,7 +320,8 @@ class NetworkTrainer:
         self.logger.info(s)
 
     def print_stats(self, phase, stats):
-        self.print_global_stats(phase, stats['global'])
+        if not self.params.model_params.freeze_hotformerloc and 'global' in stats:
+            self.print_global_stats(phase, stats['global'])
         if self.params.local.enable_local and 'local' in stats:
             self.print_local_stats(phase, stats['local'])
     
@@ -1031,7 +1035,8 @@ class NetworkTrainer:
                 self.trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
             wandb.init(project='HOTFormerLoc', config=params_dict, id=self.wandb_id, resume="allow")
             self.wandb_id = wandb.run.id
-            wandb.watch(self.model, log='all', log_freq=self.params.embeddings_log_freq)
+            if self.params.log_grads:
+                wandb.watch(self.model, log='all', log_freq=self.params.embeddings_log_freq)
 
         ########################################################################
         # Training Loop
@@ -1083,13 +1088,14 @@ class NetworkTrainer:
                     if self.params.debug and self.count_batches > 2:
                         break
                     
-                    self.logger.debug(f"Global batch {self.count_batches} start")
-                    temp_global_stats, temp_global_embeddings = global_train_step_fn(
-                        global_batch, phase, global_loss_fn, qkv_loss_fn,
-                        self.params.num_embeddings_logged, mesa
-                    )
-                    self.logger.debug(f"Global batch {self.count_batches} end")
-                    batch_stats['global'] = temp_global_stats
+                    if not self.params.model_params.freeze_hotformerloc and global_batch is not None:
+                        self.logger.debug(f"Global batch {self.count_batches} start")
+                        temp_global_stats, temp_global_embeddings = global_train_step_fn(
+                            global_batch, phase, global_loss_fn, qkv_loss_fn,
+                            self.params.num_embeddings_logged, mesa
+                        )
+                        batch_stats['global'] = temp_global_stats
+                        self.logger.debug(f"Global batch {self.count_batches} end")
                     
                     if self.params.local.enable_local and local_batch is not None:
                         self.logger.debug(f"Local batch {self.count_batches} start")
@@ -1110,7 +1116,8 @@ class NetworkTrainer:
 
                     running_stats.append(batch_stats)
                     if (epoch % self.params.embeddings_log_freq == 0
-                        and self.count_batches == 1 and 'train' in phase):  # log embeddings once per epoch
+                        and self.count_batches == 1 and 'train' in phase
+                        and global_batch is not None):  # log embeddings once per epoch
                         epoch_embeddings = temp_global_embeddings
 
                 # Log average gradients per stage
@@ -1176,20 +1183,21 @@ class NetworkTrainer:
                 # Dynamic batch size expansion based on number of non-zero triplets
                 # Ratio of non-zero triplets
                 le_train_stats = stats['train'][-1]  # Last epoch training stats
-                rnz = (
-                    le_train_stats['global']['num_non_zero_triplets']
-                    / le_train_stats['global']['num_triplets']
-                )
-                if rnz < self.params.batch_expansion_th:
-                    dataloaders['global_train'].batch_sampler.expand_batch()
-                if self.params.secondary_dataset_name is not None:
-                    le_secondary_train_stats = stats['secondary_train'][-1]
+                if 'global' in le_train_stats:
                     rnz = (
-                        le_secondary_train_stats['global']['num_non_zero_triplets']
-                        / le_secondary_train_stats['global']['num_triplets']
+                        le_train_stats['global']['num_non_zero_triplets']
+                        / le_train_stats['global']['num_triplets']
                     )
                     if rnz < self.params.batch_expansion_th:
-                        dataloaders['secondary_train'].batch_sampler.expand_batch()
+                        dataloaders['global_train'].batch_sampler.expand_batch()
+                    if self.params.secondary_dataset_name is not None:
+                        le_secondary_train_stats = stats['secondary_train'][-1]
+                        rnz = (
+                            le_secondary_train_stats['global']['num_non_zero_triplets']
+                            / le_secondary_train_stats['global']['num_triplets']
+                        )
+                        if rnz < self.params.batch_expansion_th:
+                            dataloaders['secondary_train'].batch_sampler.expand_batch()
 
         # Save final model weights
         if not self.params.debug:
@@ -1249,50 +1257,51 @@ class NetworkTrainer:
     def get_wandb_metrics(self, epoch_stats: tp.Dict[str, tp.Dict]) -> tp.Dict:
         metrics = {}
         # Global Metrics
-        metrics['loss1'] = epoch_stats['global']['loss']
-        metrics['loss_total'] = epoch_stats['global']['loss_total']
-        if 'num_non_zero_triplets' in epoch_stats['global']:
-            metrics['active_triplets1'] = epoch_stats['global']['num_non_zero_triplets']
-        if 'positive_ranking' in epoch_stats['global']:
-            metrics['positive_ranking'] = epoch_stats['global']['positive_ranking']
-        if 'recall' in epoch_stats['global']:
-            metrics['recall@1'] = epoch_stats['global']['recall'][1]
-        if 'ap' in epoch_stats['global']:
-            metrics['AP'] = epoch_stats['global']['ap']
-        if 'loss_mesa' in epoch_stats['global']:
-            metrics['loss_mesa'] = epoch_stats['global']['loss_mesa']
-        if 'local_qkv_std_loss' in epoch_stats['global']:
-            metrics['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
-        if 'local_qkv_std' in epoch_stats['global']:
-            metrics['local_qkv_std'] = epoch_stats['global']['local_qkv_std']
-        if 'rt_qkv_std_loss' in epoch_stats['global']:
-            metrics['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
-        if 'rt_qkv_std' in epoch_stats['global']:
-            metrics['rt_qkv_std'] = epoch_stats['global']['rt_qkv_std']
-        if 'qkv_weight_norm_loss' in epoch_stats['global']:
-            metrics['qkv_weight_norm_loss'] = epoch_stats['global']['qkv_weight_norm_loss']
-        if 'qkv_weight_norm' in epoch_stats['global']:
-            metrics['qkv_weight_norm'] = epoch_stats['global']['qkv_weight_norm']
-        if 'rt_attn_map' in epoch_stats['global']:
-            metrics['rt_attn_map'] = epoch_stats['global']['rt_attn_map']
-        if 'local_attn_map' in epoch_stats['global']:
-            metrics['local_attn_map'] = epoch_stats['global']['local_attn_map']
-        if 'local_rpe' in epoch_stats['global']:
-            metrics['local_rpe'] = epoch_stats['global']['local_rpe']
-        if 'rt_token_unique_sim' in epoch_stats['global']:
-            metrics['rt_token_unique_sim'] = epoch_stats['global']['rt_token_unique_sim']
-        if 'local_token_unique_sim' in epoch_stats['global']:
-            metrics['local_token_unique_sim'] = epoch_stats['global']['local_token_unique_sim']
-        if 'rt_token_sim_matrix' in epoch_stats['global']:
-            metrics['rt_token_sim_matrix'] = epoch_stats['global']['rt_token_sim_matrix']
-        if 'local_token_sim_matrix' in epoch_stats['global']:
-            metrics['local_token_sim_matrix'] = epoch_stats['global']['local_token_sim_matrix']
-        if 'pointcloud' in epoch_stats['global']:
-            metrics['pointcloud'] = epoch_stats['global']['pointcloud']
-        if 'pca_variance' in epoch_stats['global']:
-            metrics['pca_variance'] = epoch_stats['global']['pca_variance']
-        if 'pointcloud_umap' in epoch_stats['global']:
-            metrics['pointcloud_umap'] = epoch_stats['global']['pointcloud_umap']
+        if not self.params.model_params.freeze_hotformerloc and 'global' in epoch_stats:
+            metrics['loss1'] = epoch_stats['global']['loss']
+            metrics['loss_total'] = epoch_stats['global']['loss_total']
+            if 'num_non_zero_triplets' in epoch_stats['global']:
+                metrics['active_triplets1'] = epoch_stats['global']['num_non_zero_triplets']
+            if 'positive_ranking' in epoch_stats['global']:
+                metrics['positive_ranking'] = epoch_stats['global']['positive_ranking']
+            if 'recall' in epoch_stats['global']:
+                metrics['recall@1'] = epoch_stats['global']['recall'][1]
+            if 'ap' in epoch_stats['global']:
+                metrics['AP'] = epoch_stats['global']['ap']
+            if 'loss_mesa' in epoch_stats['global']:
+                metrics['loss_mesa'] = epoch_stats['global']['loss_mesa']
+            if 'local_qkv_std_loss' in epoch_stats['global']:
+                metrics['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
+            if 'local_qkv_std' in epoch_stats['global']:
+                metrics['local_qkv_std'] = epoch_stats['global']['local_qkv_std']
+            if 'rt_qkv_std_loss' in epoch_stats['global']:
+                metrics['rt_qkv_std_loss'] = epoch_stats['global']['rt_qkv_std_loss']
+            if 'rt_qkv_std' in epoch_stats['global']:
+                metrics['rt_qkv_std'] = epoch_stats['global']['rt_qkv_std']
+            if 'qkv_weight_norm_loss' in epoch_stats['global']:
+                metrics['qkv_weight_norm_loss'] = epoch_stats['global']['qkv_weight_norm_loss']
+            if 'qkv_weight_norm' in epoch_stats['global']:
+                metrics['qkv_weight_norm'] = epoch_stats['global']['qkv_weight_norm']
+            if 'rt_attn_map' in epoch_stats['global']:
+                metrics['rt_attn_map'] = epoch_stats['global']['rt_attn_map']
+            if 'local_attn_map' in epoch_stats['global']:
+                metrics['local_attn_map'] = epoch_stats['global']['local_attn_map']
+            if 'local_rpe' in epoch_stats['global']:
+                metrics['local_rpe'] = epoch_stats['global']['local_rpe']
+            if 'rt_token_unique_sim' in epoch_stats['global']:
+                metrics['rt_token_unique_sim'] = epoch_stats['global']['rt_token_unique_sim']
+            if 'local_token_unique_sim' in epoch_stats['global']:
+                metrics['local_token_unique_sim'] = epoch_stats['global']['local_token_unique_sim']
+            if 'rt_token_sim_matrix' in epoch_stats['global']:
+                metrics['rt_token_sim_matrix'] = epoch_stats['global']['rt_token_sim_matrix']
+            if 'local_token_sim_matrix' in epoch_stats['global']:
+                metrics['local_token_sim_matrix'] = epoch_stats['global']['local_token_sim_matrix']
+            if 'pointcloud' in epoch_stats['global']:
+                metrics['pointcloud'] = epoch_stats['global']['pointcloud']
+            if 'pca_variance' in epoch_stats['global']:
+                metrics['pca_variance'] = epoch_stats['global']['pca_variance']
+            if 'pointcloud_umap' in epoch_stats['global']:
+                metrics['pointcloud_umap'] = epoch_stats['global']['pointcloud_umap']
         # Local Metrics
         if not (self.params.local.enable_local and 'local' in epoch_stats):
             return metrics

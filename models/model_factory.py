@@ -132,6 +132,7 @@ def model_factory(params: TrainingParams):
             coarse_feat_embed_dim=model_params.coarse_feat_embed_dim,
             fine_feat_embed_dim=model_params.fine_feat_embed_dim,
             mlp_ratio=model_params.metloc_mlp_ratio,
+            freeze_hotformerloc=model_params.freeze_hotformerloc,
             quantizer=model_params.quantizer,
             grad_checkpoint=model_params.grad_checkpoint,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,

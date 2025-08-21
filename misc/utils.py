@@ -145,6 +145,7 @@ class ModelParams:
                     #######################################################################
                     # HOTFormerMetricLoc-specific params
                     #######################################################################
+                    self.freeze_hotformerloc = params.getboolean('freeze_hotformerloc', False)  # Freeze HOTFloc layers, only train metric loc
                     if 'GEOTRANSFORMER' in config:
                         params = config['GEOTRANSFORMER']
                         self.geotransformer = edict()
@@ -248,11 +249,13 @@ class TrainingParams:
         self.num_embeddings_logged = params.getint('num_embeddings_logged', 20)  # Number of embeddings to log at each epoch
         self.num_workers = params.getint('num_workers', 0)
         self.wandb = params.getboolean('wandb', True)  # enable wandb logging
+        self.log_grads = params.getboolean('log_grads', True)  # Log gradients (and weights) to wandb
         if 'eval_radius' in params:  # thresholds to evaluate PR at
             self.eval_radius = tuple([float(e) for e in params['eval_radius'].split(',')])
         else:
             self.eval_radius = tuple([5., 20.])
-        self.finetune = params.getboolean('finetune', False)  # Finetune from weights (if True, `--resume_from` resets epoch counter)
+        self.finetune = params.getboolean('finetune', False)  # DEPRECATED Finetune from weights (if True, `--resume_from` resets epoch counter)
+        self.finetune = False
         self.finetune_path = None  # Placeholder, value set in `trainer.py`
 
         # Initial batch size for global descriptors (for both main and secondary dataset)

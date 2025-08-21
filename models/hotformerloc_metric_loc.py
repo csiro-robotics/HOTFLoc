@@ -53,6 +53,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         fine_idx: int,
         coarse_feat_embed_dim: Optional[int] = None,
         fine_feat_embed_dim: Optional[int] = None,
+        freeze_hotformerloc: bool = False,
         mlp_ratio: float = 2.0,
         quantizer: Optional[CoordinateSystem] = None,
         grad_checkpoint: bool = True,
@@ -73,7 +74,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
                             (sorted from finest to coarsest). Supports negative indices.
             coarse_feat_embed_dim (int): Embedding dim for coarse features (using MLP), set None to disable
             fine_feat_embed_dim (int): Embedding dim for fine features (using MLP), set None to disable
-            mlp_ratio: float = 2.0,
+            mlp_ratio: MLP Ratio in embedding layer
+            freeze_hotformerloc: Freeze HOTFormerLoc backbone layers
             depth_coarse (int): Octree depth of coarse features (must correspond to depth of OctFormer/HOTFormer blocks))
             depth_fine (int): Octree depth of fine features (must correspond to depth of OctFormer/HOTFormer blocks))
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
@@ -93,6 +95,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.coarse_feat_embed_dim = coarse_feat_embed_dim
         self.fine_feat_embed_dim = fine_feat_embed_dim
         self.mlp_ratio = mlp_ratio
+        self.freeze_hotformerloc = freeze_hotformerloc
         self.octree_depth = octree_depth
         self.compute_depth_from_idx()
         self.get_input_dim()
@@ -107,6 +110,10 @@ class HOTFormerMetricLoc(torch.nn.Module):
         if self.depth_coarse < 1:
             err_str = 'Select a valid feature depth (minimum 1)'
             raise ValueError(err_str)
+
+        if self.freeze_hotformerloc:
+            for param in self.hotformerloc_global.parameters():
+                param.requires_grad = False
 
         self.coarse_feat_decoder = MLP(
             self.coarse_feat_input_dim,

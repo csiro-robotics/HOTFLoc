@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-Oxford-Up4Fine
+model = HOTFormerMetricLoc-Oxford-up4fine-featembed256
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
