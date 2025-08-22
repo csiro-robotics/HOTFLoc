@@ -27,7 +27,9 @@ if __name__ == "__main__":
     parser.add_argument('--model_config', type=str, required=True,
                         help='Path to the base model configuration file')
     parser.add_argument('--resume_from', type=str, default=None,
-                        help='Resume from the given checkpoint. Ensure config and model_config matches the supplied checkpoint.')
+                        help='Resume training from the given checkpoint. Ensure config and model_config matches the supplied checkpoint.')
+    parser.add_argument('--finetune_from', type=str, default=None,
+                        help='Finetune from the given checkpoint. Ensure config and model_config matches the supplied checkpoint.')
     parser.add_argument('--log_folder', type=str, default='submitit_logs',
                         help='Path to store submitit logs and pickles')
     parser.add_argument('--job_days', type=float, default=7.0,
@@ -47,8 +49,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     print('Base config path: {}'.format(args.config))
     print('Base model config path: {}'.format(args.model_config))
+    assert not (args.resume_from is not None and args.finetune_from is not None), (
+        'Conflicting options, cannot resume training and finetune'
+    )
     if args.resume_from is not None:
         print('Resuming from checkpoint path: {}'.format(args.resume_from))
+    if args.finetune_from is not None:
+        print('Finetuning from checkpoint path: {}'.format(args.finetune_from))
     print('Log folder: {}'.format(args.log_folder))
     print('Days requested: {}'.format(args.job_days))
     print('CPUs (per node) requested: {}'.format(args.job_cpus))
@@ -82,7 +89,12 @@ if __name__ == "__main__":
     )
     executor.update_parameters(name=params.model_params.model, **job_config)
     training_callable = NetworkTrainer()
-    job = executor.submit(training_callable, params, checkpoint_path=args.resume_from)
+    job = executor.submit(
+        training_callable,
+        params,
+        checkpoint_path=args.resume_from,
+        finetune_path=args.finetune_from,
+    )
     # executor.map_array(do_train, params_list)  # pure submitit method
 
     print(f"Job {job.job_id} submitted")
