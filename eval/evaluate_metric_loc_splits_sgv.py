@@ -343,6 +343,13 @@ def get_metrics(
     # return np.ones(25, np.float32), 1.0, 1.0
     # ##########################
 
+    # Determine if using unfair RTE and RRE protocol
+    unfair_rre_rte = False
+    try:
+        unfair_rre_rte = getattr(args, 'unfair_rte_rre', False)
+    except NameError:  # if called from trainer.py, args will not exist
+        pass
+
     # Dictionary to store the number of true positives (for global desc. metrics) for different radius and NN number
     global_metrics = {
         'rr_failures': [],
@@ -360,9 +367,9 @@ def get_metrics(
     if not only_global:
         for eval_mode in EVAL_MODES:
             local_metrics[eval_mode] = {
+                'success': [],
                 'rre': [],
                 'rte': [],
-                'success': [],
                 'coarse_IR': [],
                 'fine_IR': [],
                 'fine_overlap': [],
@@ -377,16 +384,16 @@ def get_metrics(
             }
             if use_ransac:
                 local_metrics[eval_mode].update({
+                'success_ransac': [],
                 'rre_ransac': [],
                 'rte_ransac': [],
-                'success_ransac': [],
                 't_ransac': [],
                 })
             if icp_refine:
                 local_metrics[eval_mode].update({
+                'success_refined': [],
                 'rre_refined': [],
                 'rte_refined': [],
-                'success_refined': [],
                 'failure_query_pos_ndx_refined': [],
                 't_metloc_refined': []
                 })
@@ -640,20 +647,30 @@ def get_metrics(
             local_metrics[eval_mode]['fine_overlap'].append(temp_metrics['OV'])
             local_metrics[eval_mode]['fine_residual'].append(temp_metrics['residual'])
             local_metrics[eval_mode]['fine_num_corr'].append(temp_metrics['num_corr'])
-            local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
-            local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
             local_metrics[eval_mode]['success'].append(temp_metrics['success_lgr'])
+            if unfair_rre_rte and temp_metrics['success_lgr'] == 1.0:
+                local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
+                local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
+            else:
+                if not unfair_rre_rte:
+                    local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
+                    local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
             local_metrics[eval_mode]['num_pts_per_patch'].append(temp_metrics['num_pts_per_patch'])
             local_metrics[eval_mode]['num_corr_patches_lgr'].append(temp_metrics['num_corr_patches_lgr'])
             local_metrics[eval_mode]['num_corr_pts_per_patch_lgr'].append(temp_metrics['num_corr_pts_per_patch_lgr'])
             local_metrics[eval_mode]['corr_score_lgr'].append(temp_metrics['corr_score_lgr'])
-            if temp_metrics['success_lgr'] == 0:  # NOTE: Check this actually works, may be invalid
+            if temp_metrics['success_lgr'] == 0:
                 local_metrics[eval_mode]['failure_query_pos_ndx'].append((query_idx, nn_idx))
             local_metrics[eval_mode]['t_metloc'].append(t_metloc)  # Metric Loc time
             if use_ransac:
-                local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
-                local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
                 local_metrics[eval_mode]['success_ransac'].append(temp_metrics['success_ransac'])
+                if unfair_rre_rte and temp_metrics['success_ransac'] == 1.0:
+                    local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
+                    local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
+                else:
+                    if not unfair_rre_rte:
+                        local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
+                        local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
                 local_metrics[eval_mode]['t_ransac'].append(temp_metrics['t_ransac'])
 
             if icp_refine:
@@ -664,9 +681,14 @@ def get_metrics(
                 temp_metrics_refined = compute_geotransformer_metrics(
                     model_out_np, batch_temp_np, params, use_ransac=False,  # RANSAC already computed once
                 )
-                local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
-                local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
                 local_metrics[eval_mode]['success_refined'].append(temp_metrics_refined['success_lgr'])
+                if unfair_rre_rte and temp_metrics_refined['success_lgr'] == 1.0:
+                    local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
+                    local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
+                else:
+                    if not unfair_rre_rte:
+                        local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
+                        local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
                 if temp_metrics_refined['success_lgr'] == 0:
                     local_metrics[eval_mode]['failure_query_pos_ndx_refined'].append((query_idx, nn_idx))
                 local_metrics[eval_mode]['t_metloc_refined'].append(t_metloc + t_icp)  # Metric Loc Refined time
@@ -931,6 +953,7 @@ if __name__ == "__main__":
                         help=('Load embeddings from disk. Note this script will only check if '
                               'weights paths match, not if the configs used match.'))
     parser.add_argument('--print_false_positives', action='store_true', help='Print list of query and false positive retrieval indices')
+    parser.add_argument('--unfair_rte_rre', action='store_true', help='Use unfair RTE and RRE evaluation from EgoNN (only computed on metric localisation successes)')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
@@ -954,6 +977,7 @@ if __name__ == "__main__":
     print(f'Save embeddings: {args.save_embeddings}')
     print(f'Load embeddings: {args.load_embeddings}')
     print(f'Print false positives: {args.print_false_positives}')
+    print(f'Unfair RTE RRE: {args.unfair_rte_rre}')
     print('Debug mode: {}'.format(args.debug))
     print('Log search results: {}'.format(args.log))
     print('')
