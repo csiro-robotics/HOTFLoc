@@ -186,6 +186,10 @@ def evaluate_dataset(
                 if i != 1:
                     continue
                 split_name = os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0] + f'_idx{i}'
+            elif params.dataset_name == 'WildPlaces':
+                # For WildPlaces, there are multiple databases per query set, so add both to split name
+                split_name = (os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0]
+                              + '-' + query_sets[j][0]['query'].split('/')[1])
             else:
                 split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
             temp_global_metrics, temp_local_metrics = get_metrics(
@@ -926,6 +930,7 @@ if __name__ == "__main__":
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
                               'weights paths match, not if the configs used match.'))
+    parser.add_argument('--print_false_positives', action='store_true', help='Print list of query and false positive retrieval indices')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
@@ -948,6 +953,7 @@ if __name__ == "__main__":
         args.save_embeddings = False
     print(f'Save embeddings: {args.save_embeddings}')
     print(f'Load embeddings: {args.load_embeddings}')
+    print(f'Print false positives: {args.print_false_positives}')
     print('Debug mode: {}'.format(args.debug))
     print('Log search results: {}'.format(args.log))
     print('')
@@ -1009,7 +1015,7 @@ if __name__ == "__main__":
         load_embeddings=args.load_embeddings,
     )
     print_eval_stats(
-        global_metrics, local_metrics, icp_refine=args.icp_refine, print_false_positives=False,
+        global_metrics, local_metrics, icp_refine=args.icp_refine, print_false_positives=args.print_false_positives,
     )
 
     write_eval_stats(
@@ -1018,5 +1024,5 @@ if __name__ == "__main__":
         global_metrics,
         local_metrics,
         icp_refine=args.icp_refine,
-        log_false_positives=False,
+        log_false_positives=args.print_false_positives,
     )
