@@ -72,6 +72,16 @@ class TrainTransform:
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01)])
+        elif self.aug_mode == 4:
+            # Augmentations with random rotation around z-axis, and random occlusions (smaller max angle)
+            t.append(RandomOcclusion(p=0.5, theta_range=(10, 45)))  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
+            if self.normalize_points:
+                t.append(Normalize(scale_factor=self.scale_factor,
+                                   unit_sphere_norm=self.unit_sphere_norm,
+                                   zero_mean=self.zero_mean))
+            t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
+                      RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
+                      RandomTranslation(max_delta=0.01)])
         elif self.aug_mode == 0:    # No augmentations
             if self.normalize_points:
                 t.append(Normalize(scale_factor=self.scale_factor,
@@ -165,6 +175,18 @@ class Train6DOFTransform:
             # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
             t.extend([JitterPoints(sigma=0.1), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomOcclusion(p=0.5)])
+            self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
+                                                     axis=np.array([0, 0, 1]),
+                                                     return_rotation=True)
+            # Translation only in xy plane
+            self.translation_transform = RandomTranslation(axis=np.array([1, 1, 0]),
+                                                           max_delta=5,
+                                                           return_translation=True)
+        elif self.local_aug_mode == 4:
+            # Same as above but with random point removal and occlusions instead of block removal (with smaller max angle)
+            # Note that this is in unnormalized coordinates, as opposed to the global branch transforms
+            t.extend([JitterPoints(sigma=0.1), RemoveRandomPoints(r=(0.0, 0.2)),
+                      RandomOcclusion(p=0.5, theta_range=(10, 45))])
             self.rotation_transform = RandomRotation(max_theta=random_rot_theta,
                                                      axis=np.array([0, 0, 1]),
                                                      return_rotation=True)
