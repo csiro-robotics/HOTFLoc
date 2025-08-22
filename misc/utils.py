@@ -400,7 +400,7 @@ class TrainingParams:
             # eval with ransac
             self.local.ransac_distance_threshold = params.getfloat('ransac_distance_threshold', 0.3)
             self.local.ransac_num_points = params.getint('ransac_num_points', 4)
-            self.local.ransac_num_iterations = params.getint('ransac_num_iterations', 50000)
+            self.local.ransac_num_iterations = params.getint('ransac_num_iterations', 20000)
 
         # loss - Coarse level
         if 'COARSE LOSS' in config:
