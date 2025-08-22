@@ -175,7 +175,7 @@ class LocalGlobalRegistration(nn.Module):
         num_corr_points = [y - x for (x, y) in chunks] if len(chunks) > 0 else [0]
 
         batch_size = len(chunks)
-        best_ref_corr_points, best_src_corr_points, best_transform = [None]*3
+        best_ref_corr_points, best_src_corr_points, best_transform, best_corr_scores = [None]*4
         if batch_size > 0:
             # local registration
             batch_ref_corr_points, batch_src_corr_points, batch_corr_scores = self.convert_to_batch(

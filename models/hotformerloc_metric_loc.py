@@ -422,6 +422,14 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_target(
                         gt_node_corr_indices_ii, gt_node_corr_overlaps_ii
                     )
+                if len(node_corr_scores_ii) == 0:
+                    log_str = (
+                        'No ground truth node correspondences found -- check '
+                        '`ground_truth_matching_radius`, `overlap_threshold`, and '
+                        'coarse/fine resolutions (likely too coarse) -- '
+                        'this will cause NaNs to be logged'
+                    )
+                    logging.warning(log_str)
 
         # # TODO: CONTINUE LOOP FROM HERE, BUT THINK ABOUT HOW TO HANDLE EVAL
 
