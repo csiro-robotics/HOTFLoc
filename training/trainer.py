@@ -873,6 +873,7 @@ class NetworkTrainer:
                 #     self.model_ema.update(self.model)
 
             stats['loss_total'] = loss.item()
+            self.logger.debug(f'Global loss: {loss.item():.4f}')
 
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
@@ -948,6 +949,7 @@ class NetworkTrainer:
             #     stats.update(temp_stats)
             #     loss += qkv_loss
             stats['loss_total'] = loss.item()
+            self.logger.debug(f'Global loss: {loss.item():.4f}')
             if 'train' in phase:
                 self.grad_scaler.scale(loss).backward()
                 embeddings_grad = embeddings.grad
@@ -997,6 +999,7 @@ class NetworkTrainer:
 
             # Average loss and metrics
             batch_local_loss = torch.stack(batch_local_loss).mean()
+            self.logger.debug(f'Local loss: {batch_local_loss.item():.4f}')
             batch_metrics = metrics_mean(batch_metrics)
 
         if 'train' in phase:
