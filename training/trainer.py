@@ -66,6 +66,8 @@ class NetworkTrainer:
         self.count_batches = 0
         self.best_avg_AR_1 = 0.0
         self.checkpoint_extension = '_latest.ckpt'
+        self.curr_global_batch_size = None
+        self.curr_secondary_global_batch_size = None
         
     def __call__(
         self,
@@ -137,6 +139,11 @@ class NetworkTrainer:
                     self.scheduler.load_state_dict(state['sched_state_dict'])
                 if self.model_ema is not None:
                     self.model_ema.load_state_dict(state['model_ema_state_dict'])
+                if 'global_batch_size' in state:
+                    self.curr_global_batch_size = state['global_batch_size']
+                if self.params.secondary_dataset_name is not None:
+                    if 'secondary_global_batch_size' in state:
+                        self.curr_secondary_global_batch_size = state['secondary_global_batch_size']
             except KeyError:
                 error_msg = (
                     "Invalid checkpoint file provided. Only files ending "
@@ -212,6 +219,12 @@ class NetworkTrainer:
             state['sched_state_dict'] = self.scheduler.state_dict()
         if self.model_ema is not None:
             state['model_ema_state_dict'] = self.model_ema.state_dict()
+        # Save current batch size if using batch expansion
+        if self.curr_global_batch_size is not None:
+            state['global_batch_size'] = self.curr_global_batch_size
+        if self.params.secondary_dataset_name is not None:
+            if self.curr_secondary_global_batch_size is not None:
+                state['secondary_global_batch_size'] = self.curr_secondary_global_batch_size
         torch.save(state, checkpoint_path)
 
     def init_model_ema(self):
@@ -1015,6 +1028,14 @@ class NetworkTrainer:
             local=self.params.local.enable_local,
             validation=self.params.validation
         )
+        # Update sampler batch sizes if resuming
+        if self.curr_global_batch_size is not None:
+            dataloaders['global_train'].batch_sampler.batch_size = self.curr_global_batch_size
+            self.logger.info(f'Resuming with global batch size {self.curr_global_batch_size}')
+        if self.params.secondary_dataset_name is not None:
+            if self.curr_secondary_global_batch_size is not None:
+                dataloaders['secondary_train'].batch_sampler.batch_size = self.curr_secondary_global_batch_size
+                self.logger.info(f'Resuming with secondary global batch size {self.curr_secondary_global_batch_size}')
 
         global_loss_fn, qkv_loss_fn, local_loss_fn = make_losses(self.params)
 
@@ -1144,12 +1165,27 @@ class NetworkTrainer:
             if self.scheduler is not None:
                 self.scheduler.step()
             
-            if not self.params.debug:
-                checkpoint_path = self.model_pathname + self.checkpoint_extension
-                self.save_checkpoint(checkpoint_path)
-                if self.params.save_freq > 0 and epoch % self.params.save_freq == 0:
-                    epoch_pathname = f"{self.model_pathname}_e{epoch}.ckpt"
-                    self.save_checkpoint(epoch_pathname)
+            if self.params.batch_expansion_th is not None:
+                # Dynamic batch size expansion based on number of non-zero triplets
+                # Ratio of non-zero triplets
+                le_train_stats = stats['train'][-1]  # Last epoch training stats
+                if 'global' in le_train_stats:
+                    rnz = (
+                        le_train_stats['global']['num_non_zero_triplets']
+                        / le_train_stats['global']['num_triplets']
+                    )
+                    if rnz < self.params.batch_expansion_th:
+                        dataloaders['global_train'].batch_sampler.expand_batch()
+                        self.curr_global_batch_size = dataloaders['global_train'].batch_sampler.batch_size
+                    if self.params.secondary_dataset_name is not None:
+                        le_secondary_train_stats = stats['secondary_train'][-1]
+                        rnz = (
+                            le_secondary_train_stats['global']['num_non_zero_triplets']
+                            / le_secondary_train_stats['global']['num_triplets']
+                        )
+                        if rnz < self.params.batch_expansion_th:
+                            dataloaders['secondary_train'].batch_sampler.expand_batch()
+                            self.curr_secondary_global_batch_size = dataloaders['secondary_train'].batch_sampler.batch_size
 
             if self.params.eval_freq > 0 and epoch % self.params.eval_freq == 0:
                 self.logger.debug("Begin evaluation")
@@ -1177,30 +1213,17 @@ class NetworkTrainer:
                         best_model_pathname = f"{self.model_pathname}_best.ckpt"
                         self.save_checkpoint(best_model_pathname)
 
+            if not self.params.debug:
+                checkpoint_path = self.model_pathname + self.checkpoint_extension
+                self.save_checkpoint(checkpoint_path)
+                if self.params.save_freq > 0 and epoch % self.params.save_freq == 0:
+                    epoch_pathname = f"{self.model_pathname}_e{epoch}.ckpt"
+                    self.save_checkpoint(epoch_pathname)
+
             if self.params.wandb and not self.params.debug:
                 wandb.log(metrics)
                 if WANDB_OFFLINE:
                     self.trigger_sync()
-
-            if self.params.batch_expansion_th is not None:
-                # Dynamic batch size expansion based on number of non-zero triplets
-                # Ratio of non-zero triplets
-                le_train_stats = stats['train'][-1]  # Last epoch training stats
-                if 'global' in le_train_stats:
-                    rnz = (
-                        le_train_stats['global']['num_non_zero_triplets']
-                        / le_train_stats['global']['num_triplets']
-                    )
-                    if rnz < self.params.batch_expansion_th:
-                        dataloaders['global_train'].batch_sampler.expand_batch()
-                    if self.params.secondary_dataset_name is not None:
-                        le_secondary_train_stats = stats['secondary_train'][-1]
-                        rnz = (
-                            le_secondary_train_stats['global']['num_non_zero_triplets']
-                            / le_secondary_train_stats['global']['num_triplets']
-                        )
-                        if rnz < self.params.batch_expansion_th:
-                            dataloaders['secondary_train'].batch_sampler.expand_batch()
 
         # Save final model weights
         if not self.params.debug:
