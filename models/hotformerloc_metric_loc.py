@@ -103,6 +103,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.grad_checkpoint = grad_checkpoint
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.point_padding = 1e10
+        self._benchmark = False
         if self.depth_coarse >= self.depth_fine:
             err_str = ('Coarse feature depth in octree must be less than fine'
                        ' feature depth, check idx parameters.')
@@ -153,6 +154,17 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.optimal_transport = LearnableLogOptimalTransport(
             model_params.fine_matching.num_sinkhorn_iterations
         )
+
+    def benchmark(self, mode: bool = True):
+        """
+        Set benchmarking mode (disables functions only needed for training/evaluation)
+        """
+        if not isinstance(mode, bool):
+            raise ValueError('benchmark mode is expected to be boolean')
+        if self.training and mode:
+            raise ValueError('model must be in eval mode to enable benchmark mode')
+        self._benchmark = mode
+        return self
 
     def compute_depth_from_idx(self):
         """
@@ -209,21 +221,25 @@ class HOTFormerMetricLoc(torch.nn.Module):
         pos_points: Points = batch['pos_batch']['points']
 
         # Get coarse and fine feats and points
+        time_dict['local backbone forward'] = 0.0
         if 'anc_local_feats' in batch:
             # If pre-computed, skip forward pass
-            assert 'pos_local_feats' in batch, 'No positive local features found'
             anc_feats_coarse = batch['anc_local_feats']['coarse']
             anc_feats_fine = batch['anc_local_feats']['fine']
-            pos_feats_coarse = batch['pos_local_feats']['coarse']
-            pos_feats_fine = batch['pos_local_feats']['fine']
         else:
             # TODO: Process anchor and positive batch in single forward pass
             tic = time.time()
             anc_global_out = self.hotformerloc_global(batch['anc_batch'])
-            pos_global_out = self.hotformerloc_global(batch['pos_batch'])
-            time_dict['local backbone forward'] = time.time() - tic
+            time_dict['local backbone forward'] += time.time() - tic
             anc_feats_coarse = anc_global_out['local'][self.depth_coarse]
             anc_feats_fine = anc_global_out['local'][self.depth_fine]
+        if 'pos_local_feats' in batch:
+            pos_feats_coarse = batch['pos_local_feats']['coarse']
+            pos_feats_fine = batch['pos_local_feats']['fine']
+        else:
+            tic = time.time()
+            pos_global_out = self.hotformerloc_global(batch['pos_batch'])
+            time_dict['local backbone forward'] += time.time() - tic
             pos_feats_coarse = pos_global_out['local'][self.depth_coarse]
             pos_feats_fine = pos_global_out['local'][self.depth_fine]
 
@@ -389,29 +405,29 @@ class HOTFormerMetricLoc(torch.nn.Module):
             anc_node_knn_points_ii = index_select(anc_padded_points_fine_ii, anc_node_knn_indices_ii, dim=0)
             pos_node_knn_points_ii = index_select(pos_padded_points_fine_ii, pos_node_knn_indices_ii, dim=0)
 
-            gt_node_corr_indices_ii, gt_node_corr_overlaps_ii = get_node_correspondences(
-                anc_points_coarse_ii,
-                pos_points_coarse_ii,
-                anc_node_knn_points_ii,
-                pos_node_knn_points_ii,
-                torch.inverse(transform_ii),  # NOTE: GeoTrans expects transform from src (pos) to ref (anc)
-                self.matching_radius,
-                ref_masks=anc_node_masks_ii,
-                src_masks=pos_node_masks_ii,
-                ref_knn_masks=anc_node_knn_masks_ii,
-                src_knn_masks=pos_node_knn_masks_ii,
-            )
-            # if VIZ:
-            #     draw_node_correspondences(
-            #         release_cuda(anc_points_fine_ii), release_cuda(anc_points_coarse_ii),
-            #         release_cuda(anc_point_to_node_ii), release_cuda(pos_points_fine_ii),
-            #         release_cuda(pos_points_coarse_ii), release_cuda(pos_point_to_node_ii),
-            #         'pos', offsets=(0, 200, 0),
-            #     )
+            if not self._benchmark:
+                gt_node_corr_indices_ii, gt_node_corr_overlaps_ii = get_node_correspondences(
+                    anc_points_coarse_ii,
+                    pos_points_coarse_ii,
+                    anc_node_knn_points_ii,
+                    pos_node_knn_points_ii,
+                    torch.inverse(transform_ii),  # NOTE: GeoTrans expects transform from src (pos) to ref (anc)
+                    self.matching_radius,
+                    ref_masks=anc_node_masks_ii,
+                    src_masks=pos_node_masks_ii,
+                    ref_knn_masks=anc_node_knn_masks_ii,
+                    src_knn_masks=pos_node_knn_masks_ii,
+                )
+                # if VIZ:
+                #     draw_node_correspondences(
+                #         release_cuda(anc_points_fine_ii), release_cuda(anc_points_coarse_ii),
+                #         release_cuda(anc_point_to_node_ii), release_cuda(pos_points_fine_ii),
+                #         release_cuda(pos_points_coarse_ii), release_cuda(pos_point_to_node_ii),
+                #         'pos', offsets=(0, 200, 0),
+                #     )
 
-            # TODO: Check if these should be combined and passed after loop
-            output_dicts[batch_idx]['gt_node_corr_indices'] = gt_node_corr_indices_ii
-            output_dicts[batch_idx]['gt_node_corr_overlaps'] = gt_node_corr_overlaps_ii
+                output_dicts[batch_idx]['gt_node_corr_indices'] = gt_node_corr_indices_ii
+                output_dicts[batch_idx]['gt_node_corr_overlaps'] = gt_node_corr_overlaps_ii
 
             # 4. Select topk nearest node correspondences
             with torch.no_grad():
@@ -425,18 +441,19 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 output_dicts[batch_idx]['pos_node_corr_indices'] = pos_node_corr_indices_ii
 
                 # 4.1 Randomly select ground truth node correspondences during training
-                if self.training:
-                    anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_target(
-                        gt_node_corr_indices_ii, gt_node_corr_overlaps_ii
-                    )
-                if len(node_corr_scores_ii) == 0:
-                    log_str = (
-                        'No ground truth node correspondences found -- check '
-                        '`ground_truth_matching_radius`, `overlap_threshold`, and '
-                        'coarse/fine resolutions (likely too coarse) -- '
-                        'this will cause NaNs to be logged'
-                    )
-                    logging.warning(log_str)
+                if not self._benchmark:
+                    if self.training:
+                        anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_target(
+                            gt_node_corr_indices_ii, gt_node_corr_overlaps_ii
+                        )
+                    if len(node_corr_scores_ii) == 0:
+                        log_str = (
+                            'No ground truth node correspondences found -- check '
+                            '`ground_truth_matching_radius`, `overlap_threshold`, and '
+                            'coarse/fine resolutions (likely too coarse) -- '
+                            'this will cause NaNs to be logged'
+                        )
+                        logging.warning(log_str)
 
         # # TODO: CONTINUE LOOP FROM HERE, BUT THINK ABOUT HOW TO HANDLE EVAL
 
