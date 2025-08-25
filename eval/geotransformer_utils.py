@@ -47,7 +47,7 @@ def compute_geotransformer_metrics(
         axis=0,
     )
     num_corr_points = np.asarray(output_dict['num_corr_points'])
-    corr_scores = output_dict['corr_scores']
+    corr_scores = np.asarray(output_dict['corr_scores'])
     metrics_dict['num_pts_per_patch'] = num_points_per_patch.mean()
     metrics_dict['num_corr_patches_lgr'] = len(num_corr_points)
     metrics_dict['num_corr_pts_per_patch_lgr'] = num_corr_points.mean()
