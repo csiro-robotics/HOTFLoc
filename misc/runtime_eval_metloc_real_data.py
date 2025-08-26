@@ -21,7 +21,7 @@ RUN_ITERS = 3
 
 def setup_model():
     params = TrainingParams(args.config, args.model_config, debug=args.debug)
-    params.print()
+    # params.print()
 
     if torch.cuda.is_available():
         device = "cuda"
