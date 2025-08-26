@@ -16,7 +16,7 @@ from misc.torch_utils import set_seed, release_cuda, to_device
 from misc.utils import TrainingParams
 
 WARMUP_ITERS = 10
-RUN_ITERS = 5
+RUN_ITERS = 3
 
 
 def setup_model():
@@ -30,6 +30,7 @@ def setup_model():
     print('Device: {}'.format(device))
 
     model = model_factory(params)
+    model.print_info()
 
     model.to(device)
     model.eval()
@@ -61,20 +62,19 @@ def main():
         with torch.inference_mode():
             # GPU WARMUP
             if ii == 0:
-                time.sleep(5)  # Allow dataloaders to pre-compute a couple batches
+                time.sleep(5)  # Allow dataloaders to cache a couple batches
                 for _ in range(WARMUP_ITERS):
                     _ = model(local_batch)
 
-            # Pre-compute global descriptor
-            if args.only_global or args.precompute_positives:
+            if args.only_global or args.precompute_descriptors:
                 # Discard first measurement after cuDNN runs benchmarks
-                model_out = model(local_batch['pos_batch'], global_only=True)
+                anc_model_out = model(local_batch['anc_batch'], global_only=True)
                 # MEASURE PERFORMANCE
                 for rep in range(RUN_ITERS):
                     torch.cuda.synchronize()
                     # starter.record()
                     start = time.perf_counter()
-                    _ = model(local_batch['pos_batch'], global_only=True)
+                    _ = model(local_batch['anc_batch'], global_only=True)
                     # ender.record()
                     # WAIT FOR GPU SYNC
                     torch.cuda.synchronize()
@@ -86,11 +86,15 @@ def main():
                 if args.only_global:
                     continue
                 
-                local_embedding_coarse = model_out['local'][model.depth_coarse]
-                local_embedding_fine = model_out['local'][model.depth_fine]
+                # Pre-compute global descriptors
+                local_batch['anc_local_feats'] = {
+                    'coarse': anc_model_out['local'][model.depth_coarse],
+                    'fine': anc_model_out['local'][model.depth_fine],
+                }
+                pos_model_out = model(local_batch['pos_batch'], global_only=True)
                 local_batch['pos_local_feats'] = {
-                    'coarse': local_embedding_coarse,
-                    'fine': local_embedding_fine,
+                    'coarse': pos_model_out['local'][model.depth_coarse],
+                    'fine': pos_model_out['local'][model.depth_fine],
                 }
 
             # Discard first measurement after cuDNN runs benchmarks
@@ -126,14 +130,14 @@ if __name__ == "__main__":
     parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
     parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
     parser.add_argument('--only_global', action='store_true', help='Only run global descriptor forward pass (only on one submap instead of a pair)')
-    parser.add_argument('--precompute_positives', action='store_true', help='Pre-computes positive global descriptor to simulate online inference (where only query descriptor needs to be computed)')
+    parser.add_argument('--precompute_descriptors', action='store_true', help='Pre-computes global descriptors to simulate online inference')
     parser.add_argument('--max_samples', type=int, default=-1, help='Max number of samples from validation set to time (defaults to all).')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
     print('Only global: {}'.format(args.only_global))
-    print('Pre-compute positives: {}'.format(args.precompute_positives))
+    print('Pre-compute descriptors: {}'.format(args.precompute_descriptors))
     if not (args.max_samples == -1 or args.max_samples > 0):
         raise ValueError
     print('Max samples: {}'.format(args.max_samples))
