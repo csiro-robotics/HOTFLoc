@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-Oxford-featembed256
+model = HOTFormerMetricLoc-Oxford-featembed256-conf0.20
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16

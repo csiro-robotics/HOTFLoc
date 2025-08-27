@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls
+model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls-up4fine-featembed256-radius1.6
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
@@ -25,7 +25,10 @@ normalize_embeddings = True
 return_feats_and_attn_maps = True
 
 coarse_idx = -1
-fine_idx = -3
+fine_idx = -4
+coarse_feat_embed_dim = 256
+fine_feat_embed_dim = 256
+metloc_mlp_ratio = 2.0
 
 [GEOTRANSFORMER]
 input_dim = 256
@@ -44,12 +47,12 @@ num_targets = 128
 overlap_threshold = 0.1
 num_correspondences = 256
 dual_normalization = True
-ground_truth_matching_radius = 0.6
+ground_truth_matching_radius = 1.6
 num_points_in_patch = 128
 
 [FINE MATCHING]
 topk = 2
-acceptance_radius = 0.6
+acceptance_radius = 1.6
 mutual = True
 confidence_threshold = 0.05
 use_dustbin = False

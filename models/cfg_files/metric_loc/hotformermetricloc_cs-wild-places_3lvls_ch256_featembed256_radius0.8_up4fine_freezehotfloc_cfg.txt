@@ -1,14 +1,14 @@
 [MODEL]
-model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls
+model = HOTFormerMetricLoc-ch256-3lvls-featembed256-radius0.8-up4fine-freezehotfloc
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
 num_pyramid_levels = 3
-num_octf_levels = 1
 ct_size = 1
 ct_propagation = False
-rt_init_type = max_pool
-patch_size = 48
+rt_init_type = avg_pool
+ADaPE_mode = cov
+patch_size = 64
 input_features = P
 downsample_input_embeddings = True
 num_input_downsamples = 2
@@ -18,14 +18,18 @@ conv_norm = layernorm
 feature_size = 256
 output_dim = 256
 pooling = PyramidAttnPoolMixer
-k_pooled_tokens = 148,72,36
+k_pooled_tokens = 74,36,18
 
-coordinates = cylindrical
+coordinates = cartesian
 normalize_embeddings = True
 return_feats_and_attn_maps = True
 
 coarse_idx = -1
-fine_idx = -3
+fine_idx = -4
+coarse_feat_embed_dim = 256
+fine_feat_embed_dim = 256
+metloc_mlp_ratio = 2.0
+freeze_hotformerloc = True
 
 [GEOTRANSFORMER]
 input_dim = 256
@@ -44,12 +48,12 @@ num_targets = 128
 overlap_threshold = 0.1
 num_correspondences = 256
 dual_normalization = True
-ground_truth_matching_radius = 0.6
+ground_truth_matching_radius = 0.8
 num_points_in_patch = 128
 
 [FINE MATCHING]
 topk = 2
-acceptance_radius = 0.6
+acceptance_radius = 0.8
 mutual = True
 confidence_threshold = 0.05
 use_dustbin = False

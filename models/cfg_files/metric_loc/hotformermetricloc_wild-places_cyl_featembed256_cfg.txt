@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls
+model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls-featembed256
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
@@ -26,6 +26,9 @@ return_feats_and_attn_maps = True
 
 coarse_idx = -1
 fine_idx = -3
+coarse_feat_embed_dim = 256
+fine_feat_embed_dim = 256
+metloc_mlp_ratio = 2.0
 
 [GEOTRANSFORMER]
 input_dim = 256

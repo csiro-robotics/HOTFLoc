@@ -1,5 +1,5 @@
 [MODEL]
-model=HOTFormerLoc-Oxford-ch256-pyrmd-rt-maxpool-ct-rpe-init
+model=HOTFormerLoc-WildPlaces-ch256pyrmd-ADaPE
 channels=128,256,128,64
 num_blocks=4,10
 num_heads=8,16,8,4
@@ -19,9 +19,9 @@ conv_norm=layernorm
 feature_size=256
 output_dim=256
 pooling=PyramidAttnPoolMixer
-k_pooled_tokens=74,36,18
+k_pooled_tokens=148,72,36
 
-coordinates=cartesian
+coordinates=cylindrical
 
 normalize_embeddings=True
 

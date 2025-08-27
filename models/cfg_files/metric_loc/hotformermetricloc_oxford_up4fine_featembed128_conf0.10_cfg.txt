@@ -1,13 +1,12 @@
 [MODEL]
-model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls
+model = HOTFormerMetricLoc-Oxford-up4fine-featembed128-conf0.10
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
 num_pyramid_levels = 3
-num_octf_levels = 1
 ct_size = 1
 ct_propagation = False
-rt_init_type = max_pool
+ADaPE_mode = cov
 patch_size = 48
 input_features = P
 downsample_input_embeddings = True
@@ -18,17 +17,20 @@ conv_norm = layernorm
 feature_size = 256
 output_dim = 256
 pooling = PyramidAttnPoolMixer
-k_pooled_tokens = 148,72,36
+k_pooled_tokens = 74,36,18
 
-coordinates = cylindrical
+coordinates = cartesian
 normalize_embeddings = True
 return_feats_and_attn_maps = True
 
 coarse_idx = -1
-fine_idx = -3
+fine_idx = -4
+coarse_feat_embed_dim = 128
+fine_feat_embed_dim = 128
+metloc_mlp_ratio = 2.0
 
 [GEOTRANSFORMER]
-input_dim = 256
+input_dim = 128
 hidden_dim = 128
 output_dim = 256
 num_heads = 4
@@ -51,7 +53,7 @@ num_points_in_patch = 128
 topk = 2
 acceptance_radius = 0.6
 mutual = True
-confidence_threshold = 0.05
+confidence_threshold = 0.10
 use_dustbin = False
 use_global_score = False
 correspondence_threshold = 3

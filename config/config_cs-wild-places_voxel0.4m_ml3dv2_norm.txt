@@ -5,15 +5,15 @@ dataset_folder = ../data/CS-Wild-Places/data/CS-Wild-Places/postproc_voxel_0.40m
 [TRAIN]
 num_workers = 4
 batch_size = 2048
-batch_split_size = 128
-val_batch_size = 128
+batch_split_size = 64
+val_batch_size = 64
 save_freq = 10
 eval_freq = 10
 eval_radius = 10, 30
 
 lr = 1e-3
-epochs = 100
-scheduler_milestones = 50
+epochs = 400
+scheduler_milestones = 250, 350
 aug_mode = 2
 set_aug_mode = 2
 random_rot_theta = 180

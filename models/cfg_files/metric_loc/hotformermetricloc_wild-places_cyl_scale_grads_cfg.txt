@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-pyrmd-3lvls-scale-grads
+model = HOTFormerMetricLoc-WildPlaces-cyl-ch256-3lvls-scale-grads
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
