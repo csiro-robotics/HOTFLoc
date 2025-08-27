@@ -55,7 +55,7 @@ pip install -r requirements.txt
 pip install libs/dwconv
 
 # For metric loc:
-pip install libs/geotransformer
+pip install -e libs/geotransformer
 ```
 
 Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
