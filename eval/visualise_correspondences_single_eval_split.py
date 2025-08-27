@@ -61,6 +61,10 @@ def get_eval_pairs_dataloader(
     assert location_name == temp, 'Database location: {} does not match query location: {}'.format(database_file,
                                                                                                     query_file)
     print(f'Location name: {location_name}')
+    if args.save_dir is not None:
+        # Add location name to save path
+        args.save_dir = os.path.join(args.save_dir, location_name)
+        os.makedirs(args.save_dir, exist_ok=True)
 
     p = os.path.join(params.dataset_folder, database_file)
     with open(p, 'rb') as f:
@@ -236,7 +240,8 @@ def setup_model():
     logging_level = 'DEBUG' if params.debug else 'INFO'
     create_logger(log_file=None, logging_level=logging_level)
 
-    params.local.eval_num_workers = 1
+    if params.local.eval_num_workers > 0:
+        params.local.eval_num_workers = 2
     (
         dataloader,
         query_local_embeddings,
@@ -260,8 +265,10 @@ def main():
     metric_loc_evaluator = Evaluator(params)
     metric_loc_pairs_list = dataloader.dataset.pairs_list
 
-    for ii, local_batch in enumerate(dataloader):
+    for ii, local_batch in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
         query_idx, nn_idx = metric_loc_pairs_list[ii]
+        if len(args.idx_list) > 0 and query_idx not in args.idx_list:
+            continue
         local_batch['anc_local_feats'] = {
             'coarse': query_local_embeddings['coarse'][query_idx],
             'fine': query_local_embeddings['fine'][query_idx],
@@ -343,63 +350,64 @@ def main():
             with open(os.path.join(save_dir_ii, 'stats.txt'), 'w') as f:
                 f.write(log_str)
 
-        visualise_coarse_correspondences(
-            anc_points_coarse=anc_points_coarse,
-            pos_points_coarse=pos_points_coarse,
-            anc_points_fine=anc_points_fine,
-            pos_points_fine=pos_points_fine,
-            node_corr_indices=node_corr_indices.numpy(),
-            gt_node_corr_indices=gt_node_corr_indices.numpy(),
-            transform=T_gt.numpy(),
-            anc_point_to_node=anc_point_to_node,
-            pos_point_to_node=pos_point_to_node,
-            anc_feats_coarse=anc_feats_coarse,
-            pos_feats_coarse=pos_feats_coarse,
-            translate=[0,0,50],
-            zoom=args.zoom,
-            plot_coarse=True,  # Plot keypoints as spheres
-            # coarse_colourmode='patch',
-            # coarse_colourmode='tsne',
-            coarse_colourmode='umap',
-            save_dir=save_dir_ii,
-            disable_animation=args.disable_animation,
-            non_interactive=args.non_interactive,
-        )
+        if not args.registration_only:
+            visualise_coarse_correspondences(
+                anc_points_coarse=anc_points_coarse,
+                pos_points_coarse=pos_points_coarse,
+                anc_points_fine=anc_points_fine,
+                pos_points_fine=pos_points_fine,
+                node_corr_indices=node_corr_indices.numpy(),
+                gt_node_corr_indices=gt_node_corr_indices.numpy(),
+                transform=T_gt.numpy(),
+                anc_point_to_node=anc_point_to_node,
+                pos_point_to_node=pos_point_to_node,
+                anc_feats_coarse=anc_feats_coarse,
+                pos_feats_coarse=pos_feats_coarse,
+                translate=[0,0,50],
+                zoom=args.zoom,
+                plot_coarse=True,  # Plot keypoints as spheres
+                # coarse_colourmode='patch',
+                # coarse_colourmode='tsne',
+                coarse_colourmode='umap',
+                save_dir=save_dir_ii,
+                disable_animation=args.disable_animation,
+                non_interactive=args.non_interactive,
+            )
 
-        visualise_similarity(
-            anc_points_fine=anc_points_fine,
-            pos_points_fine=pos_points_fine,
-            transform=T_gt.numpy(),
-            anc_point_to_node=anc_point_to_node,
-            pos_point_to_node=pos_point_to_node,
-            anc_feats_coarse=anc_feats_coarse_pre_refinement,
-            pos_feats_coarse=pos_feats_coarse_pre_refinement,
-            translate=[0,0,50],
-            zoom=args.zoom,
-            # coarse_colourmode='tsne',
-            coarse_colourmode='umap',
-            save_dir=save_dir_ii,
-            disable_animation=args.disable_animation,
-            non_interactive=args.non_interactive,
-        )
+            visualise_similarity(
+                anc_points_fine=anc_points_fine,
+                pos_points_fine=pos_points_fine,
+                transform=T_gt.numpy(),
+                anc_point_to_node=anc_point_to_node,
+                pos_point_to_node=pos_point_to_node,
+                anc_feats_coarse=anc_feats_coarse_pre_refinement,
+                pos_feats_coarse=pos_feats_coarse_pre_refinement,
+                translate=[0,0,50],
+                zoom=args.zoom,
+                # coarse_colourmode='tsne',
+                coarse_colourmode='umap',
+                save_dir=save_dir_ii,
+                disable_animation=args.disable_animation,
+                non_interactive=args.non_interactive,
+            )
 
-        visualise_fine_correspondences(
-            anc_points_fine=anc_points_fine,
-            pos_points_fine=pos_points_fine,
-            anc_corr_points=anc_corr_points,
-            pos_corr_points=pos_corr_points,
-            corr_scores=corr_scores,
-            transform=T_gt.numpy(),
-            score_threshold=0.0,
-            anc_feats_fine=anc_feats_fine,
-            pos_feats_fine=pos_feats_fine,
-            translate=[0,0,50],
-            zoom=args.zoom,
-            colourmode='umap',
-            save_dir=save_dir_ii,
-            disable_animation=args.disable_animation,
-            non_interactive=args.non_interactive,
-        )
+            visualise_fine_correspondences(
+                anc_points_fine=anc_points_fine,
+                pos_points_fine=pos_points_fine,
+                anc_corr_points=anc_corr_points,
+                pos_corr_points=pos_corr_points,
+                corr_scores=corr_scores,
+                transform=T_gt.numpy(),
+                score_threshold=0.0,
+                anc_feats_fine=anc_feats_fine,
+                pos_feats_fine=pos_feats_fine,
+                translate=[0,0,50],
+                zoom=args.zoom,
+                colourmode='umap',
+                save_dir=save_dir_ii,
+                disable_animation=args.disable_animation,
+                non_interactive=args.non_interactive,
+            )
 
         # Best (initial) correspondence from LGw
         if T_best_corr is not None:
@@ -421,19 +429,23 @@ def main():
             anc_points_fine=anc_points_fine,
             pos_points_fine=pos_points_fine,
             transform=T_estimated.numpy(),
-            # transform=T_gt.numpy(),  # for debugging GT pose
             zoom=args.zoom,
             save_dir=save_dir_ii,
+            filename='registration',
             non_interactive=args.non_interactive,
         )
 
+        # Ground truth TF (with ICP, if enabled in params)
+        visualise_registration(
+            anc_points_fine=anc_points_fine,
+            pos_points_fine=pos_points_fine,
+            transform=T_gt.numpy(),
+            zoom=args.zoom,
+            save_dir=save_dir_ii,
+            filename='registration_GT',
+            non_interactive=args.non_interactive,
+        )
 
-
-
-        
-        #       - Plot coarse correspondences
-        #       - Plot (some) fine correspondences
-        #       - Plot estimated TF
         pass
     
 
@@ -447,6 +459,7 @@ if __name__ == "__main__":
     parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
     parser.add_argument('--save_dir', type=str, required=False, help='Save visualisations/pcds to directory (creates subdirectories for each model)')
     parser.add_argument('--failures', action='store_true', help='Only visualise metric loc failures')
+    parser.add_argument('--registration_only', action='store_true', help='Only visualise registration')
     parser.add_argument('--idx_list', type=int, nargs='+', default=[], help='Only visualise given list of indices (ordered by val dataloader)')
     parser.add_argument('--zoom', type=float, default=0.55, help='Zoom level for open3d viewer')
     parser.add_argument('--disable_animation', action='store_true', help='Disables animations')
@@ -479,9 +492,11 @@ if __name__ == "__main__":
             raise ValueError('Must provide valid path to weights if `--save_dir` is set')
     print('Save dir: {}'.format(args.save_dir))
     print('Failures only: {}'.format(args.failures))
+    print('Registration only: {}'.format(args.registration_only))
     print('Idx list: {}'.format(args.idx_list))
     if args.failures and len(args.idx_list) > 0:
         print('WARNING: Ignoring `--failures` as `--idx_list` was specified')
+        args.failures = False
     print('Zoom {}'.format(args.zoom))
     print('Disable animation: {}'.format(args.disable_animation))
     print('Non interactive: {}'.format(args.non_interactive))

@@ -69,6 +69,8 @@ def main():
     metric_loc_evaluator = Evaluator(params)
 
     for ii, local_batch in enumerate(dataloader):
+        if len(args.idx_list) > 0 and ii not in args.idx_list:
+            continue
         log_str = f"ID {ii}: "
         local_batch = to_device(local_batch, device, non_blocking=True, construct_octree_neigh=True)
         with torch.inference_mode():
@@ -155,10 +157,10 @@ def main():
             pos_feats_coarse=pos_feats_coarse,
             translate=[0,0,50],
             zoom=args.zoom,
-            plot_coarse=False,  # Plot keypoints as spheres
-            coarse_colourmode='patch',
+            plot_coarse=True,  # Plot keypoints as spheres
+            # coarse_colourmode='patch',
             # coarse_colourmode='tsne',
-            # coarse_colourmode='umap',
+            coarse_colourmode='umap',
             save_dir=save_dir_ii,
             disable_animation=args.disable_animation,
             non_interactive=args.non_interactive,
@@ -270,6 +272,7 @@ if __name__ == "__main__":
     print('Idx list: {}'.format(args.idx_list))
     if args.failures and len(args.idx_list) > 0:
         print('WARNING: Ignoring `--failures` as `--idx_list` was specified')
+        args.failure = False
     print('Zoom {}'.format(args.zoom))
     print('Disable animation: {}'.format(args.disable_animation))
     print('Non interactive: {}'.format(args.non_interactive))

@@ -843,6 +843,7 @@ def visualise_registration(
     transform: ndarray,
     zoom=0.55,
     save_dir: Optional[str] = None,
+    filename: str = 'registration',
     non_interactive=False,
 ):
     """
@@ -888,7 +889,7 @@ def visualise_registration(
     custom_draw_geometry_load_option(
         vis_list,
         save_dir=save_dir,
-        filename='registration',
+        filename=filename,
         non_interactive=non_interactive,
         zoom=zoom,
     )
