@@ -14,15 +14,23 @@ from dataset.CSWildPlaces.CSWildPlaces_raw import CSWildPlacesPointCloudLoader
 from dataset.mulran.mulran_raw import MulranPointCloudLoader
 from dataset.mulran.utils import relative_pose as mulran_relative_pose
 from dataset.southbay.southbay_raw import SouthbayPointCloudLoader
-from misc.point_clouds import PointCloudLoader, icp, fast_global_registration
+from misc.point_clouds import PointCloudLoader, icp, two_stage_icp
 from misc.poses import relative_pose as base_relative_pose
 
 
 class TrainingTuple:
     # Tuple describing an element for training/validation, with optional pose for metric localisation
-    def __init__(self, id: int, timestamp: float, rel_scan_filepath: str, positives: np.ndarray,
-                 non_negatives: np.ndarray, position: np.ndarray, pose: np.ndarray = None,
-                 positives_poses: Dict[int, np.ndarray] = None):
+    def __init__(
+        self,
+        id: int,
+        timestamp: float,
+        rel_scan_filepath: str,
+        positives: np.ndarray,
+        non_negatives: np.ndarray,
+        position: np.ndarray,
+        pose: np.ndarray = None,
+        positives_poses: Dict[int, np.ndarray] = None,
+    ):
         # id: element id (ids start from 0 and are consecutive numbers)
         # ts: timestamp
         # rel_scan_filepath: relative path to the scan
@@ -46,7 +54,13 @@ class TrainingTuple:
 
 class EvaluationTuple:
     # Tuple describing an evaluation set element, with optional pose for metric localisation
-    def __init__(self, timestamp: float, rel_scan_filepath: str, position: np.ndarray, pose: np.ndarray = None):
+    def __init__(
+        self,
+        timestamp: float,
+        rel_scan_filepath: str,
+        position: np.ndarray,
+        pose: np.ndarray = None,
+    ):
         # position: x, y position in meters
         # pose: optional pose as SE(3) matrix
         assert position.shape == (2,)
@@ -81,10 +95,20 @@ def clip_points(data: torch.Tensor, coordinates: str):
     return data
 
 class TrainingDataset(Dataset):
-    def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
-                 transform=None, set_transform=None, load_octree=False,
-                 octree_depth=11, full_depth=2, coordinates='cartesian',
-                 is_cross_source_dataset=False, prioritise_cross_source=False):
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_type: str,
+        query_filename: str,
+        transform=None,
+        set_transform=None,
+        load_octree=False,
+        octree_depth=11,
+        full_depth=2,
+        coordinates="cartesian",
+        is_cross_source_dataset=False,
+        prioritise_cross_source=False,
+    ):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), f'Cannot access dataset path: {dataset_path}'
         self.dataset_path = dataset_path
@@ -160,10 +184,24 @@ class Training6DOFDataset(TrainingDataset):
     Dataset wrapper for 6DOF estimation. Loads pairs of positive point clouds
     with relative transform and normalization parameters.
     """
-    def __init__(self, dataset_path: str, dataset_type: str, query_filename: str,
-                 local_transform=None, icp=False, icp_use_gicp=True,
-                 icp_inlier_dist_threshold: float = 0.2, icp_max_iteration: int = 100,
-                 icp_voxel_size: Optional[float] = None, **kwargs):
+
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_type: str,
+        query_filename: str,
+        local_transform=None,
+        icp=False,
+        icp_use_gicp=True,
+        icp_inlier_dist_threshold: float = 0.2,
+        icp_max_iteration: int = 100,
+        icp_voxel_size: Optional[float] = None,
+        icp_two_stage: bool = False,
+        icp_two_stage_inlier_dist_threshold: float = 8.0,
+        icp_two_stage_max_iteration: int = 50,
+        icp_two_stage_voxel_size: Optional[float] = 0.8,
+        **kwargs,
+    ):
         super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
         self.clip_octree_points = False  # We do this step after local transforms
         self.local_transform = local_transform
@@ -172,6 +210,10 @@ class Training6DOFDataset(TrainingDataset):
         self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
         self.icp_max_iteration = icp_max_iteration
         self.icp_voxel_size = icp_voxel_size
+        self.icp_two_stage = icp_two_stage
+        self.icp_two_stage_inlier_dist_threshold = icp_two_stage_inlier_dist_threshold
+        self.icp_two_stage_max_iteration = icp_two_stage_max_iteration
+        self.icp_two_stage_voxel_size = icp_two_stage_voxel_size
         if self.dataset_type.lower() == 'mulran':
             self.relative_pose = mulran_relative_pose
         else:
@@ -214,19 +256,33 @@ class Training6DOFDataset(TrainingDataset):
         # Ensure alignment with icp
         if self.icp:
             # tic = time.time()
-            transform_icp, fitness_icp, inlier_rmse_icp = icp(
-                query_pc.numpy().astype(float),
-                positive_pc.numpy().astype(float),
-                transform.numpy(),
-                gicp=self.icp_use_gicp,
-                inlier_dist_threshold=self.icp_inlier_dist_threshold,
-                max_iteration=self.icp_max_iteration,
-                voxel_size=self.icp_voxel_size,
-            )
+            if self.icp_two_stage:
+                transform_icp, fitness_icp, inlier_rmse_icp = two_stage_icp(
+                    query_pc.numpy().astype(float),
+                    positive_pc.numpy().astype(float),
+                    transform.numpy(),
+                    gicp=self.icp_use_gicp,
+                    inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                    max_iteration=self.icp_max_iteration,
+                    voxel_size=self.icp_voxel_size,
+                    two_stage_inlier_dist_threshold=self.icp_two_stage_inlier_dist_threshold,
+                    two_stage_max_iteration=self.icp_two_stage_max_iteration,
+                    two_stage_voxel_size=self.icp_two_stage_voxel_size,
+                )
+            else:
+                transform_icp, fitness_icp, inlier_rmse_icp = icp(
+                    query_pc.numpy().astype(float),
+                    positive_pc.numpy().astype(float),
+                    transform.numpy(),
+                    gicp=self.icp_use_gicp,
+                    inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                    max_iteration=self.icp_max_iteration,
+                    voxel_size=self.icp_voxel_size,
+                )
             # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
             # logging.debug(msg)
             transform = torch.tensor(transform_icp, dtype=transform.dtype)
-        
+
         if self.local_transform is not None:
             # Apply only normalization and jitter to the query point cloud
             query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
@@ -261,8 +317,15 @@ class Training6DOFDataset(TrainingDataset):
 
 
 class EvalDataset(Dataset):
-    def __init__(self, dataset_path: str, dataset_type: str, data_set_dict: Dict,
-                 transform=None, load_octree=False, coordinates='cartesian'):
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_type: str,
+        data_set_dict: Dict,
+        transform=None,
+        load_octree=False,
+        coordinates="cartesian",
+    ):
         assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
         self.dataset_path = dataset_path
         self.dataset_type = dataset_type
@@ -296,11 +359,26 @@ class Eval6DOFDataset(EvalDataset):
     Dataset wrapper for 6DOF estimation. Loads pairs of positive point clouds
     with relative transform and normalization parameters.
     """
-    def __init__(self, dataset_path: str, dataset_type: str, query_set: Dict,
-                 database_set: Dict, pairs_list: List, local_transform=None,
-                 icp=False, icp_use_gicp=True, icp_inlier_dist_threshold: float = 0.2,
-                 icp_max_iteration: int = 100, icp_voxel_size: Optional[float] = None,
-                 **kwargs):
+
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_type: str,
+        query_set: Dict,
+        database_set: Dict,
+        pairs_list: List,
+        local_transform=None,
+        icp=False,
+        icp_use_gicp=True,
+        icp_inlier_dist_threshold: float = 0.2,
+        icp_max_iteration: int = 100,
+        icp_voxel_size: Optional[float] = None,
+        icp_two_stage: bool = False,
+        icp_two_stage_inlier_dist_threshold: float = 8.0,
+        icp_two_stage_max_iteration: int = 50,
+        icp_two_stage_voxel_size: Optional[float] = 0.8,
+        **kwargs,
+    ):
         super().__init__(dataset_path, dataset_type, query_set, **kwargs)
         self.pos_dataset = EvalDataset(dataset_path, dataset_type, database_set, **kwargs)
         self.clip_octree_points = False  # We do this step after local transforms
@@ -312,6 +390,10 @@ class Eval6DOFDataset(EvalDataset):
         self.icp_inlier_dist_threshold = icp_inlier_dist_threshold
         self.icp_max_iteration = icp_max_iteration
         self.icp_voxel_size = icp_voxel_size
+        self.icp_two_stage = icp_two_stage
+        self.icp_two_stage_inlier_dist_threshold = icp_two_stage_inlier_dist_threshold
+        self.icp_two_stage_max_iteration = icp_two_stage_max_iteration
+        self.icp_two_stage_voxel_size = icp_two_stage_voxel_size
         if self.dataset_type.lower() == 'mulran':
             self.relative_pose = mulran_relative_pose
         else:
@@ -347,15 +429,29 @@ class Eval6DOFDataset(EvalDataset):
         # Ensure alignment with icp
         if self.icp:
             # tic = time.time()
-            transform_icp, fitness_icp, inlier_rmse_icp = icp(
-                query_pc.numpy().astype(float),
-                positive_pc.numpy().astype(float),
-                transform.numpy(),
-                gicp=self.icp_use_gicp,
-                inlier_dist_threshold=self.icp_inlier_dist_threshold,
-                max_iteration=self.icp_max_iteration,
-                voxel_size=self.icp_voxel_size,
-            )
+            if self.icp_two_stage:
+                transform_icp, fitness_icp, inlier_rmse_icp = two_stage_icp(
+                    query_pc.numpy().astype(float),
+                    positive_pc.numpy().astype(float),
+                    transform.numpy(),
+                    gicp=self.icp_use_gicp,
+                    inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                    max_iteration=self.icp_max_iteration,
+                    voxel_size=self.icp_voxel_size,
+                    two_stage_inlier_dist_threshold=self.icp_two_stage_inlier_dist_threshold,
+                    two_stage_max_iteration=self.icp_two_stage_max_iteration,
+                    two_stage_voxel_size=self.icp_two_stage_voxel_size,
+                )
+            else:
+                transform_icp, fitness_icp, inlier_rmse_icp = icp(
+                    query_pc.numpy().astype(float),
+                    positive_pc.numpy().astype(float),
+                    transform.numpy(),
+                    gicp=self.icp_use_gicp,
+                    inlier_dist_threshold=self.icp_inlier_dist_threshold,
+                    max_iteration=self.icp_max_iteration,
+                    voxel_size=self.icp_voxel_size,
+                )
             # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
             # logging.debug(msg)
             transform = torch.tensor(transform_icp, dtype=transform.dtype)

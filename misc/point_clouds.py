@@ -130,6 +130,46 @@ def icp(
     return reg_p2p.transformation, reg_p2p.fitness, reg_p2p.inlier_rmse
 
 
+def two_stage_icp(
+    anchor_pc,
+    positive_pc,
+    transform: Optional[np.ndarray] = None,
+    point2plane=False,
+    gicp=False,
+    inlier_dist_threshold: float = 1.2,
+    max_iteration: int = 200,
+    voxel_size: Optional[float] = 0.1,
+    two_stage_inlier_dist_threshold: float = 8.0,
+    two_stage_max_iteration: int = 50,
+    two_stage_voxel_size: Optional[float] = 0.8,
+):
+    """
+    Compute a two-stage ICP refinement, from coarse-to-fine. Used to fix drift
+    on DCC sequence, which is not fixable in all situations with single-stage ICP.
+    """
+    assert not(point2plane and gicp), "Choose either point2plane or gicp method, not both"
+
+    transform_coarse, _, _ = icp(
+        anchor_pc=anchor_pc,
+        positive_pc=positive_pc,
+        transform=transform,
+        inlier_dist_threshold=two_stage_inlier_dist_threshold,
+        max_iteration=two_stage_max_iteration,
+        voxel_size=two_stage_voxel_size,
+    )
+    transform_fine, fitness, rmse = icp(
+        anchor_pc=anchor_pc,
+        positive_pc=positive_pc,
+        transform=transform_coarse,
+        point2plane=point2plane,
+        gicp=gicp,
+        inlier_dist_threshold=inlier_dist_threshold,
+        max_iteration=max_iteration,
+        voxel_size=voxel_size,
+    )
+    return transform_fine, fitness, rmse
+
+
 def fast_global_registration(
     anchor_pc,
     positive_pc,

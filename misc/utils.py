@@ -63,6 +63,7 @@ class ModelParams:
         self.num_top_down = params.getint('num_top_down', 1)
         self.return_feats_and_attn_maps = params.getboolean('return_feats_and_attn_maps', True)  # outputs feats and attn maps from each block of HOTFormerLoc (or MinkLoc)
         self.scale_grads = params.getboolean('scale_grads', False)  # Enables gradient scaling to prevent gradient underflow
+        self.freeze_hotformerloc = params.getboolean('freeze_hotformerloc', False)  # Freeze HOTFloc layers, only train metric loc
 
         # Metric loc params
         if local:
@@ -145,7 +146,6 @@ class ModelParams:
                     #######################################################################
                     # HOTFormerMetricLoc-specific params
                     #######################################################################
-                    self.freeze_hotformerloc = params.getboolean('freeze_hotformerloc', False)  # Freeze HOTFloc layers, only train metric loc
                     if 'GEOTRANSFORMER' in config:
                         params = config['GEOTRANSFORMER']
                         self.geotransformer = edict()
@@ -385,10 +385,14 @@ class TrainingParams:
             self.local.max_eval_threshold = params.getfloat('max_eval_threshold', 20.)  # max distance to NN to evaluate metric loc (prevents impossible pairs)
             self.local.icp_train = params.getboolean('icp_train', False)  # Enable icp during training (unnecessary if done during tuple creation)
             self.local.icp_eval = params.getboolean('icp_eval', False)  # Enable icp during eval
-            self.local.icp_use_gicp = params.getboolean('icp_use_gicp', True)
-            self.local.icp_inlier_dist_threshold = params.getfloat('icp_inlier_dist_threshold', 0.2)
-            self.local.icp_max_iteration = params.getint('icp_max_iteration', 100)
-            self.local.icp_voxel_size = params.getfloat('icp_voxel_size', None)
+            self.local.icp_use_gicp = params.getboolean('icp_use_gicp', False)
+            self.local.icp_inlier_dist_threshold = params.getfloat('icp_inlier_dist_threshold', 1.2)
+            self.local.icp_max_iteration = params.getint('icp_max_iteration', 200)
+            self.local.icp_voxel_size = params.getfloat('icp_voxel_size', 0.1)
+            self.local.icp_two_stage = params.getboolean('icp_two_stage', False)  # Use two-stage ICP solution to fix large initial drift (e.g. in DCC)
+            self.local.icp_two_stage_inlier_dist_threshold = params.getfloat('icp_two_stage_inlier_dist_threshold', 5.5)
+            self.local.icp_two_stage_max_iteration = params.getint('icp_two_stage_max_iteration', 50)
+            self.local.icp_two_stage_voxel_size = params.getfloat('icp_two_stage_voxel_size', 0.5)
             self.local.weight_coarse_loss = params.getfloat('weight_coarse_loss', 1.0)
             self.local.weight_fine_loss = params.getfloat('weight_coarse_loss', 1.0)
             # eval config
