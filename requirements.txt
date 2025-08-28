@@ -21,7 +21,7 @@ numba==0.59.1
 easydict
 submitit
 coloredlogs
-umap
+umap-learn
 einops
 ipdb
 tensorboard
