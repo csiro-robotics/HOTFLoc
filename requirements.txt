@@ -22,3 +22,7 @@ easydict
 submitit
 coloredlogs
 umap
+einops
+ipdb
+tensorboard
+tensorboardX
