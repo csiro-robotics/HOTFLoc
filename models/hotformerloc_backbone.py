@@ -6,6 +6,7 @@
 # Adapted from https://github.com/octree-nn/octformer by
 # Ethan Griffiths (Data61, Pullenvale)
 # --------------------------------------------------------
+from typing import Set
 
 import torch
 from torch import Tensor
@@ -263,13 +264,18 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         self.gamma1 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
         self.gamma2 = torch.nn.Parameter(layer_scale * torch.ones(dim)) if use_layer_scale else 1
 
-    def forward(self, relay_token_dict: Dict[int, Tensor], octree: OctreeT):
+    def forward(self, relay_token_dict: Dict[int, Tensor], octree: OctreeT,
+                rt_cls_token: Optional[Tensor] = None):
         pyramid_depths = octree.pyramid_depths
 
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~2.4ms with bs 128)
         # Concatenate and pad multi-scale relay tokens per batch
         rt = concat_and_pad_rt(relay_token_dict, octree, pyramid_depths)
-        
+        B, N, C = rt.shape
+       
+        if rt_cls_token is not None:
+            rt = torch.cat((rt_cls_token, rt), dim=1)
+
         # Generate drop_path batch idx (simple for padded tokens, each row is a batch)
         drop_path_batch_idx = self.get_drop_path_idx(rt)
 
@@ -283,10 +289,14 @@ class RelayTokenTransformerBlock(torch.nn.Module):
         rt_ffn = self.gamma2 * self.mlp(self.norm2(rt))
         rt = rt + self.drop_path(rt_ffn, octree, batch_id=drop_path_batch_idx)
 
+        # Split cls token
+        if rt_cls_token is not None:
+            rt_cls_token, rt = rt.split([1, N], dim=1)
+        
         # # TODO: TIME THIS FUNC, CHECK IF EFFICIENCY IMPROVEMENTS NEEDED (seems okay, ~3.5ms with bs 128)
         # Unpad + split CTs
         relay_token_dict = unpad_and_split_rt(rt, octree, pyramid_depths)
-        return relay_token_dict, rt_attn_dict
+        return relay_token_dict, rt_attn_dict, rt_cls_token
 
     def get_drop_path_idx(self, relay_tokens: Tensor) -> Tensor:
         """Compute the batch idx tensor for drop_path."""
@@ -346,8 +356,7 @@ class RelayTokenInitialiser(torch.nn.Module):
         self.rt_init_token = None
         if rt_init_type == 'learnable':
             self.rt_init_token = torch.nn.Parameter(torch.zeros(1, self.dim))
-            torch.nn.init.normal_(self.rt_init_token, std=1)
-            # TODO: test other inits? trunc normal 0.02? (normal with std 1.0 seems reasonable though given local token scale)
+            torch.nn.init.normal_(self.rt_init_token, std=1e-6)  # based on timm ViT cls token init
 
     def forward(self, data: Tensor, octree: OctreeT, depth: int):
         K = self.patch_size
@@ -399,6 +408,7 @@ class HOTFormerStage(torch.nn.Module):
                  rt_propagation_scale: Optional[float] = None,
                  rt_init_type: str = 'avg_pool',
                  rt_rpe_init: bool = False, 
+                 rt_class_token: bool = False,
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  grad_checkpoint: bool = True, conv_norm: str = 'batchnorm',
@@ -427,6 +437,11 @@ class HOTFormerStage(torch.nn.Module):
         self.use_ADaPE = ADaPE_mode is not None
         self.grad_checkpoint = grad_checkpoint
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
+
+        # Class token
+        self.rt_cls_token = torch.nn.Parameter(torch.zeros(1, 1, self.max_rt_channels)) if rt_class_token else None
+        if self.rt_cls_token is not None:
+            torch.nn.init.normal_(self.rt_cls_token, std=1e-6)
 
         self.hosa_blocks = torch.nn.ModuleList([])
         if self.use_projections:
@@ -602,6 +617,9 @@ class HOTFormerStage(torch.nn.Module):
         return local_feat_dict, relay_token_dict
     
     def forward(self, data: Tensor, octree: OctreeT, depth: int) -> tuple[dict, dict, list]:
+        rt_cls_token = self.rt_cls_token
+        if rt_cls_token is not None:
+            rt_cls_token = rt_cls_token.expand(octree.batch_size, -1, -1)
         self.pyramid_depths = octree.pyramid_depths
         feats_and_attn_maps_per_block = [{'local_qkv_std': {}} for _ in range(self.num_blocks)]
         if self.return_feats_and_attn_maps:
@@ -623,19 +641,32 @@ class HOTFormerStage(torch.nn.Module):
             # Compute global multi-scale interactions through RTSA
             if not self.disable_rt:
                 if self.grad_checkpoint and self.training:
-                    relay_token_dict, relay_token_attn_dict = checkpoint(
+                    relay_token_dict, relay_token_attn_dict, rt_cls_token = checkpoint(
                         self.rtsa_blocks[i], relay_token_dict, octree,
-                        use_reentrant=False,
+                        rt_cls_token, use_reentrant=False,
                     )
                 else:
-                    relay_token_dict, relay_token_attn_dict = self.rtsa_blocks[i](
-                        relay_token_dict, octree,
+                    relay_token_dict, relay_token_attn_dict, rt_cls_token = self.rtsa_blocks[i](
+                        relay_token_dict, octree, rt_cls_token,
                     )
 
                 # Log qkv std (removed from dict so gradients are not detached in next step)
                 feats_and_attn_maps_per_block[i].update({
                     'rt_qkv_std': relay_token_attn_dict.pop('qkv_std')
                 })
+
+                # Log rt cls token
+                if rt_cls_token is not None:
+                    # Log final attn vals without detaching gradients
+                    feats_and_attn_maps_per_block[i].update({
+                        'rt_cls_token': rt_cls_token,
+                    })
+                    if i == (self.num_blocks - 1):
+                        feats_and_attn_maps_per_block[i].update({
+                            'rt_final_cls_attn_vals': 
+                                # how much cls token attends to RTs, averaged over heads (note this contains padding)
+                                F.softmax(relay_token_attn_dict['attn_map'], dim=-1).mean(1)[:, 0, 1:],
+                        })
                 
                 # Log feats and attn maps
                 if self.return_feats_and_attn_maps:
@@ -729,6 +760,7 @@ class HOTFormerBase(torch.nn.Module):
                  rt_propagation_scale: Optional[float] = None,
                  rt_init_type: str = 'avg_pool',
                  rt_rpe_init: bool = False, 
+                 rt_class_token: bool = False,
                  disable_rt: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  ADaPE_use_accurate_point_stats: bool = False,
@@ -748,6 +780,7 @@ class HOTFormerBase(torch.nn.Module):
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
         self.ct_size = rt_size
+        self.rt_class_token = rt_class_token
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
         self.ADaPE_use_accurate_point_stats = ADaPE_use_accurate_point_stats
@@ -784,24 +817,27 @@ class HOTFormerBase(torch.nn.Module):
             grad_checkpoint=grad_checkpoint, conv_norm=conv_norm,
             rt_size=rt_size, rt_propagation=rt_propagation,
             rt_propagation_scale=rt_propagation_scale, rt_init_type=rt_init_type,
-            rt_rpe_init=rt_rpe_init, disable_rt=disable_rt, ADaPE_mode=ADaPE_mode,
+            rt_rpe_init=rt_rpe_init, rt_class_token=rt_class_token,
+            disable_rt=disable_rt, ADaPE_mode=ADaPE_mode,
             layer_scale=layer_scale, xcpe=xcpe,
             return_feats_and_attn_maps=return_feats_and_attn_maps)
 
-    def forward(self, data: Tensor, octree: Octree, depth: int):
+    def forward(self, data: Tensor, batch: Dict, depth: int):
+        octree = batch['octree']
+        points = batch['points'] if 'points' in batch else None
         # Generate initial convolution embeddings
         data = self.patch_embed(data, octree, depth)
-        
         # Refine local features with standard octree attention
         if self.downsample_input_embeddings:
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_size=self.ct_size, ADaPE_mode=self.ADaPE_mode,
+                         ct_size=self.ct_size, rt_class_token=self.rt_class_token,
+                         ADaPE_mode=self.ADaPE_mode,
                          ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats,
                          num_pyramid_levels=self.num_pyramid_levels,
                          num_octf_levels=self.num_octf_levels)
-        octree.build_t()
+        octree.build_t(points=points)
         octf_feats_and_attn_maps = {}  # Store feats and attn maps per octf stage
         local_feat_dict = {}
         for i in range(self.num_octf_levels):
@@ -848,6 +884,7 @@ class HOTFormer(torch.nn.Module):
         rt_propagation_scale: Optional[float] = None,
         rt_init_type: str = 'avg_pool',
         rt_rpe_init: bool = False, 
+        rt_class_token: bool = False,
         disable_rt: bool = False,
         ADaPE_mode: Optional[str] = None,
         ADaPE_use_accurate_point_stats: bool = False,
@@ -877,6 +914,7 @@ class HOTFormer(torch.nn.Module):
             rt_propagation: Boolean indicating if relay token features should be propagated to local features at the end of the stage.
             rt_propagation_scale: Learnable scalar multiplier for rt propagation step, to prevent 'blurring' of local features.
             rt_init_type: Type of initialisation to use for relay tokens. Valid types include ['avg_pool', 'max_pool', 'learnable']
+            rt_class_token: Use a class token for RTSA
             disable_rt: Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
             ADaPE_mode: Use Absolute Distribution-aware Position Encoding (ADaPE) during carrier token attention. Mode (valid values: ['pos','var','cov']) determines whether position, variance, or covariance is used (cumulative aggregation of those three)
             ADaPE_use_accurate_point_stats: Use accurate point statistics when computing ADaPE (by default just takes octant centroids instead of considering true point distribution)
@@ -909,6 +947,7 @@ class HOTFormer(torch.nn.Module):
             rt_propagation_scale=rt_propagation_scale,
             rt_init_type=rt_init_type,
             rt_rpe_init=rt_rpe_init, 
+            rt_class_token=rt_class_token,
             disable_rt=disable_rt,
             ADaPE_mode=ADaPE_mode,
             ADaPE_use_accurate_point_stats=ADaPE_use_accurate_point_stats,
@@ -955,8 +994,14 @@ class HOTFormer(torch.nn.Module):
         if isinstance(m, torch.nn.Linear) and m.bias is not None:
             torch.nn.init.constant_(m.bias, 0)
 
-    def forward(self, data: Tensor, octree: Octree, depth: int):
+    @torch.jit.ignore
+    def no_weight_decay(self) -> Set[str]:
+        """Set of parameters that should not use weight decay."""
+        return {'rpe_table', 'rt_init_token', 'rt_cls_token'}
+
+    def forward(self, data: Tensor, batch: Dict, depth: int):
+        assert 'octree' in batch and isinstance(batch['octree'], Octree), 'Invalid batch'
         local_feat_dict, relay_token_dict, octree_t, feats_and_attn_maps = (
-            self.backbone(data, octree, depth)
+            self.backbone(data, batch, depth)
         )
         return local_feat_dict, relay_token_dict, octree_t, feats_and_attn_maps

@@ -32,7 +32,8 @@ class OctreeT(Octree):
                  nempty: bool = True, max_depth: Optional[int] = None,
                  start_depth: Optional[int] = None,
                  ct_layers: List[bool] = [False, False, False, False],
-                 ct_size: int = 0, ADaPE_mode: Optional[str] = None,
+                 ct_size: int = 0, rt_class_token: bool = False,
+                 ADaPE_mode: Optional[str] = None,
                  ADaPE_use_accurate_point_stats: bool = False,
                  num_pyramid_levels: int = 0, num_octf_levels: int = 0,
                  **kwargs):
@@ -43,6 +44,8 @@ class OctreeT(Octree):
         self.dilation = dilation  # TODO dilation as a list
         self.ct_layers = ct_layers
         self.ct_size = ct_size
+        assert isinstance(rt_class_token, bool)
+        self.rt_class_token = rt_class_token
         self.nempty = nempty
         self.max_depth = max_depth or self.depth
         self.start_depth = start_depth or self.full_depth
@@ -82,20 +85,22 @@ class OctreeT(Octree):
         self.dilate_pos = [None] * num
         self.window_stats = [None] * num
 
-    def build_t(self):
+    def build_t(self, points: Optional[Points] = None):
         r"""Build the information necessary for computing Octree attention.
 
         This includes attention masks, relative positions, batch idx, and point
         window distribution stats. This function must be called before passing
         the octree through OctFormer.
         """
+        if self.ADaPE_use_accurate_point_stats and points is None:
+            raise ValueError('Must provide Points if computing accurate point stats')
         for i, depth in enumerate(range(self.start_depth, self.max_depth + 1)):
             use_ct = self.ct_layers[-(i+1)]
             self.build_batch_idx(depth, use_ct)
             self.build_batch_boundary(depth, use_ct)
             self.build_attn_mask(depth, use_ct)
             self.build_rel_pos(depth)
-            self.compute_window_stats(depth, use_ct)
+            self.compute_window_stats(depth, use_ct, points)
             
         if self.num_pyramid_levels > 0:
             self.build_rt_attn_mask()
@@ -221,14 +226,17 @@ class OctreeT(Octree):
         #   elements are padded to)
         B = self.batch_size
         N = self.batch_num_relay_tokens_combined.max().item()
+        N += int(self.rt_class_token)  # Mask will be one longer if using class token
         rt_batch_idx = torch.full(
             (B, N), fill_value = 1e4, dtype=torch.long, device=self.device
         )
-        for batch_idx, batch_length in enumerate(self.batch_num_relay_tokens_combined):
+        for batch_idx in range(B):
+            batch_length = self.batch_num_relay_tokens_combined[batch_idx].clone()
+            batch_length += int(self.rt_class_token)
             rt_batch_idx[batch_idx, :batch_length] = batch_idx
 
         # Correct the mask for last batch (as padding is unaccounted for)
-        prev_end_idx = 0
+        prev_end_idx = 0 + int(self.rt_class_token)
         for depth_j in self.pyramid_depths:
             num_padded_tokens = torch.sum(self.ct_batch_idx[depth_j]
                                           >= B).item()
@@ -260,7 +268,9 @@ class OctreeT(Octree):
         xyz = xyz.transpose(1, 2).reshape(-1, self.patch_size, 3)
         self.dilate_pos[depth] = xyz.unsqueeze(2) - xyz.unsqueeze(1)
 
-    def compute_window_stats(self, depth: int, use_ct: bool):
+    def compute_window_stats(
+        self, depth: int, use_ct: bool, points: Optional[Points] = None
+    ):
         """
         Pre-compute mean and covariance of each point window. Used to enhance
         positional encoding (ADaPE) learned by MLP for carrier token attention.
@@ -275,22 +285,18 @@ class OctreeT(Octree):
         if not self.ADaPE_use_accurate_point_stats:
             # Get points for current depth
             x, y, z, _ = self.xyzb(depth, self.nempty)
-            points = torch.stack((x,y,z), dim=1).to(torch.float32)
+            points_curr_depth = torch.stack((x,y,z), dim=1).to(torch.float32)
             # Rescale to [-1, 1] and put into windows
-            points = rescale_octree_points(points, depth)
+            points_curr_depth = rescale_octree_points(points_curr_depth, depth)
         else:
-            # Compute more accurate points for current depth by averaging deepest points
-            # NOTE: This still relies on averaged points from the deepest octree layer,
-            #       so it is not the true distribution, but will be much closer than
-            #       the default method. Fixing would require also passing the
-            #       original points during OctreeT construction.
-            raise NotImplementedError('ADaPE_use_accurate_point_stats disabled until further bug investigation')
-            points = get_octant_centroids_from_points(self.to_points(), depth)
-        points = self.data_to_windows(points, depth, dilated_windows=False)
+            # Compute more accurate points for current depth using original points
+            assert points is not None, 'Must provide Points if computing accurate point stats'
+            points_curr_depth = get_octant_centroids_from_points(points, depth)
+        points_curr_depth = self.data_to_windows(points_curr_depth, depth, dilated_windows=False)
         mask = self.ct_init_mask[depth]
         window_stats = torch.zeros(N, C, device=self.device)
         # Compute (μx, μy, μz, σx, σxy, σxz, σy, σyz, σz) for all windows
-        for i, window_points in enumerate(points):
+        for i, window_points in enumerate(points_curr_depth):
             # Mask out points from overlap windows
             batch_masked = window_points[~mask[i]]
             window_stats[i,:3] = batch_masked.mean(0)

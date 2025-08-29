@@ -41,7 +41,7 @@ class OctFormerLoc(torch.nn.Module):
         octree = batch['octree']
         data = self.get_input_feature(octree)
         
-        x, output_depth, octree_t, feats_and_attn_maps = self.backbone(data=data, octree=octree, depth=octree.depth)
+        x, output_depth, octree_t, feats_and_attn_maps = self.backbone(data=data, batch=batch, depth=octree.depth)
         # x is (num_points, n_features) tensor
         assert x.shape[1] == self.pooling.in_dim, f'Backbone output tensor has: {x.shape[1]} channels. ' \
                                                   f'Expected: {self.pooling.in_dim}'

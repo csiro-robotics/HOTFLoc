@@ -597,7 +597,9 @@ class OctFormerBase(torch.nn.Module):
                 channels[i], channels[i + 1], kernel_size=[2], nempty=nempty,
                 conv_norm=conv_norm) for i in range(self.num_stages - 1)])
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
+    def forward(self, data: torch.Tensor, batch: Dict, depth: int):
+        octree = batch['octree']
+        points = batch['points'] if 'points' in batch else None
         data = self.patch_embed(data, octree, depth)
         if self.downsample_input_embeddings:
             depth = depth - self.stem_down   # current octree depth
@@ -606,7 +608,7 @@ class OctFormerBase(torch.nn.Module):
                          ct_layers=self.ct_layers, ct_size=self.ct_size,
                          ADaPE_mode=self.ADaPE_mode,
                          ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats)
-        octree.build_t()
+        octree.build_t(points=points)
         features = {}
         feats_and_attn_maps_per_stage = {}
         for i in range(self.num_stages):
@@ -753,7 +755,8 @@ class OctFormer(torch.nn.Module):
         if isinstance(m, torch.nn.Linear) and m.bias is not None:
             torch.nn.init.constant_(m.bias, 0)
 
-    def forward(self, data: torch.Tensor, octree: Octree, depth: int):
-        features, feats_and_attn_maps, octree_t = self.backbone(data, octree, depth)
-        output, output_depth = self.head(features, octree)
+    def forward(self, data: torch.Tensor, batch: Dict, depth: int):
+        assert 'octree' in batch and isinstance(batch['octree'], Octree), 'Invalid batch'
+        features, feats_and_attn_maps, octree_t = self.backbone(data, batch, depth)
+        output, output_depth = self.head(features, batch['octree'])
         return output, output_depth, octree_t, feats_and_attn_maps

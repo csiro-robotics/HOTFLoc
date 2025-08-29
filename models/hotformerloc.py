@@ -44,7 +44,7 @@ class HOTFormerLoc(torch.nn.Module):
         data = self.get_input_feature(octree)
 
         local_feat_dict, relay_token_dict, octree, feats_and_attn_maps = (
-            self.backbone(data=data, octree=octree, depth=octree.depth)
+            self.backbone(data=data, batch=batch, depth=octree.depth)
         )
         if self.pooling.pooled_feats == 'local':
             x = local_feat_dict
