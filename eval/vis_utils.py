@@ -320,15 +320,15 @@ def custom_draw_geometry_with_z_rotation(
             geom.rotate(rot, rot_centre)
             vis.update_geometry(geom)
         # TODO: save img to file
-        if save_dir is not None:
-            if glb.index < num_steps:
+        if glb.index < num_steps:
+            if save_dir is not None:
                 vis.capture_screen_image(os.path.join(save_dir, f'{glb.index:05d}.png'), True)
                 # image = vis.capture_screen_float_buffer(False)
                 # plt.imsave(os.path.join(frame_dir, f'{glb.index:05d}.png'),
                 #            np.asarray(image),
                 #            dpi=1)
-            else:  # quit after saving animation
-                vis.destroy_window()
+        else:  # quit after saving animation
+            vis.destroy_window()
         glb.index += 1
         return True
         
@@ -632,8 +632,12 @@ def visualise_coarse_correspondences(
             zoom=zoom,
         )
     else:
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'coarse_corr_{coarse_colourmode}_frames')
         custom_draw_geometry_with_z_rotation(
-            vis_list, save_dir=os.path.join(save_dir, 'coarse_corr_frames'), zoom=zoom,
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
         )  # with rotation
 
 
@@ -761,7 +765,13 @@ def visualise_fine_correspondences(
             zoom=zoom,
         )
     else:
-        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'fine_corr_frames'), zoom=zoom)  # with rotation
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'fine_corr_{colourmode}_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
+        )  # with rotation
 
 
 def visualise_similarity(
@@ -834,7 +844,13 @@ def visualise_similarity(
             zoom=zoom,
         )
     else:
-        custom_draw_geometry_with_z_rotation(vis_list, save_dir=os.path.join(save_dir, 'coarse_sim_frames'), zoom=zoom)  # with rotation
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'coarse_sim_{coarse_colourmode}_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom
+        )  # with rotation
 
 
 def visualise_registration(
@@ -844,6 +860,7 @@ def visualise_registration(
     zoom=0.55,
     save_dir: Optional[str] = None,
     filename: str = 'registration',
+    disable_animation=False,
     non_interactive=False,
 ):
     """
@@ -854,7 +871,7 @@ def visualise_registration(
         pos_points_fine: Target Points
         transform: SE(3) transform from source to target
         save_dir: Directory to save plots
-
+        disable_animation: Disables animation
     """
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
@@ -881,18 +898,27 @@ def visualise_registration(
     # pos_points_fine_o3d.colors = o3d.utility.Vector3dVector(PC_TARGET_COLOUR)    
 
     # Add axes
-    anc_axes = make_open3d_axes(scale=2.0)
+    # anc_axes = make_open3d_axes(scale=2.0)
 
     # Draw all with Open3D
-    vis_list = [anc_points_fine_o3d, pos_points_fine_o3d,
-                anc_axes]
-    custom_draw_geometry_load_option(
-        vis_list,
-        save_dir=save_dir,
-        filename=filename,
-        non_interactive=non_interactive,
-        zoom=zoom,
-    )
+    vis_list = [anc_points_fine_o3d, pos_points_fine_o3d,]
+                # anc_axes]
+    if disable_animation:
+        custom_draw_geometry_load_option(
+            vis_list,
+            save_dir=save_dir,
+            filename=filename,
+            non_interactive=non_interactive,
+            zoom=zoom,
+        )
+    else:
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'{filename}_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
+        )  # with rotation
 
 def visualise_LGR_initial_registration(
     anc_corr_points: Union[Tensor, ndarray],
@@ -903,6 +929,7 @@ def visualise_LGR_initial_registration(
     zoom=0.55,
     angle=-380.0,
     save_dir: Optional[str] = None,
+    disable_animation=False,
     non_interactive=False,
 ):
     """
@@ -914,6 +941,7 @@ def visualise_LGR_initial_registration(
         corr_scores: Correspondence scores
         transform: SE(3) transform from source to target
         save_dir: Directory to save plots
+        disable_animation: Disables animation
     """
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
@@ -955,11 +983,21 @@ def visualise_LGR_initial_registration(
         corr_points_lineset,
     ]
 
-    custom_draw_geometry_load_option(
-        vis_list,
-        save_dir=save_dir,
-        filename='registration_LGR_initial_corr',
-        non_interactive=non_interactive,
-        zoom=zoom,
-        angle=angle,
-    )
+    if disable_animation:
+        custom_draw_geometry_load_option(
+            vis_list,
+            save_dir=save_dir,
+            filename='registration_LGR_initial_corr',
+            non_interactive=non_interactive,
+            zoom=zoom,
+            angle=angle,
+        )
+    else:
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, 'registration_LGR_initial_corr_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
+            angle=angle,
+        )  # with rotation
