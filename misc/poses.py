@@ -101,6 +101,31 @@ def relative_pose(m1, m2):
     return np.linalg.inv(m2) @ m1
 
 
+def invert_pose(T: torch.Tensor) -> torch.Tensor:
+    """
+    Invert an SE(3) homogeneous transformation matrix (single or batch).
+    More numerically stable than torch.inverse()
+    
+    Args:
+        T: (..., 4, 4) tensor of SE(3) matrices.
+    Returns:
+        T_inv: (..., 4, 4) tensor of inverted SE(3) matrices.
+    """
+    if T.shape[-2:] != (4, 4):
+        raise ValueError(f"Expected (...,4,4) input, got {T.shape}")
+
+    R = T[..., :3, :3]  # (...,3,3)
+    t = T[..., :3, 3]  # (...,3)
+
+    R_inv = R.transpose(-1, -2)
+    t_inv = -(R_inv @ t.unsqueeze(-1)).squeeze(-1)
+
+    T_inv = torch.eye(4, dtype=T.dtype, device=T.device).expand_as(T).clone()
+    T_inv[..., :3, :3] = R_inv
+    T_inv[..., :3, 3] = t_inv
+    return T_inv
+
+
 def height_offset_removal(pc: torch.Tensor, mode: str='min') -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Remove height offset from the point cloud, based on min or mean z coordinate.
@@ -124,6 +149,7 @@ def height_offset_removal(pc: torch.Tensor, mode: str='min') -> Tuple[torch.Tens
     
     pc = apply_transform(pc, tf)    
     return pc, tf
+
 
 def gravity_align_pc_with_pose(pc: torch.Tensor, pose: np.ndarray) -> Tuple[torch.Tensor, torch.Tensor]:
     """

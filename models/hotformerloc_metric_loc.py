@@ -22,6 +22,7 @@ from models.octree import get_octant_centroids_from_points, split_and_pad_data, 
 from models.hotformerloc import HOTFormerLoc
 from misc.utils import ModelParams
 from misc.torch_utils import release_cuda
+from misc.poses import invert_pose
 from models.layers.local_global_registration import LocalGlobalRegistration
 from models.layers.octformer_layers import MLP
 from geotransformer.modules.ops import point_to_node_partition, index_select
@@ -411,7 +412,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     pos_points_coarse_ii,
                     anc_node_knn_points_ii,
                     pos_node_knn_points_ii,
-                    torch.inverse(transform_ii),  # NOTE: GeoTrans expects transform from src (pos) to ref (anc)
+                    invert_pose(transform_ii),  # NOTE: GeoTrans expects transform from src (pos) to ref (anc)
                     self.matching_radius,
                     ref_masks=anc_node_masks_ii,
                     src_masks=pos_node_masks_ii,
@@ -540,9 +541,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 output_dicts[batch_idx]['best_pos_corr_points'] = best_pos_corr_points_ii
                 output_dicts[batch_idx]['best_corr_scores'] = best_corr_scores_ii
                 # Ensure estimated transform is from anc to pos, not vice-versa
-                output_dicts[batch_idx]['estimated_transform'] = torch.inverse(estimated_transform_ii)
+                output_dicts[batch_idx]['estimated_transform'] = invert_pose(estimated_transform_ii)
                 if best_transform_ii is not None:
-                    best_transform_ii = torch.inverse(best_transform_ii)
+                    best_transform_ii = invert_pose(best_transform_ii)
                 output_dicts[batch_idx]['best_corr_transform'] = best_transform_ii
 
         toc = time.time()
