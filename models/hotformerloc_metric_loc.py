@@ -8,7 +8,7 @@ by Peng-Shuai Wang.
 """
 import time
 import logging
-from typing import Optional, List
+from typing import Optional, List, Set
 
 import torch
 import torch.nn as nn
@@ -582,6 +582,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
             else:
                 time_str += f'{name}: {process_time:.4f}s,  '
         logging.debug(time_str)
+
+    @torch.jit.ignore
+    def no_weight_decay(self) -> Set[str]:
+        """Set of parameters that should not use weight decay."""
+        return {'rpe_table', 'rt_init_token', 'rt_cls_token'}
         
     def print_info(self):
         print('Model class: HOTFormerMetricLoc')

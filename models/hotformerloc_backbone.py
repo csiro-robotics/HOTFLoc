@@ -6,8 +6,6 @@
 # Adapted from https://github.com/octree-nn/octformer by
 # Ethan Griffiths (Data61, Pullenvale)
 # --------------------------------------------------------
-from typing import Set
-
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -993,11 +991,6 @@ class HOTFormer(torch.nn.Module):
 
         if isinstance(m, torch.nn.Linear) and m.bias is not None:
             torch.nn.init.constant_(m.bias, 0)
-
-    @torch.jit.ignore
-    def no_weight_decay(self) -> Set[str]:
-        """Set of parameters that should not use weight decay."""
-        return {'rpe_table', 'rt_init_token', 'rt_cls_token'}
 
     def forward(self, data: Tensor, batch: Dict, depth: int):
         assert 'octree' in batch and isinstance(batch['octree'], Octree), 'Invalid batch'

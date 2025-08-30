@@ -271,12 +271,26 @@ class NetworkTrainer:
         if self.params.weight_decay is None or self.params.weight_decay == 0:
             self.optimizer = optimizer_fn(self.model.parameters(), lr=self.params.lr)
         else:
-            self.optimizer = optimizer_fn(self.model.parameters(), lr=self.params.lr, weight_decay=self.params.weight_decay)
+            # Extract params that shouldn't apply weight decay, and pass as separate param group
+            if hasattr(self.model, 'no_weight_decay'):
+                no_decay_params, decay_params = [], []
+                no_decay_names = self.model.no_weight_decay()
+                for name, p in self.model.named_parameters():
+                    if any(no_decay_name in name for no_decay_name in no_decay_names):
+                        no_decay_params.append(p)
+                    else:
+                        decay_params.append(p)
+                self.optimizer = optimizer_fn([
+                    {'params': decay_params},
+                    {'params': no_decay_params, 'weight_decay': 0}
+                ], lr=self.params.lr, weight_decay=self.params.weight_decay)
+            else:
+                self.optimizer = optimizer_fn(self.model.parameters(), lr=self.params.lr, weight_decay=self.params.weight_decay)
 
         if self.params.scheduler is not None:
             if self.params.scheduler == 'CosineAnnealingLR':
                 self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.params.epochs+1,
-                                                                    eta_min=self.params.min_lr)
+                                                                            eta_min=self.params.min_lr)
             elif self.params.scheduler == 'MultiStepLR':
                 self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, self.params.scheduler_milestones, gamma=self.params.gamma)
             elif self.params.scheduler == 'ExponentialLR':

@@ -6,6 +6,7 @@ CSIRO Data61
 Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
 by Peng-Shuai Wang.
 """
+from typing import Set
 
 import torch
 import torch.nn as nn
@@ -99,6 +100,11 @@ class HOTFormerLoc(torch.nn.Module):
             if 'rt_qkv_std' in dict_i.keys():
                 rt_qkv_std.append(dict_i.pop('rt_qkv_std'))
         return octf_qkv_std, hosa_qkv_std, rt_qkv_std
+
+    @torch.jit.ignore
+    def no_weight_decay(self) -> Set[str]:
+        """Set of parameters that should not use weight decay."""
+        return {'rpe_table', 'rt_init_token', 'rt_cls_token'}
 
     def print_info(self):
         print('Model class: HOTFormerLoc')
