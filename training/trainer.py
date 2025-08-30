@@ -105,6 +105,10 @@ class NetworkTrainer:
 
         # Initialise model, optimiser, and scheduler 
         self.init_model_optim_sched()
+                    
+        # Initialise the logger
+        logging_level = 'DEBUG' if self.params.verbose else 'INFO'
+        self.logger = Logger(log_file=None, logging_level=logging_level, local_rank=-1)
         
         # Load state from ckpt if resubmitted, otherwise start from scratch
         if self.finetune:  # Finetuning
@@ -118,7 +122,14 @@ class NetworkTrainer:
             except RuntimeError:
                 # Check if HOTFormerLoc weights are being loaded for HOTFormerMetricLoc
                 if isinstance(self.model, HOTFormerMetricLoc):
-                    self.model.hotformerloc_global.load_state_dict(state)
+                    if self.params.model_params.strict_loading:
+                        self.model.hotformerloc_global.load_state_dict(state)
+                    else:
+                        incompatible_keys = self.model.hotformerloc_global.load_state_dict(state, strict=False)
+                        if len(incompatible_keys.missing_keys) + len(incompatible_keys.unexpected_keys) > 0:
+                            msg = f'Incompatible model weights:\n{incompatible_keys}'
+                            self.logger.warning(msg)
+                            self.logger.warning('Ignoring as `strict_weights` == False')
                 else:
                     raise
             # Need to re-init model_ema to checkpoint weights
@@ -172,10 +183,6 @@ class NetworkTrainer:
         else:
             n_params = sum([param.nelement() for param in self.model.parameters()])
             print('Number of model parameters: {}'.format(n_params))
-                    
-        # Initialise the logger
-        logging_level = 'DEBUG' if self.params.verbose else 'INFO'
-        self.logger = Logger(log_file=None, logging_level=logging_level, local_rank=-1)
 
         # Begin train loop
         msg = 'Begin training'
