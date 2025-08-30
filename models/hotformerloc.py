@@ -6,7 +6,7 @@ CSIRO Data61
 Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
 by Peng-Shuai Wang.
 """
-from typing import Set
+from typing import List, Set, Tuple, Optional
 
 import torch
 import torch.nn as nn
@@ -20,13 +20,17 @@ from models.octree import OctreeT
 class HOTFormerLoc(torch.nn.Module):
     def __init__(self, backbone: nn.Module, pooling: PoolingWrapper,
                  normalize_embeddings: bool = False, input_features='P',
-                 return_feats_and_attn_maps: bool = False):
+                 return_feats_and_attn_maps: bool = False,
+                 reranking_mode: Optional[str] = None):
         super().__init__()
         self.backbone = backbone
         self.pooling = pooling
         self.normalize_embeddings = normalize_embeddings
         self.input_features = input_features
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
+        if reranking_mode not in (None, 'relay_token_gc'):
+            raise ValueError('Invalid re-ranking mode')
+        self.reranking_mode = reranking_mode
         self.stats = {}
         
     def get_input_feature(self, octree):
@@ -68,16 +72,47 @@ class HOTFormerLoc(torch.nn.Module):
 
         octf_qkv_std, hosa_qkv_std, rt_qkv_std = self.get_qkv_std(feats_and_attn_maps, octree)
 
+        return_dict = {'global': x, 'local': local_feat_dict, 'rt': relay_token_dict,
+                       'octree': octree, 'octf_qkv_std': octf_qkv_std,
+                       'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std,
+                       'rt_final_cls_attn_vals': feats_and_attn_maps['hotformer'][-1]['rt_final_cls_attn_vals']}
         if self.return_feats_and_attn_maps:
-            return {'global': x, 'local': local_feat_dict, 'octree': octree, 'octf_qkv_std': octf_qkv_std,
-                    'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std,
-                    'feats_and_attn_maps': feats_and_attn_maps['hotformer'],
-                    'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']}
-        return {'global': x, 'local': local_feat_dict, 'octree': octree, 'octf_qkv_std': octf_qkv_std,
-                'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std}
+            return_dict.update({'feats_and_attn_maps': feats_and_attn_maps['hotformer'],
+                                'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']})
+        return return_dict
 
+    def rerank(self, query_output: dict, nn_outputs: List[dict]):
+        """
+        Perform re-ranking of query and N candidates. Note that only 'octree',
+        'rt', and 'rt_final_cls_attn_vals' keys are needed from HOTFormerLoc outputs.
+
+        Args:
+            query_output (dict): HOTFormerLoc output for query submap
+            nn_outputs (List[dict]): List of HOTFormerLoc outputs for each nn submap
+        """
+        # TODO: Separate this into a separate class, and init that class in __init__
+        if self.reranking_mode == 'relay_token_gc':
+            # Relay token geometric consistency
+            from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
+            # NOTE: Need to re-think this a little, as entire HOTFloc output is batched
+            #       during training. Instead, pass a (query_indices, nn_indices) param
+            #       to specify our re-ranking batch (hard mining in loss func).
+            
+            # TODO: Plan -- 
+            #       - Get query RTs and nn RTs (add param for num levels / level idx)
+            #       - Sort each by top-k attn vals (with zero-padding for safety?)
+            #       - Apply linear layer + (optional) L2 norm
+            #       - Compute/get RT centroids from OctreeTs
+            #       - Apply SGV
+            #       - Sort + scale (+ concat) eigenvectors and process with MLP + sigmoid
+            #       - Return (batched) re-ranking scores
+            concat_and_pad_rt(relay_token_dict, octree)
+            pass
+        else:
+            raise NotImplementedError
+    
     @staticmethod
-    def get_qkv_std(feats_and_attn_maps: dict, octree: OctreeT) -> tuple[dict, dict, list]:
+    def get_qkv_std(feats_and_attn_maps: dict, octree: OctreeT) -> Tuple[dict, dict, list]:
         """
         Returns standard deviation of query, key, value outputs for each block of
         each HOTFormer pyramid level.
