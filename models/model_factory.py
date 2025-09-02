@@ -8,6 +8,7 @@ from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.relay_token_reranker import RelayTokenGeometricConsistencyReranker
 from geotransformer.modules.geotransformer import GeometricTransformer
 from misc.utils import TrainingParams
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
@@ -101,9 +102,20 @@ def model_factory(params: TrainingParams):
                 "If relay tokens are disabled, a local feature pooling method "
                 + "must be used!"
             )
+        reranker = None
+        if model_params.reranking_mode == 'relay_token_gc':
+            reranker = RelayTokenGeometricConsistencyReranker(
+                rerank_rt_indices=model_params.rerank_rt_indices,
+                attn_topk=model_params.rerank_rt_attn_topk,
+                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
+                geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
+            )
+        elif model_params.reranking_mode is not None:
+            raise NotImplementedError
         hotformerloc_global = HOTFormerLoc(
             backbone=backbone,
             pooling=pooling,
+            reranker=reranker,
             normalize_embeddings=model_params.normalize_embeddings,
             input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
@@ -184,9 +196,20 @@ def model_factory(params: TrainingParams):
                 "If relay tokens are disabled, a local feature pooling method "
                 + "must be used!"
             )
+        reranker = None
+        if model_params.reranking_mode == 'relay_token_gc':
+            reranker = RelayTokenGeometricConsistencyReranker(
+                rerank_rt_indices=model_params.rerank_rt_indices,
+                attn_topk=model_params.rerank_rt_attn_topk,
+                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
+                geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
+            )
+        elif model_params.reranking_mode is not None:
+            raise NotImplementedError
         model = HOTFormerLoc(
             backbone=backbone,
             pooling=pooling,
+            reranker=reranker,
             normalize_embeddings=model_params.normalize_embeddings,
             input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,

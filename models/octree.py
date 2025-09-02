@@ -31,8 +31,8 @@ class OctreeT(Octree):
     def __init__(self, octree: Octree, patch_size: int = 24, dilation: int = 4,
                  nempty: bool = True, max_depth: Optional[int] = None,
                  start_depth: Optional[int] = None,
-                 ct_layers: List[bool] = [False, False, False, False],
-                 ct_size: int = 0, rt_class_token: bool = False,
+                 rt_layers: List[bool] = [False, False, False, False],
+                 rt_size: int = 0, rt_class_token: bool = False,
                  ADaPE_mode: Optional[str] = None,
                  ADaPE_use_accurate_point_stats: bool = False,
                  num_pyramid_levels: int = 0, num_octf_levels: int = 0,
@@ -42,8 +42,8 @@ class OctreeT(Octree):
 
         self.patch_size = patch_size
         self.dilation = dilation  # TODO dilation as a list
-        self.ct_layers = ct_layers
-        self.ct_size = ct_size
+        self.rt_layers = rt_layers
+        self.rt_size = rt_size
         assert isinstance(rt_class_token, bool)
         self.rt_class_token = rt_class_token
         self.nempty = nempty
@@ -53,10 +53,12 @@ class OctreeT(Octree):
         self.num_octf_levels = num_octf_levels
         self.pyramid_depths = None
         if self.num_pyramid_levels > 0:  # HOTFormerLoc
-            self.ct_layers = [False]*self.num_octf_levels + [True]*self.num_pyramid_levels
+            self.rt_layers = [False]*self.num_octf_levels + [True]*self.num_pyramid_levels
             self.pyramid_depths = [(self.max_depth - self.num_octf_levels - j) for j in range(self.num_pyramid_levels)]
         self.invalid_mask_value = -1e3
         self.ADaPE_mode = ADaPE_mode
+        if self.rt_class_token and self.ADaPE_mode is None:
+            self.ADaPE_mode = "pos"  # need RT positions at least for RT re-ranking
         self.use_ADaPE = self.ADaPE_mode is not None
         self.ADaPE_use_accurate_point_stats = ADaPE_use_accurate_point_stats
         if self.ADaPE_mode == "cov":
@@ -95,7 +97,7 @@ class OctreeT(Octree):
         if self.ADaPE_use_accurate_point_stats and points is None:
             raise ValueError('Must provide Points if computing accurate point stats')
         for i, depth in enumerate(range(self.start_depth, self.max_depth + 1)):
-            use_ct = self.ct_layers[-(i+1)]
+            use_ct = self.rt_layers[-(i+1)]
             self.build_batch_idx(depth, use_ct)
             self.build_batch_boundary(depth, use_ct)
             self.build_attn_mask(depth, use_ct)
@@ -122,8 +124,8 @@ class OctreeT(Octree):
         # Save mask for CT initialisation (prevents pooling erroneous features)
         self.ct_init_mask[depth] = batch_window != batch_ct_idx
         # Add CT to mask
-        hat_batch_window = F.pad(batch_window, pad=(self.ct_size, 0))
-        hat_batch_window[:, :self.ct_size] += batch_ct_idx  # insert CT batch idx
+        hat_batch_window = F.pad(batch_window, pad=(self.rt_size, 0))
+        hat_batch_window[:, :self.rt_size] += batch_ct_idx  # insert CT batch idx
         ##### OLD CODE #####
         # overlap_idx = self.batch_boundary[depth][self.batch_window_overlap_mask[depth] == 1] - 1
         # mask[overlap_idx, :self.ct_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP CTs
@@ -133,7 +135,7 @@ class OctreeT(Octree):
 
         # Build idx for CT global attn
         # TODO: ensure this works with ct_size > 1
-        batch_ct = batch.view(-1, self.patch_size // self.ct_size)
+        batch_ct = batch.view(-1, self.patch_size // self.rt_size)
         self.ct_batch_idx[depth] = batch_ct.min(1).values
 
     def build_batch_boundary(self, depth: int, use_ct: bool):
@@ -274,6 +276,7 @@ class OctreeT(Octree):
         """
         Pre-compute mean and covariance of each point window. Used to enhance
         positional encoding (ADaPE) learned by MLP for carrier token attention.
+        Also used in relay token re-ranking to provide relay token centroids. 
         """
         if not use_ct or not self.use_ADaPE:
             return
@@ -396,11 +399,21 @@ class OctreeT(Octree):
                     if isinstance(p, torch.Tensor) else None for p in prop]
 
         # Construct new OctreeT and copy objects over
-        octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
-                         self.max_depth, self.start_depth, self.ct_layers,
-                         self.ct_size, self.ADaPE_mode,
-                         self.ADaPE_use_accurate_point_stats,
-                         self.num_pyramid_levels, self.num_octf_levels)
+        octree = OctreeT(
+            octree=octree,
+            patch_size=self.patch_size,
+            dilation=self.dilation,
+            nempty=self.nempty,
+            max_depth=self.max_depth,
+            start_depth=self.start_depth,
+            rt_layers=self.rt_layers,
+            rt_size=self.rt_size,
+            rt_class_token=self.rt_class_token,
+            ADaPE_mode=self.ADaPE_mode,
+            ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats,
+            num_pyramid_levels=self.num_pyramid_levels,
+            num_octf_levels=self.num_octf_levels,
+        )
         octree.batch_idx = list_to_device(self.batch_idx)
         octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
         octree.ct_batch_idx = list_to_device(self.ct_batch_idx)

@@ -160,7 +160,8 @@ def get_latent_vectors(model, data_set, device, params: TrainingParams,
     embeddings = None
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
-        for ii, batch in enumerate(dataloader):
+        for ii, batch_dict in enumerate(dataloader):
+            batch = batch_dict['batch']
             batch = to_device(batch, device, non_blocking=True, construct_octree_neigh=True)
             temp_embedding = compute_embedding(model, batch)
             if embeddings is None:

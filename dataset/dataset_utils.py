@@ -148,12 +148,16 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     # quantizer: converts to polar (when polar coords are used) and quantizes
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
     # octree: if True, loads octree in batch instead of sparse tensor
-    def collate_fn(data_list):
+    def collate_fn(data_list) -> Dict:
         tic = time.time()
 
         # Constructs a batch object
         clouds = [e[0] for e in data_list]
         labels = [e[1] for e in data_list]
+        shift_and_scale = [e[2] for e in data_list]
+        shift_and_scale_batch = None
+        if params.normalize_points:
+            shift_and_scale_batch = torch.stack(shift_and_scale, dim=0)
         
         # clouds = data
         if dataset.set_transform is not None:
@@ -185,7 +189,9 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
         #return batch, positives_mask, negatives_mask, torch.tensor(sampled_positive_ndx), torch.tensor(relative_poses)
-        return batch, positives_mask, negatives_mask
+        return {'batch': batch, 'positives_mask': positives_mask,
+                'negatives_mask': negatives_mask,
+                'shift_and_scale': shift_and_scale_batch}
 
     return collate_fn
 
@@ -195,7 +201,7 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
     Collation function for local batches. Returns batch + 6DOF relative transform + 
     normalization shift and scale parameters.
     """
-    def collate_fn(data_list):
+    def collate_fn(data_list) -> Dict:
         tic = time.time()
 
         # Constructs a batch object
@@ -211,18 +217,21 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
 
         # Stack transforms and shift/scales
         trans_batch = torch.stack(rel_transforms, dim=0)
-        anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
-        positive_shift_and_scale_batch = torch.stack(positive_shift_and_scale, dim=0)
+        anchor_shift_and_scale_batch = None
+        positive_shift_and_scale_batch = None
+        if params.normalize_points:
+            anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
+            positive_shift_and_scale_batch = torch.stack(positive_shift_and_scale, dim=0)
 
         logging.debug(f'Collating local batch done in {time.time()-tic:.2f}s')
 
         # Returns:
         # Anc and pos batch, relative transformations, normalization shift and scale params
         return {
-            "anc_batch": anchor_batch, "pos_batch": positive_batch,
-            "anc_shift_and_scale": anchor_shift_and_scale_batch,
-            "pos_shift_and_scale": positive_shift_and_scale_batch,
-            "transform": trans_batch,
+            'anc_batch': anchor_batch, 'pos_batch': positive_batch,
+            'anc_shift_and_scale': anchor_shift_and_scale_batch,
+            'pos_shift_and_scale': positive_shift_and_scale_batch,
+            'transform': trans_batch,
         }
 
     return collate_fn
@@ -373,15 +382,20 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
     """
     Custom collate function for evaluation dataloader. Only returns batches.
     """
-    def collate_fn(data_list):
+    def collate_fn(data_list) -> Dict:
         tic = time.time()
 
         # Generate batches in correct format for MinkLoc/OctFormer
-        batch = create_batch(data_list, quantizer, params)
+        clouds = [e[0] for e in data_list]
+        shift_and_scale = [e[1] for e in data_list]
+        batch = create_batch(clouds, quantizer, params)
+        shift_and_scale_batch = None
+        if params.normalize_points:
+            shift_and_scale_batch = torch.stack(shift_and_scale, dim=0)
 
         logging.debug(f'Collating eval batch done in {time.time()-tic:.2f}s')
 
-        return batch
+        return {'batch': batch, 'shift_and_scale': shift_and_scale_batch}
 
     return collate_fn
 

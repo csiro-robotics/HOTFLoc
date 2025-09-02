@@ -19,18 +19,16 @@ from models.octree import OctreeT
 
 class HOTFormerLoc(torch.nn.Module):
     def __init__(self, backbone: nn.Module, pooling: PoolingWrapper,
-                 normalize_embeddings: bool = False, input_features='P',
-                 return_feats_and_attn_maps: bool = False,
-                 reranking_mode: Optional[str] = None):
+                 reranker: Optional[nn.Module], normalize_embeddings: bool = False,
+                 input_features='P', return_feats_and_attn_maps: bool = False,
+                 ):
         super().__init__()
         self.backbone = backbone
         self.pooling = pooling
+        self.reranker = reranker
         self.normalize_embeddings = normalize_embeddings
         self.input_features = input_features
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
-        if reranking_mode not in (None, 'relay_token_gc'):
-            raise ValueError('Invalid re-ranking mode')
-        self.reranking_mode = reranking_mode
         self.stats = {}
         
     def get_input_feature(self, octree):
@@ -81,35 +79,11 @@ class HOTFormerLoc(torch.nn.Module):
                                 'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']})
         return return_dict
 
-    def rerank(self, query_output: dict, nn_outputs: List[dict]):
-        """
-        Perform re-ranking of query and N candidates. Note that only 'octree',
-        'rt', and 'rt_final_cls_attn_vals' keys are needed from HOTFormerLoc outputs.
-
-        Args:
-            query_output (dict): HOTFormerLoc output for query submap
-            nn_outputs (List[dict]): List of HOTFormerLoc outputs for each nn submap
-        """
-        # TODO: Separate this into a separate class, and init that class in __init__
-        if self.reranking_mode == 'relay_token_gc':
-            # Relay token geometric consistency
-            from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
-            # NOTE: Need to re-think this a little, as entire HOTFloc output is batched
-            #       during training. Instead, pass a (query_indices, nn_indices) param
-            #       to specify our re-ranking batch (hard mining in loss func).
-            
-            # TODO: Plan -- 
-            #       - Get query RTs and nn RTs (add param for num levels / level idx)
-            #       - Sort each by top-k attn vals (with zero-padding for safety?)
-            #       - Apply linear layer + (optional) L2 norm
-            #       - Compute/get RT centroids from OctreeTs
-            #       - Apply SGV
-            #       - Sort + scale (+ concat) eigenvectors and process with MLP + sigmoid
-            #       - Return (batched) re-ranking scores
-            concat_and_pad_rt(relay_token_dict, octree)
-            pass
+    def rerank(self, *args, **kwargs):
+        if self.reranker is not None:
+            return self.reranker(*args, **kwargs)
         else:
-            raise NotImplementedError
+            return None
     
     @staticmethod
     def get_qkv_std(feats_and_attn_maps: dict, octree: OctreeT) -> Tuple[dict, dict, list]:
@@ -162,3 +136,7 @@ class HOTFormerLoc(torch.nn.Module):
         print('# channels from the backbone: {}'.format(self.pooling.in_dim))
         print('# output channels : {}'.format(self.pooling.output_dim))
         print(f'Embedding normalization: {self.normalize_embeddings}')
+        # Reranker
+        if self.reranker is not None:
+            n_params = sum([param.nelement() for param in self.reranker.parameters()])
+            print(f'Re-ranker: {type(self.reranker).__name__}\t#parameters: {n_params}')

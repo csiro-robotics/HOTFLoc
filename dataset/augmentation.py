@@ -42,51 +42,40 @@ class TrainTransform:
             self.normalize_points = True
             self.scale_factor = scale_factor
         self.transform = None
+        self.normalization_transform = None
+        self.occlusion_transform = None
         t = []
         # NOTE: Normalization before other augs will cause some border points to be
         #       clipped, which is fine as it is effectively additional augmentation
+        if self.normalize_points:
+            self.normalization_transform = Normalize(scale_factor=self.scale_factor,
+                                                     unit_sphere_norm=self.unit_sphere_norm,
+                                                     zero_mean=self.zero_mean,
+                                                     return_shift_and_scale=True)
         if self.aug_mode == 1:
             # Augmentations without random rotation around z-axis (values assume [-1, 1] range)
-            if self.normalize_points:
-                t.append(Normalize(scale_factor=self.scale_factor,
-                                   unit_sphere_norm=self.unit_sphere_norm,
-                                   zero_mean=self.zero_mean))
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 2:
             # Augmentations with random rotation around z-axis 
-            if self.normalize_points:
-                t.append(Normalize(scale_factor=self.scale_factor,
-                                   unit_sphere_norm=self.unit_sphere_norm,
-                                   zero_mean=self.zero_mean))
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 3:
             # Augmentations with random rotation around z-axis, and random occlusions
-            t.append(RandomOcclusion(p=0.5))  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
-            if self.normalize_points:
-                t.append(Normalize(scale_factor=self.scale_factor,
-                                   unit_sphere_norm=self.unit_sphere_norm,
-                                   zero_mean=self.zero_mean))
+            self.occlusion_transform = RandomOcclusion(p=0.5)  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
+            # NOTE this would be much cleaner if I just changed the augmentations to Euclidean coords, but alas I am lazy
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01)])
         elif self.aug_mode == 4:
             # Augmentations with random rotation around z-axis, and random occlusions (smaller max angle)
-            t.append(RandomOcclusion(p=0.5, theta_range=(10, 45)))  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
-            if self.normalize_points:
-                t.append(Normalize(scale_factor=self.scale_factor,
-                                   unit_sphere_norm=self.unit_sphere_norm,
-                                   zero_mean=self.zero_mean))
+            self.occlusion_transform = RandomOcclusion(p=0.5, theta_range=(10, 45))  # Occlusion before normalisation, as this func assumes sensor origin at (0,0,0)
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01)])
         elif self.aug_mode == 0:    # No augmentations
-            if self.normalize_points:
-                t.append(Normalize(scale_factor=self.scale_factor,
-                                   unit_sphere_norm=self.unit_sphere_norm,
-                                   zero_mean=self.zero_mean))
+            pass
         else:
             raise NotImplementedError('Unknown aug_mode: {}'.format(self.aug_mode))
         if len(t) == 0:
@@ -94,9 +83,14 @@ class TrainTransform:
         self.transform = transforms.Compose(t)
 
     def __call__(self, e):
+        shift_and_scale = None
+        if self.occlusion_transform is not None:  # occlusion before normalisation
+            e = self.occlusion_transform(e)
+        if self.normalization_transform is not None:
+            e, shift_and_scale = self.normalization_transform(e)
         if self.transform is not None:
             e = self.transform(e)
-        return e
+        return e, shift_and_scale
 
 
 class ValTransform:
@@ -109,17 +103,18 @@ class ValTransform:
         if scale_factor is not None:
             self.normalize_points = True
             self.scale_factor = scale_factor
-        t = None
+        self.normalization_transform = None
         if self.normalize_points:
-            t = Normalize(scale_factor=self.scale_factor,
-                          unit_sphere_norm=self.unit_sphere_norm,
-                          zero_mean=self.zero_mean)
-        self.transform = t
+            self.normalization_transform = Normalize(scale_factor=self.scale_factor,
+                                                     unit_sphere_norm=self.unit_sphere_norm,
+                                                     zero_mean=self.zero_mean,
+                                                     return_shift_and_scale=True)
 
     def __call__(self, e):
-        if self.transform is not None:
-            e = self.transform(e)
-        return e
+        shift_and_scale = None
+        if self.normalization_transform is not None:
+            e, shift_and_scale = self.normalization_transform(e)
+        return e, shift_and_scale
 
 
 class Train6DOFTransform:
@@ -543,4 +538,26 @@ class Normalize:
         if shift_and_scale[3] <= 0:
             raise ValueError("Invalid scaling factor")
         coords_unnormalized = coords * shift_and_scale[3] + shift_and_scale[:3]
+        return coords_unnormalized
+
+    @staticmethod
+    def batch_unnormalize(coords: torch.Tensor, shift_and_scale: torch.Tensor,
+                          mask: Optional[torch.Tensor]):
+        """
+        Undo normalization using shift and scale output from Normalize(). Supports
+        batched inputs with shape (B, N, 3). Expects shift_and_scale for whole
+        batch (B, 4). Accepts optional boolean mask, where False values are ignored.
+        """
+        if coords.ndim == 2:
+            coords.unsqueeze_(0)
+        assert coords.ndim == 3
+        assert shift_and_scale.ndim == 2
+        assert shift_and_scale.size(1) == 4
+        if torch.any(shift_and_scale[:, 3] <= 0):
+            raise ValueError("Invalid scaling factor")
+        scale = shift_and_scale[:, 3][:, None, None]
+        shift = shift_and_scale[:, :3][:, None, :]
+        coords_unnormalized = coords * scale + shift
+        if mask is not None:
+            coords_unnormalized.masked_fill_(mask[..., None].logical_not(), 0.0)
         return coords_unnormalized

@@ -583,6 +583,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 time_str += f'{name}: {process_time:.4f}s,  '
         logging.debug(time_str)
 
+    def rerank(self, *args, **kwargs):
+        return self.hotformerloc_global.rerank(*args, **kwargs)
+
     @torch.jit.ignore
     def no_weight_decay(self) -> Set[str]:
         """Set of parameters that should not use weight decay."""
@@ -609,6 +612,10 @@ class HOTFormerMetricLoc(torch.nn.Module):
         print('  # channels from the backbone: {}'.format(self.hotformerloc_global.pooling.in_dim))
         print('  # output channels : {}'.format(self.hotformerloc_global.pooling.output_dim))
         print(f'  Embedding normalization: {self.hotformerloc_global.normalize_embeddings}')
+        # Reranker
+        if self.hotformerloc_global.reranker is not None:
+            n_params = sum([param.nelement() for param in self.hotformerloc_global.reranker.parameters()])
+            print(f'Re-ranker: {type(self.hotformerloc_global.reranker).__name__}\t#parameters: {n_params}')
         # Metric Loc Head
         print('Metric Localisation Head:')
         n_params = sum([param.nelement() for param in self.coarse_feat_decoder.parameters()])

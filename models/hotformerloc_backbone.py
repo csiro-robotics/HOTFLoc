@@ -534,7 +534,7 @@ class HOTFormerStage(torch.nn.Module):
                     use_ADaPE=self.use_ADaPE,
                     conv_norm=conv_norm,
                     layer_scale=layer_scale,
-                    return_feats_and_attn_maps=return_feats_and_attn_maps,
+                    return_feats_and_attn_maps=(return_feats_and_attn_maps or rt_class_token),  # Need attn maps for class token
                 ) for i in range(self.num_blocks)]
             )
             if self.use_projections:
@@ -830,7 +830,7 @@ class HOTFormerBase(torch.nn.Module):
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_size=self.ct_size, rt_class_token=self.rt_class_token,
+                         rt_size=self.ct_size, rt_class_token=self.rt_class_token,
                          ADaPE_mode=self.ADaPE_mode,
                          ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats,
                          num_pyramid_levels=self.num_pyramid_levels,

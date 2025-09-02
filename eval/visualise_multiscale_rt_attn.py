@@ -573,7 +573,7 @@ def process_submap(submap, model, device, params: TrainingParams):
         dilation=model_params.dilation, nempty=True,
         max_depth=window_max_depth,
         start_depth=window_max_depth-num_stages+1,
-        ct_size=model_params.ct_size,
+        rt_size=model_params.ct_size,
         ADaPE_mode=model_params.ADaPE_mode,
         ADaPE_use_accurate_point_stats=model_params.ADaPE_use_accurate_point_stats,
         num_pyramid_levels=model_params.num_pyramid_levels,

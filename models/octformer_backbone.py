@@ -605,7 +605,7 @@ class OctFormerBase(torch.nn.Module):
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         ct_layers=self.ct_layers, ct_size=self.ct_size,
+                         rt_layers=self.ct_layers, rt_size=self.ct_size,
                          ADaPE_mode=self.ADaPE_mode,
                          ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats)
         octree.build_t(points=points)

@@ -6,14 +6,14 @@ Adapted by Ethan Griffiths (Data61, Pullenvale)
 import torch
 from torch.nn.utils.rnn import unpad_sequence
 
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Dict
 from models.octree import OctreeT, pad_sequence
 
 def concat_and_pad_rt(
     relay_token_dict: Dict[int, torch.Tensor],
     octree: OctreeT,
     pyramid_depths: Optional[List[int]] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     """
     Concatenates relay tokens from different levels in the pyramid
     batch-wise, then applies padding for parallelisation. Returns a single

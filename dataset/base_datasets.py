@@ -149,12 +149,13 @@ class TrainingDataset(Dataset):
         file_pathname = os.path.join(self.dataset_path, self.queries[ndx].rel_scan_filepath)
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
+        shift_and_scale = None
         if self.transform is not None:
-            data = self.transform(data)
+            data, shift_and_scale = self.transform(data)
         if self.load_octree and self.clip_octree_points:
             data = clip_points(data, self.coordinates)
         assert data.size(0) > 0
-        return data, ndx
+        return data, ndx, shift_and_scale
 
     def get_positives(self, ndx):
         return self.queries[ndx].positives
@@ -224,7 +225,7 @@ class Training6DOFDataset(TrainingDataset):
         query_shift_and_scale = None
         positive_shift_and_scale = None
         # pose is a global coordinate system pose 3x4 R|T matrix
-        query_pc, _ = super().__getitem__(ndx)
+        query_pc, _, _ = super().__getitem__(ndx)
 
         # get random positive
         positives = self.get_positives(ndx)
@@ -233,7 +234,7 @@ class Training6DOFDataset(TrainingDataset):
             if len(cross_source_positives) > 0:
                 positives = cross_source_positives
         positive_ndx = np.random.choice(positives, 1)[0]
-        positive_pc, _ = super().__getitem__(positive_ndx)
+        positive_pc, _, _ = super().__getitem__(positive_ndx)
 
         # get relative pose from global poses
         if self.queries[ndx].positives_poses is not None:
@@ -346,12 +347,13 @@ class EvalDataset(Dataset):
         file_pathname = os.path.join(self.dataset_path, self.data_set_dict[ndx]['query'])
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
+        shift_and_scale = None
         if self.transform is not None:
-            data = self.transform(data)
+            data, shift_and_scale = self.transform(data)
         if self.load_octree and self.clip_octree_points:
             data = clip_points(data, self.coordinates)
         assert data.size(0) > 0
-        return data
+        return data, shift_and_scale
 
 
 class Eval6DOFDataset(EvalDataset):

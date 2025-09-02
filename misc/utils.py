@@ -144,6 +144,21 @@ class ModelParams:
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
+                # Re-ranking
+                self.reranking_mode = params.get('reranking_mode', None)  # Type of re-ranking to do
+                if self.reranking_mode is not None:
+                    self.reranking_mode = self.reranking_mode.lower()
+                    if self.reranking_mode not in ('relay_token_gc',):
+                        raise ValueError('Invalid re-ranking mode')
+                if 'rerank_rt_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
+                    self.rerank_rt_indices = tuple([int(e) for e in params['rerank_rt_indices'].split(',')])
+                else:
+                    self.rerank_rt_indices = (0,)
+                if 'rerank_rt_attn_topk' in params:  # Top-k attn vals to keep from each pyramid level of relay tokens (must be same length as RT indices)
+                    self.rerank_rt_attn_topk = tuple([int(e) for e in params['rerank_rt_attn_topk'].split(',')])
+                else:
+                    self.rerank_rt_attn_topk = None
+                self.geometric_consistency_d_thresh = params.getfloat('geometric_consistency_d_thresh', 5.0)  # Distance treshold for geometric consistency adj mat
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params
@@ -348,6 +363,14 @@ class TrainingParams:
         # Similarity measure: based on cosine similarity or Euclidean distance
         self.similarity = params.get('similarity', 'euclidean')
         assert self.similarity in ['cosine', 'euclidean']
+
+        # Re-ranking
+        self.rerank_batch_size = params.getint('rerank_batch_size', None)
+        if self.rerank_batch_size is not None:
+            assert self.rerank_batch_size <= self.batch_size_limit
+        self.rerank_loss_fn = params.get('rerank_loss_fn', None)
+        if self.rerank_loss_fn is not None:
+            self.rerank_loss_fn = self.rerank_loss_fn.lower()
 
         self.aug_mode = params.getint('aug_mode', 1)    # Augmentation mode (1 is default)
         self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode applied to all batch samples (1 is default)

@@ -105,6 +105,9 @@ class NetworkTrainer:
 
         # Initialise model, optimiser, and scheduler 
         self.init_model_optim_sched()
+
+        # Initialise losses
+        self.global_loss_fn, self.qkv_loss_fn, self.rerank_loss_fn, self.local_loss_fn = make_losses(self.params)
                     
         # Initialise the logger
         logging_level = 'DEBUG' if self.params.verbose else 'INFO'
@@ -861,10 +864,12 @@ class NetworkTrainer:
         self.logger.debug(f'Logged feats and attn maps in {time.time() - tic:.4f}s')
         return stats
 
-    def global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
+    def global_training_step(self, global_batch, phase, num_embeddings_logged, mesa=0.0):
         assert phase in ['train', 'secondary_train', 'val']
 
-        batch, positives_mask, negatives_mask = global_batch
+        batch = global_batch['batch']
+        positives_mask, negatives_mask = global_batch['positives_mask'], global_batch['negatives_mask']
+        shift_and_scale = global_batch['shift_and_scale']
         batch = to_device(batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
         with torch.set_grad_enabled('train' in phase):
@@ -882,7 +887,7 @@ class NetworkTrainer:
                 del feats_and_attn_maps  # free memory from intermediate feats
                 stats.update(temp_stats)
 
-            loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
+            loss, temp_stats = self.global_loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
             if 'train' in phase:
@@ -896,11 +901,20 @@ class NetworkTrainer:
                     stats['loss_mesa'] = mesa_loss.item()
 
                 # Compute qkv std regularisation loss
-                if qkv_loss_fn is not None:
-                    qkv_loss, temp_stats = qkv_loss_fn(y, self.model)
+                if self.qkv_loss_fn is not None:
+                    qkv_loss, temp_stats = self.qkv_loss_fn(y, self.model)
                     temp_stats = self.tensors_to_numbers(temp_stats)
                     stats.update(temp_stats)
                     loss += qkv_loss
+
+                # Compute re-ranking loss
+                # TODO: ADD TO MULTISTAGED STEP
+                if self.rerank_loss_fn is not None:
+                    shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
+                    rerank_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
+                    rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale)
+                    rerank_loss = self.rerank_loss_fn(rerank_scores, targets)
+                    del shift_and_scale
 
                 self.grad_scaler.scale(loss).backward()
 
@@ -915,18 +929,19 @@ class NetworkTrainer:
 
         return stats, release_cuda(embeddings[:num_embeddings_logged])  # return first n embeddings for debugging
 
-
-    def multistaged_global_training_step(self, global_batch, phase, loss_fn, qkv_loss_fn, num_embeddings_logged, mesa=0.0):
+    def multistaged_global_training_step(self, global_batch, phase, num_embeddings_logged, mesa=0.0):
         # Training step using multistaged backpropagation algorithm as per:
         # "Learning with Average Precision: Training Image Retrieval with a Listwise Loss"
         # This method will break when the model contains Dropout, as the same mini-batch will produce different embeddings.
         # Make sure mini-batches in step 1 and step 3 are the same (so that BatchNorm produces the same results)
         # See some exemplary implementation here: https://gist.github.com/ByungSun12/ad964a08eba6a7d103dab8588c9a3774
-        if qkv_loss_fn is not None:
+        if self.qkv_loss_fn is not None:
             raise NotImplementedError('QKV Losses not implemented for multistage backprop, set `batch_split_size` to 0')
         assert phase in ['train', 'secondary_train', 'val']
 
-        batch, positives_mask, negatives_mask = global_batch
+        batch = global_batch['batch']
+        positives_mask, negatives_mask = global_batch['positives_mask'], global_batch['negatives_mask']
+        shift_and_scale = global_batch['shift_and_scale']
 
         # Stage 1 - calculate descriptors of each batch element (with gradient turned off)
         # In training phase network is in the train mode to update BatchNorm stats
@@ -966,7 +981,7 @@ class NetworkTrainer:
         with torch.set_grad_enabled('train' in phase):
             if 'train' in phase:
                 embeddings.requires_grad_(True)
-            loss, temp_stats = loss_fn(embeddings, positives_mask, negatives_mask)
+            loss, temp_stats = self.global_loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
             # Compute MESA loss
@@ -1016,7 +1031,7 @@ class NetworkTrainer:
         else:
             return stats, embeddings
 
-    def local_training_step(self, local_batch, phase, local_loss_fn):
+    def local_training_step(self, local_batch, phase):
         assert phase in ['train', 'secondary_train', 'val']
 
         local_batch = to_device(local_batch, self.device, non_blocking=True, construct_octree_neigh=True)
@@ -1028,7 +1043,7 @@ class NetworkTrainer:
             # Compute loss for each batch item
             for ii, output_dict in enumerate(output_dicts):
                 local_batch_ii = {'transform': local_batch['transform'][ii]}  # temp fix since loss func expects a single batch item
-                temp_local_loss, local_metrics = local_loss_fn(output_dict, local_batch_ii)
+                temp_local_loss, local_metrics = self.local_loss_fn(output_dict, local_batch_ii)
                 batch_local_loss.append(temp_local_loss)
                 local_metrics = self.tensors_to_numbers(local_metrics)
                 batch_metrics.append(local_metrics)
@@ -1059,8 +1074,6 @@ class NetworkTrainer:
             if self.curr_secondary_global_batch_size is not None:
                 dataloaders['secondary_train'].batch_sampler.batch_size = self.curr_secondary_global_batch_size
                 self.logger.info(f'Resuming with secondary global batch size {self.curr_secondary_global_batch_size}')
-
-        global_loss_fn, qkv_loss_fn, local_loss_fn = make_losses(self.params)
 
         if self.params.batch_split_size is None or self.params.batch_split_size == 0:
             global_train_step_fn = self.global_training_step
@@ -1138,8 +1151,7 @@ class NetworkTrainer:
                     if not self.params.model_params.freeze_hotformerloc and global_batch is not None:
                         self.logger.debug(f"Global batch {self.count_batches} start")
                         temp_global_stats, temp_global_embeddings = global_train_step_fn(
-                            global_batch, phase, global_loss_fn, qkv_loss_fn,
-                            self.params.num_embeddings_logged, mesa
+                            global_batch, phase, self.params.num_embeddings_logged, mesa
                         )
                         batch_stats['global'] = temp_global_stats
                         self.logger.debug(f"Global batch {self.count_batches} end")
@@ -1147,7 +1159,7 @@ class NetworkTrainer:
                     if self.params.local.enable_local and local_batch is not None:
                         self.logger.debug(f"Local batch {self.count_batches} start")
                         temp_local_stats = self.local_training_step(
-                            local_batch, phase, local_loss_fn,
+                            local_batch, phase
                         )
                         batch_stats['local'] = temp_local_stats
                         self.logger.debug(f"Local batch {self.count_batches} end")

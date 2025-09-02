@@ -1,13 +1,16 @@
 # Warsaw University of Technology
 
 from abc import ABC, abstractmethod
+from typing import Optional
 import torch
 import torch.nn.functional as F
+from torch import Tensor
 from pytorch_metric_learning import losses, reducers
 from pytorch_metric_learning.distances import LpDistance
 from misc.utils import TrainingParams
 from models.losses.truncated_smoothap import TruncatedSmoothAP
 from models.losses.geotransformer_loss import OverallLoss
+from models.losses.reranking_loss import RerankingBCELoss
 
 
 def make_losses(params: TrainingParams):
@@ -42,17 +45,26 @@ def make_losses(params: TrainingParams):
     else:
         qkv_loss_fn = None
 
+    rerank_loss_fn = None
+    if params.rerank_loss_fn == 'batchhardbceloss':
+        rerank_loss_fn = BatchHardRerankingBCELossWithMasks(batch_size=params.rerank_batch_size)
+    elif params.rerank_loss_fn is not None:
+        raise NotImplementedError(f'Unknown re-ranking loss: {params.rerank_loss_fn}')
+
     local_loss_fn = None
     if params.local.enable_local:
         local_loss_fn = OverallLoss(params)
 
-    return global_loss_fn, qkv_loss_fn, local_loss_fn
+    return global_loss_fn, qkv_loss_fn, rerank_loss_fn, local_loss_fn
 
 
 class HardTripletMinerWithMasks:
     # Hard triplet miner
-    def __init__(self, distance):
+    def __init__(self, distance, max_triplets: Optional[int] = None):
         self.distance = distance
+        self.max_triplets = max_triplets
+        if self.max_triplets is not None and self.max_triplets <= 0:
+            raise ValueError('Must sample at least 1 triplet')
         # Stats
         self.max_pos_pair_dist = None
         self.max_neg_pair_dist = None
@@ -83,6 +95,12 @@ class HardTripletMinerWithMasks:
         self.mean_neg_pair_dist = torch.mean(hardest_negative_dist[a_keep_idx]).item()
         self.min_pos_pair_dist = torch.min(hardest_positive_dist[a_keep_idx]).item()
         self.min_neg_pair_dist = torch.min(hardest_negative_dist[a_keep_idx]).item()
+        # Return top-k hardest negatives if batch size limited
+        if self.max_triplets is not None and self.max_triplets < len(embeddings):
+            _, topk_indices = torch.topk(hardest_negative_dist, k=self.max_triplets, largest=False)
+            a = a[topk_indices]
+            p = p[topk_indices]
+            n = n[topk_indices]
         return a, p, n
 
 
@@ -162,6 +180,34 @@ class BatchHardContrastiveLossWithMasks:
                  }
 
         return loss, stats
+
+
+class BatchHardRerankingBCELossWithMasks:
+    """
+    Re-ranking loss with BCE. Samples batch-hard triplets.
+    """
+    def __init__(self, batch_size: float):
+        self.batch_size = batch_size
+        # Euclidean distance
+        self.distance = LpDistance(normalize_embeddings=False, collect_stats=True)
+        self.miner_fn = HardTripletMinerWithMasks(distance=self.distance, max_triplets=self.batch_size)
+        self.loss_fn = RerankingBCELoss()
+
+    def __call__(self, rerank_scores: Tensor, targets: Tensor):
+        # TODO: Get output of model.rerank() and compute BCE loss
+        dummy_labels = torch.arange(embeddings.shape[0]).to(embeddings.device)
+        loss = self.loss_fn(embeddings, dummy_labels, hard_triplets)
+
+        stats = {
+            'loss': loss.item(),
+            'num_triplets': len(hard_triplets[0]),
+            # TODO
+        }
+        return loss, stats
+
+    def get_hard_triplets(self, embeddings, positives_mask, negatives_mask):
+        hard_triplets = self.miner_fn(embeddings, positives_mask, negatives_mask)
+        return hard_triplets
 
 
 class QKV_Base_Loss(ABC):
