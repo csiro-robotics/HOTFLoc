@@ -235,7 +235,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, i
         if args.ignore_positives_poses:
             continue
         
-        # tic = time.time()
+        # tic = time.perf_counter()
         for positive_ndx in positives:
             positive_pose_xyz_quat = np.array(
                 df_centroids.iloc[positive_ndx][['x','y','z','qx','qy','qz','qw']],
@@ -262,7 +262,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False, i
                 positives_poses[positive_ndx] = m
                 pbar.set_description(f"Fitness: {fitness_meter.mean():.4f} ({fitness_meter.std():.4f})"
                                      f" -- Inlier RMSE: {inlier_rmse_meter.mean():.4f} ({inlier_rmse_meter.std():.4f})")
-        # icp_time = time.time() - tic
+        # icp_time = time.perf_counter() - tic
         # print(f"{len(positives)} positives took {icp_time:.1f} secs", flush=True) 
         queries_dict[anchor_ndx].positives_poses = positives_poses
     

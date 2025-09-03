@@ -206,13 +206,13 @@ class HOTFormerMetricLoc(torch.nn.Module):
         and fine registration. Returns a list of output dicts with len == batch_size.
         """
         # NOTE: anc = anchor, pos = positive
-        tic_start = time.time()
+        tic_start = time.perf_counter()
         time_dict = {}
 
         # 1. Extract global and local descriptors with HOTFormerLoc
         if global_only:
             global_out = self.hotformerloc_global(batch)
-            time_dict['global backbone forward'] = time.time() - tic_start
+            time_dict['global backbone forward'] = time.perf_counter() - tic_start
             self.log_time_dict(time_dict)
             return global_out
 
@@ -229,36 +229,36 @@ class HOTFormerMetricLoc(torch.nn.Module):
             anc_feats_fine = batch['anc_local_feats']['fine']
         else:
             # TODO: Process anchor and positive batch in single forward pass
-            tic = time.time()
+            tic = time.perf_counter()
             anc_global_out = self.hotformerloc_global(batch['anc_batch'])
-            time_dict['local backbone forward'] += time.time() - tic
+            time_dict['local backbone forward'] += time.perf_counter() - tic
             anc_feats_coarse = anc_global_out['local'][self.depth_coarse]
             anc_feats_fine = anc_global_out['local'][self.depth_fine]
         if 'pos_local_feats' in batch:
             pos_feats_coarse = batch['pos_local_feats']['coarse']
             pos_feats_fine = batch['pos_local_feats']['fine']
         else:
-            tic = time.time()
+            tic = time.perf_counter()
             pos_global_out = self.hotformerloc_global(batch['pos_batch'])
-            time_dict['local backbone forward'] += time.time() - tic
+            time_dict['local backbone forward'] += time.perf_counter() - tic
             pos_feats_coarse = pos_global_out['local'][self.depth_coarse]
             pos_feats_fine = pos_global_out['local'][self.depth_fine]
 
         # Embed coarse and fine feats
-        tic = time.time()
+        tic = time.perf_counter()
         anc_feats_coarse = self.coarse_feat_decoder(anc_feats_coarse)
         anc_feats_fine = self.fine_feat_decoder(anc_feats_fine)
         pos_feats_coarse = self.coarse_feat_decoder(pos_feats_coarse)
         pos_feats_fine = self.fine_feat_decoder(pos_feats_fine)
-        time_dict['feat decoder'] = time.time() - tic
+        time_dict['feat decoder'] = time.perf_counter() - tic
 
         # Get accurate centroids for octants (instead of naively using octant centres)
-        tic = time.time()
+        tic = time.perf_counter()
         anc_points_coarse = get_octant_centroids_from_points(anc_points, self.depth_coarse, self.quantizer)
         pos_points_coarse = get_octant_centroids_from_points(pos_points, self.depth_coarse, self.quantizer)
         anc_points_fine = get_octant_centroids_from_points(anc_points, self.depth_fine, self.quantizer)
         pos_points_fine = get_octant_centroids_from_points(pos_points, self.depth_fine, self.quantizer)
-        time_dict['compute centroids'] = time.time() - tic
+        time_dict['compute centroids'] = time.perf_counter() - tic
 
         output_dicts = [{} for _ in range(anc_octree.batch_size)]
 
@@ -280,7 +280,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             raise NotImplementedError('Eval not implemented')
 
         # Undo normalization so points are in metric scale
-        tic = time.time()
+        tic = time.perf_counter()
         if batch['anc_shift_and_scale'] is not None:
             anc_points_coarse = self.batch_unnormalize(
                 anc_points_coarse, batch['anc_shift_and_scale'], anc_octree, self.depth_coarse
@@ -295,7 +295,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             pos_points_fine = self.batch_unnormalize(
                 pos_points_fine, batch['pos_shift_and_scale'], pos_octree, self.depth_fine
             )
-        time_dict['unnormalize'] = time.time() - tic
+        time_dict['unnormalize'] = time.perf_counter() - tic
 
         # Pad batched tensors and create attn mask
         #   (pad points with large value to prevent interactions with distance embedding)
@@ -314,7 +314,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
         # NOTE: Padding does change the output slightly, as it softens the softmax
         #       output, but is a difference on the order of 0.01-0.1 on average.
-        tic = time.time()
+        tic = time.perf_counter()
         if self.coarse_feat_refiner is not None:
             if self.grad_checkpoint and self.training:
                 anc_feats_coarse_padded, pos_feats_coarse_padded = checkpoint(
@@ -338,7 +338,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 )
         anc_feats_coarse_norm_padded = F.normalize(anc_feats_coarse_padded, p=2, dim=1)
         pos_feats_coarse_norm_padded = F.normalize(pos_feats_coarse_padded, p=2, dim=1)
-        time_dict['geotrans forward'] = time.time() - tic
+        time_dict['geotrans forward'] = time.perf_counter() - tic
 
         # Convert feats back to concatenated form
         anc_feats_coarse_norm = unpad_and_concat_data(
@@ -351,7 +351,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         time_dict['coarse matching'] = 0.0
         time_dict['optimal transport'] = 0.0
         time_dict['fine matching'] = 0.0
-        tic_lgr_start = time.time()
+        tic_lgr_start = time.perf_counter()
         # TODO: Convert coarse matching to work in batches (may require zero padding or selecting k coarse points)
         for batch_idx in range(pos_octree.batch_size):
             anc_batch_mask_coarse = anc_octree.batch_id(self.depth_coarse, nempty=True) == batch_idx
@@ -432,11 +432,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
             # 4. Select topk nearest node correspondences
             with torch.no_grad():
-                tic = time.time()
+                tic = time.perf_counter()
                 anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_matching(
                     anc_feats_coarse_norm, pos_feats_coarse_norm, anc_node_masks_ii, pos_node_masks_ii
                 )
-                time_dict['coarse matching'] += time.time() - tic
+                time_dict['coarse matching'] += time.perf_counter() - tic
 
                 output_dicts[batch_idx]['anc_node_corr_indices'] = anc_node_corr_indices_ii
                 output_dicts[batch_idx]['pos_node_corr_indices'] = pos_node_corr_indices_ii
@@ -485,7 +485,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             output_dicts[batch_idx]['pos_node_corr_knn_masks'] = pos_node_corr_knn_masks_ii
 
             # 6. Optimal transport
-            tic = time.time()
+            tic = time.perf_counter()
             matching_scores_ii = torch.einsum('bnd,bmd->bnm', anc_node_corr_knn_feats_ii, pos_node_corr_knn_feats_ii)  # (P, K, K)
             matching_scores_ii = matching_scores_ii / anc_feats_fine_ii.shape[-1] ** 0.5
             if self.grad_checkpoint and self.training:
@@ -502,7 +502,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     anc_node_corr_knn_masks_ii,
                     pos_node_corr_knn_masks_ii,
                 )
-            time_dict['optimal transport'] += time.time() - tic
+            time_dict['optimal transport'] += time.perf_counter() - tic
 
             output_dicts[batch_idx]['matching_scores'] = matching_scores_ii
 
@@ -512,7 +512,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     matching_scores_ii = matching_scores_ii[:, :-1, :-1]
 
                 # NOTE: estimated transform is from pos to anc
-                tic = time.time()
+                tic = time.perf_counter()
                 (
                     anc_corr_points_ii,
                     pos_corr_points_ii,
@@ -531,7 +531,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     matching_scores_ii,
                     node_corr_scores_ii,
                 )
-                time_dict['fine matching'] += time.time() - tic
+                time_dict['fine matching'] += time.perf_counter() - tic
 
                 output_dicts[batch_idx]['anc_corr_points'] = anc_corr_points_ii
                 output_dicts[batch_idx]['pos_corr_points'] = pos_corr_points_ii
@@ -546,7 +546,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     best_transform_ii = invert_pose(best_transform_ii)
                 output_dicts[batch_idx]['best_corr_transform'] = best_transform_ii
 
-        toc = time.time()
+        toc = time.perf_counter()
         time_dict['local global reg (whole loop)'] = toc - tic_lgr_start
         time_dict['TOTAL'] = toc - tic_start
         self.log_time_dict(time_dict)

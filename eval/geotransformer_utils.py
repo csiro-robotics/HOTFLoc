@@ -98,7 +98,7 @@ def compute_geotransformer_metrics(
             # NOTE: CURRENTLY THIS ALLOWS MULTIPLE CORRESPONDENCES PER POINT.
             #       SHOULD PROBABLY FILTER CORRESPONDENCES FOR RANSAC WITH HIGHER CONFIDENCE THRESHOLD.
             #       ALSO COULD TRY EGONN STYLE - MATCH COARSE FEATS WITH RANSAC
-            tic = time.time()
+            tic = time.perf_counter()
             est_transform = registration_with_ransac_from_correspondences(
                 anc_corr_points,
                 pos_corr_points,
@@ -106,7 +106,7 @@ def compute_geotransformer_metrics(
                 ransac_n=params.local.ransac_num_points,
                 num_iterations=params.local.ransac_num_iterations,
             )
-            metrics_dict['t_ransac'] = time.time() - tic
+            metrics_dict['t_ransac'] = time.perf_counter() - tic
         else:
             raise ValueError(f'Unsupported registration method: {method}.')
 

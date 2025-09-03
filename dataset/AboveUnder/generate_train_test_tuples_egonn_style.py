@@ -403,7 +403,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False):
             else:
                 anchor_pc = pc_loader.read_pc(path.join(args.root, df_centroids.iloc[anchor_ndx]["file"]))
 
-        # tic = time.time()
+        # tic = time.perf_counter()
         for positive_ndx in positives:
             positive_pose = quaternion_to_rot(np.array(
                 df_centroids.iloc[positive_ndx][['x','y','z','qx','qy','qz','qw']], dtype=np.float64
@@ -422,7 +422,7 @@ def construct_training_query_dict(df_centroids, filename_base, test_set=False):
                 fitness_l.append(fitness)
                 inlier_rmse_l.append(inlier_rmse)
                 positive_poses[positive_ndx] = m
-        # icp_time = time.time() - tic
+        # icp_time = time.perf_counter() - tic
         # print(f"{len(positives)} positives took {icp_time:.1f} secs", flush=True) 
 
         queries_v2[anchor_ndx] = TrainingTuple(

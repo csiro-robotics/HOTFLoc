@@ -275,11 +275,11 @@ def points_in_polygon_parallel(points, polygon):
     return D        
 
 def multiprocessing_func(function, inputs, num_workers):
-    tic = time.time()
+    tic = time.perf_counter()
     with Pool(num_workers) as p:
         results = list(tqdm(p.imap(function, inputs), total = len(inputs)))
         p.close()
         p.join()
-    toc = time.time()
+    toc = time.perf_counter()
     print(f'Runtime: {toc - tic:.2f}s')
     return results

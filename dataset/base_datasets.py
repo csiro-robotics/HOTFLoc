@@ -256,7 +256,7 @@ class Training6DOFDataset(TrainingDataset):
 
         # Ensure alignment with icp
         if self.icp:
-            # tic = time.time()
+            # tic = time.perf_counter()
             if self.icp_two_stage:
                 transform_icp, fitness_icp, inlier_rmse_icp = two_stage_icp(
                     query_pc.numpy().astype(float),
@@ -280,7 +280,7 @@ class Training6DOFDataset(TrainingDataset):
                     max_iteration=self.icp_max_iteration,
                     voxel_size=self.icp_voxel_size,
                 )
-            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
+            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.perf_counter() - tic:.4f}s"
             # logging.debug(msg)
             transform = torch.tensor(transform_icp, dtype=transform.dtype)
 
@@ -430,7 +430,7 @@ class Eval6DOFDataset(EvalDataset):
 
         # Ensure alignment with icp
         if self.icp:
-            # tic = time.time()
+            # tic = time.perf_counter()
             if self.icp_two_stage:
                 transform_icp, fitness_icp, inlier_rmse_icp = two_stage_icp(
                     query_pc.numpy().astype(float),
@@ -454,7 +454,7 @@ class Eval6DOFDataset(EvalDataset):
                     max_iteration=self.icp_max_iteration,
                     voxel_size=self.icp_voxel_size,
                 )
-            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.time() - tic:.4f}s"
+            # msg = f"[ICP] Fitness: {fitness_icp:.4f} -- Inlier RMSE: {inlier_rmse_icp:.4f} -- {time.perf_counter() - tic:.4f}s"
             # logging.debug(msg)
             transform = torch.tensor(transform_icp, dtype=transform.dtype)
         

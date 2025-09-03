@@ -149,7 +149,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
     # batch_split_size: if not None, splits the batch into a list of multiple mini-batches with batch_split_size elems
     # octree: if True, loads octree in batch instead of sparse tensor
     def collate_fn(data_list) -> Dict:
-        tic = time.time()
+        tic = time.perf_counter()
 
         # Constructs a batch object
         clouds = [e[0] for e in data_list]
@@ -184,7 +184,7 @@ def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams)
                 minibatch = create_batch(temp, quantizer, params)
                 batch.append(minibatch)
 
-        logging.debug(f'Collating global batch done in {time.time()-tic:.2f}s')
+        logging.debug(f'Collating global batch done in {time.perf_counter()-tic:.2f}s')
 
         # Returns (batch_size, n_points, 3) tensor and positives_mask and negatives_mask which are
         # batch_size x batch_size boolean tensors
@@ -202,7 +202,7 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
     normalization shift and scale parameters.
     """
     def collate_fn(data_list) -> Dict:
-        tic = time.time()
+        tic = time.perf_counter()
 
         # Constructs a batch object
         anchor_clouds = [e[0] for e in data_list]
@@ -223,7 +223,7 @@ def make_collate_fn_6DOF(quantizer, params: TrainingParams):
             anchor_shift_and_scale_batch = torch.stack(anchor_shift_and_scale, dim=0)
             positive_shift_and_scale_batch = torch.stack(positive_shift_and_scale, dim=0)
 
-        logging.debug(f'Collating local batch done in {time.time()-tic:.2f}s')
+        logging.debug(f'Collating local batch done in {time.perf_counter()-tic:.2f}s')
 
         # Returns:
         # Anc and pos batch, relative transformations, normalization shift and scale params
@@ -383,7 +383,7 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
     Custom collate function for evaluation dataloader. Only returns batches.
     """
     def collate_fn(data_list) -> Dict:
-        tic = time.time()
+        tic = time.perf_counter()
 
         # Generate batches in correct format for MinkLoc/OctFormer
         clouds = [e[0] for e in data_list]
@@ -393,7 +393,7 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
         if params.normalize_points:
             shift_and_scale_batch = torch.stack(shift_and_scale, dim=0)
 
-        logging.debug(f'Collating eval batch done in {time.time()-tic:.2f}s')
+        logging.debug(f'Collating eval batch done in {time.perf_counter()-tic:.2f}s')
 
         return {'batch': batch, 'shift_and_scale': shift_and_scale_batch}
 

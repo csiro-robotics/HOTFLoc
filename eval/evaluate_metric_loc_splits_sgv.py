@@ -13,7 +13,7 @@ import os
 import argparse
 import logging
 import torch
-from time import time
+import time
 import tqdm
 from typing import Sequence, List, Dict, Optional
 
@@ -520,14 +520,14 @@ def get_metrics(
         # # Re-Ranking with SGV
         # # NOTE: TO DO THIS, NEED TO PRE-COMPUTE THE COARSE CENTROIDS, OR GET THEM AFTER RUNNING FORWARD PASS OF HOTFORMERMETRICLOC
         # topk = min(num_neighbors, len(nn_indices))
-        # tick = time()
+        # tick = time.perf_counter()
         # candidate_local_embeddings = database_local_embeddings[m][nn_indices]
         # candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
         # fitness_list = sgv_fn(query_local_embeddings[n][query_idx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
         # topk_rerank = np.flip(np.asarray(fitness_list).argsort())
         # topk_rerank_indices = copy.deepcopy(nn_indices)
         # topk_rerank_indices[:topk] = nn_indices[topk_rerank]
-        # t_rerank = time() - tick
+        # t_rerank = time.perf_counter() - tick
         # intermediate_metrics['t_rr'].append(t_rerank)
 
         # delta_rerank = query_position - database_positions[m][topk_rerank_indices]
@@ -608,9 +608,9 @@ def get_metrics(
             batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
 
             with torch.inference_mode():
-                tic = time()
+                tic = time.perf_counter()
                 model_out = model(batch)
-                t_metloc = time() - tic
+                t_metloc = time.perf_counter() - tic
                 T_estimated = release_cuda(model_out[0]['estimated_transform'], to_numpy=True)
             
             # Refine the estimated pose using ICP
@@ -621,7 +621,7 @@ def get_metrics(
                 nn_pc_metric = Normalize.unnormalize(batch['pos_batch']['points'].points, batch['pos_shift_and_scale'][0])
                 nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
 
-                tic = time()
+                tic = time.perf_counter()
                 T_estimated_refined, _, _ = icp(
                     query_pc_metric,
                     nn_pc_metric,
@@ -631,7 +631,7 @@ def get_metrics(
                     max_iteration=params.local.icp_max_iteration,
                     voxel_size=params.local.icp_voxel_size,
                 )
-                t_icp = time() - tic
+                t_icp = time.perf_counter() - tic
 
             # TODO: Re-add support for non-geotransformer variants
 

@@ -448,7 +448,7 @@ class NetworkTrainer:
         """
         Logs feature maps coming from MinkLoc.
         """
-        tic = time.time()
+        tic = time.perf_counter()
         BATCH_IDX = 0  # only look at one batch element
         # Only log once per epoch
         if self.count_batches > 1:
@@ -517,7 +517,7 @@ class NetworkTrainer:
                 positive_pcl_j_umap_colourised = np.concatenate([positive_pcl_j, positive_j_umap_colours], axis=1)
                 stats['pointcloud_umap'][f'positive_stage_{j}'] = wandb.Object3D(positive_pcl_j_umap_colourised)
 
-        self.logger.debug(f'Logged feats in {time.time() - tic:.4f}s')
+        self.logger.debug(f'Logged feats in {time.perf_counter() - tic:.4f}s')
         return stats
 
     def log_feats_and_attn_maps(self, feats_and_attn_maps: tp.List, octree: OctreeT,
@@ -525,7 +525,7 @@ class NetworkTrainer:
         """
         Logs various things including attention maps, average token similarity.
         """
-        tic = time.time()
+        tic = time.perf_counter()
         VIZ_BLOCKS = 3
         VIZ_HEADS = 2
         VIZ_LOCAL_WINDOWS = 1
@@ -861,7 +861,7 @@ class NetworkTrainer:
             stats = log_hotformer()
         else:
             raise NotImplementedError
-        self.logger.debug(f'Logged feats and attn maps in {time.time() - tic:.4f}s')
+        self.logger.debug(f'Logged feats and attn maps in {time.perf_counter() - tic:.4f}s')
         return stats
 
     def global_training_step(self, global_batch, phase, num_embeddings_logged, mesa=0.0):
