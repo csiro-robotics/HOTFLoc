@@ -99,7 +99,8 @@ class HardTripletMinerWithMasks:
         self.min_neg_pair_dist = torch.min(hardest_negative_dist[a_keep_idx]).item()
         # Return top-k hardest negatives if batch size limited
         if self.max_triplets is not None and self.max_triplets < len(embeddings):
-            _, topk_indices = torch.topk(hardest_negative_dist, k=self.max_triplets, largest=False)
+            _, topk_indices = torch.topk(hardest_negative_dist, k=self.max_triplets, largest=False, sorted=False)
+            topk_indices = torch.sort(topk_indices).values  # Sort indices to retain original ordering
             a = a[topk_indices]
             p = p[topk_indices]
             n = n[topk_indices]

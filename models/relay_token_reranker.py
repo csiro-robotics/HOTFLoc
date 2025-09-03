@@ -105,6 +105,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
                     rt_depth_j = F.pad(rt_depth_j, (0,0,0,padding_size))
                 attn_topk_scores, attn_topk_indices = torch.topk(rt_cls_attn_depth_j, k=self.attn_topk[ii], dim=1, sorted=False)
                 attn_topk_scores.squeeze_(-1)
+                attn_topk_indices = torch.sort(attn_topk_indices, dim=1).values  # Sort indices to retain original ordering (ensures padding remains at end)
                 rt_centroids_depth_j = torch.gather(rt_centroids_depth_j, dim=1, index=attn_topk_indices.expand(-1, -1, 3))
                 rt_depth_j = torch.gather(rt_depth_j, dim=1, index=attn_topk_indices.expand(-1, -1, C))
                 # Separate attn scores into anc and nn sets
@@ -127,7 +128,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
 
             # Compute RT mask for anc and nn
             rt_sgv_mask = self.compute_rt_sgv_mask(
-                rt_depth_j, anc_indices, pos_indices, neg_indices, octree, depth
+                anc_rt, anc_indices, pos_indices, neg_indices, octree, depth
             )
 
             # Apply linear layer to RTs
@@ -200,11 +201,11 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
 
     @staticmethod
     def compute_rt_sgv_mask(
-        relay_tokens, anc_indices, pos_indices, neg_indices, octree: OctreeT, depth: int
+        relay_tokens: Tensor, anc_indices, pos_indices, neg_indices, octree: OctreeT, depth: int, 
     ):
         """
         Computes mask to ignore padding relay tokens during geometric
-        consistency [B, NN, NPTS, NPTS]
+        consistency [B, NN, N_RT, N_RT]
         """
         B, N_RT, C = relay_tokens.shape
         # Get number of non-padding RTs per batch
