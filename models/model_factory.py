@@ -103,7 +103,7 @@ def model_factory(params: TrainingParams):
                 + "must be used!"
             )
         reranker = None
-        if model_params.reranking_mode == 'relay_token_gc':
+        if model_params.rerank_mode == 'relay_token_gc':
             reranker = RelayTokenGeometricConsistencyReranker(
                 rerank_rt_indices=model_params.rerank_rt_indices,
                 attn_topk=model_params.rerank_rt_attn_topk,
@@ -111,7 +111,7 @@ def model_factory(params: TrainingParams):
                 rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 use_attn_vals=model_params.rerank_use_attn_vals,
             )
-        elif model_params.reranking_mode is not None:
+        elif model_params.rerank_mode is not None:
             raise NotImplementedError
         hotformerloc_global = HOTFormerLoc(
             backbone=backbone,
@@ -198,7 +198,7 @@ def model_factory(params: TrainingParams):
                 + "must be used!"
             )
         reranker = None
-        if model_params.reranking_mode == 'relay_token_gc':
+        if model_params.rerank_mode == 'relay_token_gc':
             reranker = RelayTokenGeometricConsistencyReranker(
                 rerank_rt_indices=model_params.rerank_rt_indices,
                 attn_topk=model_params.rerank_rt_attn_topk,
@@ -206,7 +206,7 @@ def model_factory(params: TrainingParams):
                 rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 use_attn_vals=model_params.rerank_use_attn_vals,
             )
-        elif model_params.reranking_mode is not None:
+        elif model_params.rerank_mode is not None:
             raise NotImplementedError
         model = HOTFormerLoc(
             backbone=backbone,

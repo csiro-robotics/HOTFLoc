@@ -145,10 +145,10 @@ class ModelParams:
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
                 # Re-ranking
-                self.reranking_mode = params.get('reranking_mode', None)  # Type of re-ranking to do
-                if self.reranking_mode is not None:
-                    self.reranking_mode = self.reranking_mode.lower()
-                    if self.reranking_mode not in ('relay_token_gc',):
+                self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
+                if self.rerank_mode is not None:
+                    self.rerank_mode = self.rerank_mode.lower()
+                    if self.rerank_mode not in ('relay_token_gc',):
                         raise ValueError('Invalid re-ranking mode')
                 if 'rerank_rt_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
                     self.rerank_rt_indices = tuple([int(e) for e in params['rerank_rt_indices'].split(',')])
