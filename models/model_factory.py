@@ -107,8 +107,9 @@ def model_factory(params: TrainingParams):
             reranker = RelayTokenGeometricConsistencyReranker(
                 rerank_rt_indices=model_params.rerank_rt_indices,
                 attn_topk=model_params.rerank_rt_attn_topk,
-                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
+                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
+                use_attn_vals=model_params.rerank_use_attn_vals,
             )
         elif model_params.reranking_mode is not None:
             raise NotImplementedError
@@ -201,8 +202,9 @@ def model_factory(params: TrainingParams):
             reranker = RelayTokenGeometricConsistencyReranker(
                 rerank_rt_indices=model_params.rerank_rt_indices,
                 attn_topk=model_params.rerank_rt_attn_topk,
-                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
+                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
+                use_attn_vals=model_params.rerank_use_attn_vals,
             )
         elif model_params.reranking_mode is not None:
             raise NotImplementedError

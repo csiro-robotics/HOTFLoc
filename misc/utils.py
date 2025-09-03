@@ -158,7 +158,11 @@ class ModelParams:
                     self.rerank_rt_attn_topk = tuple([int(e) for e in params['rerank_rt_attn_topk'].split(',')])
                 else:
                     self.rerank_rt_attn_topk = None
-                self.geometric_consistency_d_thresh = params.getfloat('geometric_consistency_d_thresh', 5.0)  # Distance treshold for geometric consistency adj mat
+                if 'geometric_consistency_d_thresh' in params:  # Distance threshold for building adjacency matrix for each relay token level (must be same length as RT indices)
+                    self.geometric_consistency_d_thresh = tuple([float(e) for e in params['geometric_consistency_d_thresh'].split(',')])
+                else:
+                    self.geometric_consistency_d_thresh = (5.,)
+                self.rerank_use_attn_vals = params.getboolean('rerank_use_attn_vals', False)  # Use relay token attention values as a feature in the re-ranking classifier
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params
@@ -365,12 +369,18 @@ class TrainingParams:
         assert self.similarity in ['cosine', 'euclidean']
 
         # Re-ranking
-        self.rerank_batch_size = params.getint('rerank_batch_size', None)
-        if self.rerank_batch_size is not None:
-            assert self.rerank_batch_size <= self.batch_size_limit
         self.rerank_loss_fn = params.get('rerank_loss_fn', None)
         if self.rerank_loss_fn is not None:
             self.rerank_loss_fn = self.rerank_loss_fn.lower()
+        self.rerank_loss_coeff = params.getfloat('rerank_loss_coeff', 1.0)  # Weighting of re-ranking loss
+        self.rerank_batch_size = params.getint('rerank_batch_size', None)
+        if self.rerank_loss_fn is not None:
+            if self.rerank_batch_size is None:
+                self.rerank_batch_size = self.batch_size_limit
+            assert self.rerank_batch_size <= self.batch_size_limit, 'Re-ranking batches are limited to the size of global batches'
+            assert self.batch_split_size in [None, 0], 'Re-ranking loss not compatible with multistage backprop'
+            # if self.batch_split_size is not None:  # REMOVED due to disabling re-ranking with multistage backprop
+            #     assert self.rerank_batch_size <= self.batch_split_size, 'Can only compute re-ranking on single batch split during multi-stage backprop'
 
         self.aug_mode = params.getint('aug_mode', 1)    # Augmentation mode (1 is default)
         self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode applied to all batch samples (1 is default)

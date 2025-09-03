@@ -10,7 +10,6 @@ from pytorch_metric_learning.distances import LpDistance
 from misc.utils import TrainingParams
 from models.losses.truncated_smoothap import TruncatedSmoothAP
 from models.losses.geotransformer_loss import OverallLoss
-from models.losses.reranking_loss import RerankingBCELoss
 
 
 def make_losses(params: TrainingParams):
@@ -35,7 +34,7 @@ def make_losses(params: TrainingParams):
         qkv_loss_fn = QKV_STD_Loss(
             local_qkv_std_coeff=params.local_qkv_std_coeff,
             rt_qkv_std_coeff=params.rt_qkv_std_coeff,
-            qkv_target_std=params.qkv_target_std
+            qkv_target_std=params.qkv_target_std,
         )
     elif params.qkv_weight_norm_coeff > 0:
         qkv_loss_fn = QKV_Weight_Norm_Loss(
@@ -47,7 +46,10 @@ def make_losses(params: TrainingParams):
 
     rerank_loss_fn = None
     if params.rerank_loss_fn == 'batchhardbceloss':
-        rerank_loss_fn = BatchHardRerankingBCELossWithMasks(batch_size=params.rerank_batch_size)
+        rerank_loss_fn = BatchHardRerankingBCELossWithMasks(
+            batch_size=params.rerank_batch_size,
+            loss_coeff=params.rerank_loss_coeff,
+        )
     elif params.rerank_loss_fn is not None:
         raise NotImplementedError(f'Unknown re-ranking loss: {params.rerank_loss_fn}')
 
@@ -186,23 +188,25 @@ class BatchHardRerankingBCELossWithMasks:
     """
     Re-ranking loss with BCE. Samples batch-hard triplets.
     """
-    def __init__(self, batch_size: float):
+    def __init__(self, batch_size: int, loss_coeff: float = 1.0):
         self.batch_size = batch_size
+        assert self.batch_size >= 1
+        self.loss_coeff = loss_coeff
+        assert self.loss_coeff >= 0.0
         # Euclidean distance
         self.distance = LpDistance(normalize_embeddings=False, collect_stats=True)
         self.miner_fn = HardTripletMinerWithMasks(distance=self.distance, max_triplets=self.batch_size)
-        self.loss_fn = RerankingBCELoss()
+        self.loss_fn = torch.nn.BCELoss()
 
     def __call__(self, rerank_scores: Tensor, targets: Tensor):
-        # TODO: Get output of model.rerank() and compute BCE loss
-        dummy_labels = torch.arange(embeddings.shape[0]).to(embeddings.device)
-        loss = self.loss_fn(embeddings, dummy_labels, hard_triplets)
+        loss = self.loss_fn(rerank_scores, targets) * self.loss_coeff
 
-        stats = {
-            'loss': loss.item(),
-            'num_triplets': len(hard_triplets[0]),
-            # TODO
-        }
+        with torch.no_grad():
+            stats = {
+                'loss_rerank': loss.item(),
+                'rerank_pos_score': rerank_scores[:,0].mean().item(),
+                'rerank_neg_score': rerank_scores[:,1].mean().item(),
+            }
         return loss, stats
 
     def get_hard_triplets(self, embeddings, positives_mask, negatives_mask):

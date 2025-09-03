@@ -190,9 +190,9 @@ def batched_sgv_parallel(
         - sc_score_list:   [B, nn, 1], spatial consistency score for each candidate
     """
     if src_keypts.ndim == 3:
-        src_keypts.unsqueeze_(1)
+        src_keypts = src_keypts.unsqueeze(1)
     if src_features.ndim == 3:
-        src_features.unsqueeze_(1)
+        src_features = src_features.unsqueeze(1)
     assert src_keypts.ndim == 4
     assert tgt_keypts.ndim == 4
     assert src_features.ndim == 4
@@ -217,6 +217,10 @@ def batched_sgv_parallel(
         diag = torch.ones_like(torch.diagonal(mask, dim1=-2, dim2=-1))
         mask_ignore_diag = torch.diagonal_scatter(mask, diag, dim1=-2, dim2=-1)
         adj_mat.masked_fill_(mask_ignore_diag.logical_not(), 0.0) 
+
+    # # Visualise
+    # plot_adj_mat(adj_mat, 0, 0)
+    # plot_adj_mat(adj_mat, 0, 1)
 
     # Spatial Consistency Score
     lead_eigvec = batched_power_iteration(adj_mat)

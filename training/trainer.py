@@ -320,6 +320,8 @@ class NetworkTrainer:
         s = f"{phase}:  total loss: {stats['loss_total']:.4f}   PR loss: {stats['loss']:.4f}   "
         if 'loss_mesa' in stats:
             s += f"MESA loss: {stats['loss_mesa']:.4f}   "
+        if 'loss_rerank' in stats:
+            s += f"Re-ranking loss: {stats['loss_rerank']:.4f}   "
         if 'local_qkv_std_loss' in stats:
             s += f"local qkv std loss: {stats['local_qkv_std_loss']:.4f}   "
         if 'rt_qkv_std_loss' in stats:
@@ -329,7 +331,7 @@ class NetworkTrainer:
         s += f"embedding norm: {stats['avg_embedding_norm']:.3f}   "
         if 'num_triplets' in stats:
             s += f"Triplets (all/active): {stats['num_triplets']:.1f}/{stats['num_non_zero_triplets']:.1f}  " \
-                f"Mean dist (pos/neg): {stats['mean_pos_pair_dist']:.3f}/{stats['mean_neg_pair_dist']:.3f}   "
+                 f"Mean dist (pos/neg): {stats['mean_pos_pair_dist']:.3f}/{stats['mean_neg_pair_dist']:.3f}   "
         if 'positives_per_query' in stats:
             s += f"#positives per query: {stats['positives_per_query']:.1f}   "
         if 'best_positive_ranking' in stats:
@@ -338,6 +340,8 @@ class NetworkTrainer:
             s += f"Recall@1: {stats['recall'][1]:.4f}   "
         if 'ap' in stats:
             s += f"AP: {stats['ap']:.4f}   "
+        if 'rerank_pos_score' in stats and 'rerank_neg_score' in stats:
+            s += f"Mean re-ranking score (pos/neg): {stats['rerank_pos_score']:.3f}/{stats['rerank_neg_score']:.3f}   "
         self.logger.info(s)
 
     def print_local_stats(self, phase, stats):
@@ -890,6 +894,17 @@ class NetworkTrainer:
             loss, temp_stats = self.global_loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
+
+            # Compute re-ranking loss
+            if self.rerank_loss_fn is not None:
+                shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
+                rerank_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
+                rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale)
+                rerank_loss, rerank_stats = self.rerank_loss_fn(rerank_scores, targets)
+                stats.update(rerank_stats)
+                loss += rerank_loss
+                del shift_and_scale
+
             if 'train' in phase:
                 # Compute MESA loss
                 if mesa > 0.0:
@@ -906,15 +921,6 @@ class NetworkTrainer:
                     temp_stats = self.tensors_to_numbers(temp_stats)
                     stats.update(temp_stats)
                     loss += qkv_loss
-
-                # Compute re-ranking loss
-                # TODO: ADD TO MULTISTAGED STEP
-                if self.rerank_loss_fn is not None:
-                    shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
-                    rerank_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
-                    rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale)
-                    rerank_loss = self.rerank_loss_fn(rerank_scores, targets)
-                    del shift_and_scale
 
                 self.grad_scaler.scale(loss).backward()
 
@@ -953,6 +959,9 @@ class NetworkTrainer:
                 minibatch = to_device(minibatch, self.device, non_blocking=True, construct_octree_neigh=True)
                 y = self.model(minibatch, global_only=True)
                 embeddings_l.append(y['global'])
+                # # Save model output from first batch split for use in re-ranking
+                # if self.rerank_loss_fn is not None and i == 0:
+                #     model_out_first = y
                 if 'train' not in phase:
                     del minibatch, y
                     continue
@@ -984,6 +993,31 @@ class NetworkTrainer:
             loss, temp_stats = self.global_loss_fn(embeddings, positives_mask, negatives_mask)
             temp_stats = self.tensors_to_numbers(temp_stats)
             stats.update(temp_stats)
+            # Compute re-ranking loss
+            # NOTE: Disabled for multistage backprop. Same issue with qkv loss,
+            #       as in stage 3, .backward() needs to be called w.r.t the gradient
+            #       of all RTs and RT attn maps. Too easy to introduce bugs here,
+            #       so just use re-ranking without multi-stage backprop.
+            # if self.rerank_loss_fn is not None:
+            #     # NOTE: Currently too difficult to combine relay tokens from
+            #     #       multi-stage backprop (due to needing to merge and
+            #     #       recompute masks) so just compute re-ranking on first split.
+            #     split_size = self.params.batch_split_size
+            #     shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
+            #     rerank_triplets = self.rerank_loss_fn.get_hard_triplets(
+            #         embeddings[:split_size],
+            #         positives_mask[:split_size, :split_size],
+            #         negatives_mask[:split_size, :split_size],
+            #     )
+            #     rerank_scores, targets = self.model.rerank(
+            #         model_out_first,
+            #         rerank_triplets,
+            #         shift_and_scale[:split_size],
+            #     )
+            #     rerank_loss, rerank_stats = self.rerank_loss_fn(rerank_scores, targets)
+            #     stats.update(rerank_stats)
+            #     loss += rerank_loss
+            #     del shift_and_scale
             # Compute MESA loss
             if 'train' in phase and mesa > 0.0:
                 kd = kdloss(embeddings, embeddings_ema)
@@ -1331,6 +1365,12 @@ class NetworkTrainer:
                 metrics['AP'] = epoch_stats['global']['ap']
             if 'loss_mesa' in epoch_stats['global']:
                 metrics['loss_mesa'] = epoch_stats['global']['loss_mesa']
+            if 'loss_rerank' in epoch_stats['global']:
+                metrics['loss_rerank'] = epoch_stats['global']['loss_rerank']
+            if 'rerank_pos_score' in epoch_stats['global']:
+                metrics['rerank_pos_score'] = epoch_stats['global']['rerank_pos_score']
+            if 'rerank_neg_score' in epoch_stats['global']:
+                metrics['rerank_neg_score'] = epoch_stats['global']['rerank_neg_score']
             if 'local_qkv_std_loss' in epoch_stats['global']:
                 metrics['local_qkv_std_loss'] = epoch_stats['global']['local_qkv_std_loss']
             if 'local_qkv_std' in epoch_stats['global']:

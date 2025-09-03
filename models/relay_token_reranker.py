@@ -4,6 +4,8 @@ Relay token re-ranker with geometric consistency.
 Ethan Griffiths (Data61, Pullenvale)
 """
 from typing import List, Set, Tuple, Optional
+import logging
+import time
 
 import torch
 import torch.nn as nn
@@ -17,48 +19,59 @@ from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 from models.reranking_utils import batched_sgv_parallel
 
 class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
-    """Relay token re-ranker with geometric consistency."""
-    def __init__(self, rerank_rt_indices: Tuple[int],
-                 attn_topk: Tuple[int],
-                 rt_dim: int,
-                 geometric_consistency_d_thresh: float = 5.0,  # metres
-                 sort_eigvec: bool = True):
+    """
+    Relay token re-ranker with geometric consistency.
+
+    Args:
+        rerank_rt_indices (tuple): Indices of relay token levels to use for re-ranking
+        attn_topk (tuple): Number of top-k relay tokens to select based on CLS attn maps, per level
+        geometric_consistency_d_thresh (tuple): Distance threshold to use in geometric consistency adjacency matrix, per relay token level
+        rt_dim (int): Dimension of relay tokens 
+        sort_eigvec (bool): Sort eigenvectors prior to processing in MLP
+        use_attn_vals (bool): Also use relay token attn values as a feature in the MLP classifier
+    """
+
+    def __init__(
+        self,
+        rerank_rt_indices: Tuple[int],
+        attn_topk: Tuple[int],
+        geometric_consistency_d_thresh: Tuple[float],  # metres
+        rt_dim: int,
+        sort_eigvec: bool = True,
+        use_attn_vals: bool = False,
+    ):
         super().__init__()
         self.rerank_rt_indices = rerank_rt_indices
         self.attn_topk = attn_topk
-        if len(attn_topk) != len(rerank_rt_indices):
-            raise ValueError('`attn_topk` must have same num elems as `rerank_rt_indices`')
-        self.rt_dim = rt_dim
+        if self.attn_topk is None:
+            raise ValueError('`attn_topk` currently required to ensure consistent number of relay tokens')
         self.geometric_consistency_d_thresh = geometric_consistency_d_thresh
+        if len(attn_topk) != len(rerank_rt_indices) != len(geometric_consistency_d_thresh):
+            raise ValueError('`attn_topk` must have same num elems as `rerank_rt_indices` and `geometric_consistency_d_thresh`')
+        self.rt_dim = rt_dim
         self.sort_eigvec = sort_eigvec
+        self.use_attn_vals = use_attn_vals
+        
         self.input_linear = nn.Linear(self.rt_dim, self.rt_dim)
-        self.output_dim = sum(self.attn_topk)
-        self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden sizes?
+        self.output_dim = sum(self.attn_topk) + (2 * int(use_attn_vals) * sum(self.attn_topk))  # concat attn vals to feat dim of MLP
+        self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, model_out: dict, hard_triplets: Tuple[int], shift_and_scale: Tensor):
+    def forward(self, model_out: dict, hard_triplets: Tuple, shift_and_scale: Tensor):
         """
         Perform re-ranking of query and N candidates. Note that only 'octree',
         'rt', and 'rt_final_cls_attn_vals' keys are needed from HOTFormerLoc outputs.
 
         Args:
-            TODO:
-            # query_output (dict): HOTFormerLoc output for query submap
-            # nn_outputs (List[dict]): List of HOTFormerLoc outputs for each nn submap
-        """
-        # NOTE: Need to re-think this a little, as entire HOTFloc output is batched
-        #       during training. Instead, pass a (query_indices, nn_indices) param
-        #       to specify our re-ranking batch (hard mining in loss func).
-        
-        # TODO: Plan -- 
-        #       - Get query RTs and nn RTs (add param for num levels / level idx)
-        #       - Sort each by top-k attn vals (with zero-padding for safety?)
-        #       - Apply linear layer + (optional) L2 norm
-        #       - Compute/get RT centroids from OctreeTs
-        #       - Apply SGV
-        #       - Sort + scale (+ concat) eigenvectors and process with MLP + sigmoid
-        #       - Return (batched) re-ranking scores
+            model_out (dict): HOTFormerLoc output for entire (training) batch
+            hard_triplets (tuple): Tuple of triplets of form (anc_indices, pos_indices, neg_indices)
+            shift_and_scale (Tensor): (B, 4) tensor containing normalization parameters
 
+        Returns:
+            rerank_scores (Tensor)
+            targets (Tensor)
+        """
+        tic = time.perf_counter()
         # Collect batch relay tokens
         octree: OctreeT = model_out['octree']
         anc_indices, pos_indices, neg_indices = hard_triplets
@@ -69,6 +82,8 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
 
         # Process each RT level
         leading_eigvec_list = []
+        anc_pos_attn_scores_list = []
+        anc_neg_attn_scores_list = []
         for ii, rt_idx in enumerate(self.rerank_rt_indices):
             depth = octree.pyramid_depths[rt_idx]
             rt_depth_j = concat_and_pad_rt(model_out['rt'], octree, [depth])
@@ -83,17 +98,22 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
             # Filter top-k attn vals for each depth
             if self.attn_topk is not None:
                 rt_cls_attn_depth_j = concat_and_pad_rt(rt_cls_attn_per_depth, octree, [depth])
-                # TODO: finish top-k bit
                 if N < self.attn_topk[ii]:  # zero-pad
                     padding_size = self.attn_topk[ii] - N
                     rt_cls_attn_depth_j = F.pad(rt_cls_attn_depth_j, (0,0,0,padding_size))
                     rt_centroids_depth_j = F.pad(rt_centroids_depth_j, (0,0,0,padding_size))
                     rt_depth_j = F.pad(rt_depth_j, (0,0,0,padding_size))
-                    # TODO: Fix masking to consider added padding
                 attn_topk_scores, attn_topk_indices = torch.topk(rt_cls_attn_depth_j, k=self.attn_topk[ii], dim=1, sorted=False)
+                attn_topk_scores.squeeze_(-1)
                 rt_centroids_depth_j = torch.gather(rt_centroids_depth_j, dim=1, index=attn_topk_indices.expand(-1, -1, 3))
                 rt_depth_j = torch.gather(rt_depth_j, dim=1, index=attn_topk_indices.expand(-1, -1, C))
+                # Separate attn scores into anc and nn sets
+                if self.use_attn_vals:
+                    anc_attn_scores = attn_topk_scores[anc_indices]
+                    pos_attn_scores = attn_topk_scores[pos_indices]
+                    neg_attn_scores = attn_topk_scores[neg_indices]
 
+            # Separate RTs into anc and nn sets
             anc_rt_centroids = rt_centroids_depth_j[anc_indices]
             nn_rt_centroids = torch.stack(
                 [rt_centroids_depth_j[pos_indices], rt_centroids_depth_j[neg_indices]],
@@ -120,26 +140,62 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
                 nn_rt_centroids,
                 anc_rt,
                 nn_rt,
-                d_thresh=self.geometric_consistency_d_thresh,
+                d_thresh=self.geometric_consistency_d_thresh[ii],
                 mask=rt_sgv_mask,
                 return_spatial_consistency=True,
             )
             if self.sort_eigvec:
-                leading_eigvec = torch.sort(leading_eigvec, dim=-1, descending=True).values
+                leading_eigvec, sort_indices = torch.sort(leading_eigvec, dim=-1, descending=True)
+
+            if self.use_attn_vals:
+                # Also sort attn vals with same index to ensure they correspond to the same relay tokens
+                if self.sort_eigvec:
+                    anc_pos_attn_scores_temp = torch.concat(
+                        [torch.gather(anc_attn_scores, dim=-1, index=sort_indices[:,0,:]),
+                         torch.gather(pos_attn_scores, dim=-1, index=sort_indices[:,0,:])],
+                        dim=-1,
+                    )
+                    anc_neg_attn_scores_temp = torch.concat(
+                        [torch.gather(anc_attn_scores, dim=-1, index=sort_indices[:,1,:]),
+                         torch.gather(neg_attn_scores, dim=-1, index=sort_indices[:,1,:])],
+                        dim=-1,
+                    )
+                else:
+                    anc_pos_attn_scores_temp = torch.concat(
+                        [anc_attn_scores, pos_attn_scores], dim=-1
+                    )
+                    anc_neg_attn_scores_temp = torch.concat(
+                        [anc_attn_scores, neg_attn_scores], dim=-1
+                    )
+
+                anc_pos_attn_scores_list.append(anc_pos_attn_scores_temp)
+                anc_neg_attn_scores_list.append(anc_neg_attn_scores_temp)
+
             # TODO: Scale eigvec? (softmax? or just l2norm?)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
-        leading_eigvec_all = torch.concat(leading_eigvec_list, dim=-1)
+        rerank_features = torch.concat(leading_eigvec_list, dim=-1)
+        if self.use_attn_vals:
+            # Add RT attn values to re-ranking features
+            anc_pos_attn_scores = torch.concat(anc_pos_attn_scores_list, dim=-1)
+            anc_neg_attn_scores = torch.concat(anc_neg_attn_scores_list, dim=-1)
+            # TODO: Check order of attn scores. Should it be (anc_RT0, anc_RT1, pos_RT0, pos_RT1),
+            #       or (anc_RT0, posRT0, anc_RT1, pos_RT1)?
+            #       Currently is the latter, and order shouldn't matter for linear layers regardless
+            batch_attn_scores = torch.stack([anc_pos_attn_scores, anc_neg_attn_scores], dim=1)
+            rerank_features = torch.concat([rerank_features, batch_attn_scores], dim=-1)
 
-        # MLP
-        # TODO: Verify she's all good
-        rerank_scores = self.output_mlp(leading_eigvec_all)
+        rerank_scores = self.output_mlp(rerank_features)
         rerank_scores = self.sigmoid(rerank_scores)
 
         # Create target labels
         targets = torch.zeros_like(rerank_scores)  # [B, 2]
-        targets[:, 0] = 1
+        targets[:, 0] = 1  # set label of positives to 1
+
+        toc = time.perf_counter()
+        log_str = f'Re-ranking time: {toc-tic:.4f}s'
+        logging.debug(log_str)
         return rerank_scores, targets
 
     @staticmethod
