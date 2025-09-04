@@ -18,7 +18,13 @@ import time
 import tqdm
 from typing import Sequence, List, Dict, Optional
 
-from dataset.dataset_utils import make_eval_dataloader, make_eval_dataloader_6DOF
+from dataset.dataset_utils import (
+    make_eval_dataset,
+    make_eval_dataloader,
+    make_eval_dataloader_reranking,
+    make_eval_dataloader_6DOF,
+    make_eval_collate_fn,
+)
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
 from eval.sgv.sgv_utils import sgv_fn
@@ -29,18 +35,19 @@ from misc.torch_utils import set_seed, to_device, release_cuda
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 
 DISABLE_ICP = False
-# EVAL_MODES = ['Initial', 'Re-Ranked']
-EVAL_MODES = ['Initial']  # re-ranking temporarily disabled for debugging
-
+EVAL_MODES = ['Initial', 'Re-Ranked']
+MAX_NN_EUCLID_DIST = 30.0  # max allowable distance for initial NN to be when logging re-ranking failures (WP submap diam is 60m)
+MAX_RR_TO_NN_EUCLID_DIST = 10.0  # max distance threshold in metres from nn before re-ranking failure is logged
 
 def evaluate(
     model: torch.nn.Module,
     device,
     params: TrainingParams,
     log: bool = False,
-    model_name: str = "model",
+    model_name: str = 'model',
     radius: Sequence[float] = [5., 20.],
     icp_refine: bool = False,
     local_max_eval_threshold: float = np.inf,
@@ -50,6 +57,7 @@ def evaluate(
     use_ransac: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
+    reranking: bool = False,
 ):
     # Run evaluation on all eval datasets
     eval_database_files, eval_query_files = get_query_database_splits(params)
@@ -100,6 +108,7 @@ def evaluate(
             use_ransac=use_ransac,
             save_embeddings=save_embeddings,
             load_embeddings=load_embeddings,
+            reranking=reranking,
         )
         global_metrics[location_name] = temp_global_metrics
         average_global_metrics[location_name] = temp_global_metrics['average']
@@ -132,15 +141,16 @@ def evaluate_dataset(
     use_ransac: bool = False,
     save_embeddings: bool = False,
     load_embeddings: bool = False,
+    reranking: bool = False,
 ):
     # Run evaluation on a single dataset
     global_metrics, local_metrics = {}, {}
 
     database_embeddings = []
-    database_local_embeddings = []
+    database_local_dicts = []
     database_positions = []
     query_embeddings = []
-    query_local_embeddings = []
+    query_local_dicts = []
 
     model.eval()
 
@@ -148,33 +158,33 @@ def evaluate_dataset(
     if show_progress:
         logging.info(f'{"Loading" if load_embeddings else "Computing"} database embeddings')
     for ii, data_set in enumerate(database_sets):
-        temp_embeddings, temp_local_embeddings, temp_positions = [None]*3
+        temp_embeddings, temp_local_dict, temp_positions = [None]*3
         if len(data_set) > 0:
             # Create array of coordinates of all db elements
             temp_positions = np.array([(db_details['northing'], db_details['easting']) for db_details in data_set.values()])
             if load_embeddings:
-                temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
+                temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
             else:
-                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, only_global, show_progress)
+                temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
             if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'database_{ii}')
+                save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'database_{ii}')
         database_embeddings.append(temp_embeddings)
-        database_local_embeddings.append(temp_local_embeddings)
+        database_local_dicts.append(temp_local_dict)
         database_positions.append(temp_positions)
 
     if show_progress:
         logging.info(f'{"Loading" if load_embeddings else "Computing"} query embeddings')
     for jj, data_set in enumerate(query_sets):
-        temp_embeddings, temp_local_embeddings = [None]*2
+        temp_embeddings, temp_local_dict = [None]*2
         if len(data_set) > 0:
             if load_embeddings:
-                temp_embeddings, temp_local_embeddings = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
+                temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
             else:
-                temp_embeddings, temp_local_embeddings = get_latent_vectors(model, data_set, device, params, only_global, show_progress)
+                temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
             if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, temp_local_embeddings, model_name, params.dataset_name, location_name, f'query_{jj}')
+                save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'query_{jj}')
         query_embeddings.append(temp_embeddings)
-        query_local_embeddings.append(temp_local_embeddings)
+        query_local_dicts.append(temp_local_dict)
 
     if show_progress:
         logging.info('Running evaluation')
@@ -198,8 +208,8 @@ def evaluate_dataset(
                 n=j,
                 database_global_embeddings=database_embeddings[i],
                 query_global_embeddings=query_embeddings[j],
-                database_local_embeddings=database_local_embeddings[i],
-                query_local_embeddings=query_local_embeddings[j],
+                database_local_dict=database_local_dicts[i],
+                query_local_dict=query_local_dicts[j],
                 database_positions=database_positions[i],
                 database_set=database_sets[i],
                 query_set=query_sets[j],
@@ -215,6 +225,7 @@ def evaluate_dataset(
                 show_progress=show_progress,
                 only_global=only_global,
                 use_ransac=use_ransac,
+                reranking=reranking,
             )
             # Report per-split metrics
             global_metrics[split_name] = temp_global_metrics
@@ -226,7 +237,7 @@ def evaluate_dataset(
     if not only_global:
         local_metrics['average'] = average_nested_dict(local_metrics)
 
-    del database_embeddings, database_local_embeddings, query_embeddings, query_local_embeddings
+    del database_embeddings, database_local_dicts, query_embeddings, query_local_dicts
     return global_metrics, local_metrics
 
 def average_nested_dict(nested_dict: Dict):
@@ -255,9 +266,15 @@ def average_nested_dict(nested_dict: Dict):
             average_dict[metric_ii][sub_metric_kk] = np.mean(temp_metric_list[sub_metric_kk], axis=0)
     return average_dict
 
-def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
-                       params: TrainingParams, only_global: bool = False,
-                       show_progress: bool = False):
+def get_latent_vectors(
+    model: torch.nn.Module,
+    data_set: Dict,
+    device,
+    params: TrainingParams,
+    only_global: bool = False,
+    reranking: bool = False,
+    show_progress: bool = False,
+):
     # Adapted from original PointNetVLAD code
     if len(data_set) == 0:
         return None, None
@@ -265,42 +282,54 @@ def get_latent_vectors(model: torch.nn.Module, data_set: Dict, device,
     ### NOTE: Disabled so that eval can be tested during training debug mode
     if params.debug:
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
-        local_embeddings = {'coarse': [], 'fine': []}
+        local_dict = {'local_embeddings': {'coarse': [], 'fine': []}}
         if not only_global:
             for _ in range(len(data_set)):
-                local_embeddings['coarse'].append(torch.randn(128, params.model_params.channels[-1]))
-                local_embeddings['fine'].append(torch.randn(512, params.model_params.channels[-3]))
-        return global_embeddings, local_embeddings
+                local_dict['local_embeddings']['coarse'].append(torch.randn(128, params.model_params.channels[-1]))
+                local_dict['local_embeddings']['fine'].append(torch.randn(512, params.model_params.channels[-3]))
+        return global_embeddings, local_dict
 
     # Create dataloader for data_set
     dataloader = make_eval_dataloader(params, data_set)
     global_embeddings = None
-    local_embeddings = {'coarse': [], 'fine': []}
+    local_dict = {'local_embeddings': {'coarse': [], 'fine': []}}
+    # if reranking:
+    #     local_dict.update({'rt': [], 'rt_final_cls_attn_vals': []})
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
         for ii, batch_dict in enumerate(dataloader):
             batch = batch_dict['batch']
             batch = to_device(batch, device, non_blocking=True, construct_octree_neigh=True)
-            temp_global_embedding, temp_local_embedding = compute_embedding(model, batch, only_global)
+            temp_global_embedding, temp_local_dict = compute_embedding(model, batch, only_global, reranking)
             if global_embeddings is None:
                 global_embeddings = np.zeros((len(data_set), temp_global_embedding.shape[1]), dtype=temp_global_embedding.dtype)
             global_embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_global_embedding))] = temp_global_embedding
             # Split local embeddings from batch
-            if temp_local_embedding is not None:
-                for embedding_resolution, embedding in temp_local_embedding.items():
-                    local_embeddings[embedding_resolution].extend(embedding)
+            if 'local_embedding' in temp_local_dict:
+                for embedding_resolution, embedding in temp_local_dict['local_embedding'].items():
+                    local_dict['local_embeddings'][embedding_resolution].extend(embedding)
+            # Split relay tokens from batch
+            # if 'rt' in temp_local_dict:
+            #     local_dict['rt'].extend(temp_local_dict['rt'])
+            # if 'rt_final_cls_attn_vals' in temp_local_dict:
+            #     local_dict['rt_final_cls_attn_vals'].extend(temp_local_dict['rt_final_cls_attn_vals'])
             pbar.update(len(temp_global_embedding))
     
-    return global_embeddings, local_embeddings
+    return global_embeddings, local_dict
 
 
-def compute_embedding(model: torch.nn.Module, batch: Dict, only_global: bool = False):
+def compute_embedding(
+    model: torch.nn.Module,
+    batch: Dict,
+    only_global: bool = False,
+    reranking: bool = False,
+):
     with torch.inference_mode():
         # Compute global descriptor
         y = model(batch, global_only=True)
         global_embedding = release_cuda(y['global'], to_numpy=True)
+        local_dict = {}
         # Get local descriptors for each pyramid level
-        local_embedding = None
         if not only_global and 'local' in y:
             local_embedding = y['local']  # keep as tensors for future forward pass
             if isinstance(model, HOTFormerMetricLoc):
@@ -308,14 +337,27 @@ def compute_embedding(model: torch.nn.Module, batch: Dict, only_global: bool = F
                 # Batch stored in concat mode, so need to split back to batch elems
                 batch_lengths_coarse = y['octree'].batch_nnum_nempty[model.depth_coarse].tolist()
                 batch_lengths_fine = y['octree'].batch_nnum_nempty[model.depth_fine].tolist()
-                local_embedding_coarse = release_cuda(local_embedding[model.depth_coarse].split(batch_lengths_coarse))
-                local_embedding_fine = release_cuda(local_embedding[model.depth_fine].split(batch_lengths_fine))
-                local_embedding = {'coarse': local_embedding_coarse, 'fine': local_embedding_fine}
+                local_embedding_coarse = local_embedding[model.depth_coarse].split(batch_lengths_coarse)
+                local_embedding_fine = local_embedding[model.depth_fine].split(batch_lengths_fine)
+                local_dict['local_embedding'] = release_cuda({'coarse': local_embedding_coarse, 'fine': local_embedding_fine})
             else:
-                local_embedding = release_cuda(local_embedding)
+                local_dict['local_embedding'] = release_cuda(local_embedding)
+        # # Get relay tokens and attn vals for re-ranking
+        # if reranking:
+        #     # Batch stored in concat mode, so need to split back to batch elems
+        #     local_dict['rt'] = release_cuda(
+        #         concat_and_pad_rt(y['rt'], y['octree'], pad=False, remove_final_padding=True)
+        #     )
+        #     # Do below operation to get cls attn in correct format for each batch item
+        #     rt_cls_attn_temp = unpad_and_split_rt(
+        #         y['rt_final_cls_attn_vals'][..., None], y['octree']
+        #     )
+        #     local_dict['rt_final_cls_attn_vals'] = release_cuda(
+        #         concat_and_pad_rt(rt_cls_attn_temp, y['octree'], pad=False, remove_final_padding=True)
+        #     )
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
-    return global_embedding, local_embedding
+    return global_embedding, local_dict
 
 
 def get_metrics(
@@ -323,8 +365,8 @@ def get_metrics(
     n: int,
     database_global_embeddings: np.ndarray,
     query_global_embeddings: np.ndarray,
-    database_local_embeddings: Dict[str, List[torch.Tensor]],
-    query_local_embeddings: Dict[str, List[torch.Tensor]],
+    database_local_dict: Dict,
+    query_local_dict: Dict,
     database_positions: np.ndarray,
     database_set: Dict[int, Dict],
     query_set: Dict[int, Dict],
@@ -340,6 +382,7 @@ def get_metrics(
     show_progress: bool = False,
     only_global: bool = False,
     use_ransac: bool = False,
+    reranking: bool = False,
 ):
     # ### TEMP FOR DEBUGGING ###
     # return np.ones(25, np.float32), 1.0, 1.0
@@ -355,19 +398,24 @@ def get_metrics(
     # Dictionary to store the number of true positives (for global desc. metrics) for different radius and NN number
     global_metrics = {
         'rr_failures': [],
-    }
+    } if reranking else {}
     intermediate_metrics = {
         'tp': {r: [0] * num_neighbors for r in radius},
-        'tp_rr': {r: [0] * num_neighbors for r in radius},
         'opr': {r: 0 for r in radius},
-        'opr_rr': {r: 0 for r in radius},
         'RR': {r: [] for r in radius},
+    }
+    if reranking:
+        intermediate_metrics.update({
+        'tp_rr': {r: [0] * num_neighbors for r in radius},
+        'opr_rr': {r: 0 for r in radius},
         'RR_rr': {r: [] for r in radius},
         't_rr': [],
-    }
+    })
     local_metrics = {}
     if not only_global:
         for eval_mode in EVAL_MODES:
+            if not reranking and eval_mode == 'Re-Ranked':
+                continue
             local_metrics[eval_mode] = {
                 'success': [],
                 'rre': [],
@@ -414,6 +462,10 @@ def get_metrics(
     opr_threshold = max(int(round(len(database_global_output)/100.0)), 1)
 
     num_evaluated = 0
+    global_result_dict = {
+        'query_nn_list': [],
+        'euclid_dist_list': [],
+    }
     for query_idx in tqdm.tqdm(range(len(queries_global_output)),
                                desc='Place Recognition',
                                disable=(not show_progress)):
@@ -518,62 +570,199 @@ def get_metrics(
                 f.write(s)
 
         ########################################################################
-        # # Re-Ranking with SGV
+        # # Re-ranking with SGV
         # # NOTE: TO DO THIS, NEED TO PRE-COMPUTE THE COARSE CENTROIDS, OR GET THEM AFTER RUNNING FORWARD PASS OF HOTFORMERMETRICLOC
-        # topk = min(num_neighbors, len(nn_indices))
-        # tick = time.perf_counter()
-        # candidate_local_embeddings = database_local_embeddings[m][nn_indices]
-        # candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
-        # fitness_list = sgv_fn(query_local_embeddings[n][query_idx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
-        # topk_rerank = np.flip(np.asarray(fitness_list).argsort())
-        # topk_rerank_indices = copy.deepcopy(nn_indices)
-        # topk_rerank_indices[:topk] = nn_indices[topk_rerank]
-        # t_rerank = time.perf_counter() - tick
-        # intermediate_metrics['t_rr'].append(t_rerank)
+        if reranking:
+            global_result_dict['query_nn_list'].append((query_idx, nn_indices[:params.rerank_num_neighbours]))
+            global_result_dict['euclid_dist_list'].append(euclid_dist)
+            
+            if params.model_params.rerank_mode == 'sgv':
+                # topk = min(num_neighbors, len(nn_indices))
+                # tick = time.perf_counter()
+                # candidate_local_embeddings = database_local_embeddings[m][nn_indices]
+                # candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
+                # fitness_list = sgv_fn(query_local_embeddings[n][query_idx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
+                # topk_rerank = np.flip(np.asarray(fitness_list).argsort())
+                # topk_rerank_indices = copy.deepcopy(nn_indices)
+                # topk_rerank_indices[:topk] = nn_indices[topk_rerank]
+                # t_rerank = time.perf_counter() - tick
+                # intermediate_metrics['t_rr'].append(t_rerank)
+                raise NotImplementedError
 
-        # delta_rerank = query_position - database_positions[m][topk_rerank_indices]
-        # euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+            # Re-ranking with relay token geometric consistency 
+            elif params.model_params.rerank_mode == 'relay_token_gc':
+                pass
+                ####################################################################
+                # THIS BLOCK CONTAINS THE SIMPLE BATCH CREATION APPROACH FOR
+                # RE-RANKING, i.e. DIRECTLY LOADING ALL OCTREES AND RUNNING A NEW
+                # (WASTED) FORWARD PASS. CURENTLY WORKS BUT IS SLOW. REPLACING WITH
+                # A TORCH DATALOADER THAT DOES THE SAME THING.
+                ####################################################################
+                # rerank_batch_temp = []
+                # rerank_batch_temp.append(query_dataset[query_idx])
+                # for nn_idx in nn_indices:
+                #     rerank_batch_temp.append(database_dataset[nn_idx])
+                # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
+                # rerank_batch = rerank_batch_dict['batch']
+                # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+                # with torch.inference_mode():
+                #     out = model(rerank_batch, global_only=True)
+                #     rerank_scores = model.rerank_inference(out, rerank_shift_and_scale)
+                #     topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, dim=1, descending=True)
+                ####################################################################
 
-        # # Log cases where re-ranking is worse (causes PR failure, or is
-        # #   significantly worse than the original top-candidate)
-        # rr_to_nn_euclid_dist = euclid_dist_rr - euclid_dist
-        # if (euclid_dist <= self.MAX_NN_EUCLID_DIST
-        #         and rr_to_nn_euclid_dist > self.MAX_RR_TO_NN_EUCLID_DIST):
-        #     # print(f'Fail: {euclid_dist_rr:.2f}m > {euclid_dist:.2f}m', flush=True)
-        #     query_name = os.path.basename(self.eval_set.query_set[query_idx].rel_scan_filepath)
-        #     nn_name = os.path.basename(self.eval_set.map_set[nn_indices].rel_scan_filepath)
-        #     nn_rerank_name = os.path.basename(self.eval_set.map_set[topk_rerank_indices].rel_scan_filepath)
-        #     global_metrics['rr_failures'].append((query_name, nn_name,
-        #                                             nn_rerank_name,
-        #                                             f'{euclid_dist:.2f}',
-        #                                             f'{euclid_dist_rr:.2f}'))
-        ########################################################################
+                ####################################################################
+                # THIS BLOCK CONTAINS INITIAL ATTEMPTS TO PRE-COMPUTE RELAY TOKENS
+                # AND COMBINE THEM INTO NEW BATCHES FOR RE-RANKING. UNFINISHED.
+                ####################################################################
+                # NOTE: Currently I don't think this is feasible to do, due to the
+                #       way that the number of relay tokens for a given batch element
+                #       will vary depending on the length of it's neighbour elements.
+                #       Simple solution is just to run the forward pass again, which is
+                #       slow, but is guaranteed to output RTs in the right format.
+                # rerank_batch_temp, rt_batch, rt_attn_batch = [], [], []
+                # rerank_batch_temp.append(query_dataset[query_idx])
+                # rt_batch.append(query_local_dict['rt'][query_idx])
+                # rt_attn_batch.append(query_local_dict['rt_final_cls_attn_vals'][query_idx])
+                # for nn_idx in nn_indices:
+                #     rerank_batch_temp.append(database_dataset[nn_idx])
+                #     rt_batch.append(database_local_dict['rt'][nn_idx])
+                #     rt_attn_batch.append(database_local_dict['rt_final_cls_attn_vals'][nn_idx])
+                # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
+                # rerank_batch = rerank_batch_dict['batch']
+                # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+                # # Create OctreeT
+                # if 'hotformerloc' in model_name.lower():
+                #     octree = model.backbone.backbone.construct_OctreeT(
+                #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
+                #     )
+                # elif 'hotformermetricloc' in model_name.lower():
+                #     octree = model.hotformerloc_global.backbone.backbone.construct_OctreeT(
+                #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
+                #     )
+                # else:
+                #     raise NotImplementedError
+                # query_rt = query_local_dict['rt'][query_idx]
+                # nn_rt_list = [database_local_dict['rt'][nn_idx] for nn_idx in nn_indices]
+                # concat_and_pad_rt(out['rt'], octree, pad=False, remove_final_padding=True)
+                # unpad_and_split_rt()
+                # TODO: Pass through model
+                # rerank_scores = model.rerank_inference(rerank_batch, rerank_shift_and_scale)
+                # topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, descending=True)
+                ####################################################################
+
+            elif params.model_params.rerank_mode is not None:
+                raise NotImplementedError
+
+                # delta_rerank = query_position - database_positions[m][topk_rerank_indices]
+                # euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+
+                # # Log cases where re-ranking is worse (causes PR failure, or is
+                # #   significantly worse than the original top-candidate)
+                # rr_to_nn_euclid_dist = euclid_dist_rr - euclid_dist
+                # if (euclid_dist <= self.MAX_NN_EUCLID_DIST
+                #         and rr_to_nn_euclid_dist > self.MAX_RR_TO_NN_EUCLID_DIST):
+                #     # print(f'Fail: {euclid_dist_rr:.2f}m > {euclid_dist:.2f}m', flush=True)
+                #     query_name = os.path.basename(self.eval_set.query_set[query_idx].rel_scan_filepath)
+                #     nn_name = os.path.basename(self.eval_set.map_set[nn_indices].rel_scan_filepath)
+                #     nn_rerank_name = os.path.basename(self.eval_set.map_set[topk_rerank_indices].rel_scan_filepath)
+                #     global_metrics['rr_failures'].append((query_name, nn_name,
+                #                                             nn_rerank_name,
+                #                                             f'{euclid_dist:.2f}',
+                #                                             f'{euclid_dist_rr:.2f}'))
+            ########################################################################
 
         # Count true positives and 1% retrieved for different radius and NN number
         intermediate_metrics['tp'] = {r: [intermediate_metrics['tp'][r][nn] + (1 if (euclid_dist[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in radius}
-        # intermediate_metrics['tp_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] + (1 if (euclid_dist_rr[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in self.radius}
         intermediate_metrics['opr'] = {r: intermediate_metrics['opr'][r] + (1 if (euclid_dist[:opr_threshold] <= r).any() else 0) for r in radius}
-        # intermediate_metrics['opr_rr'] = {r: intermediate_metrics['opr_rr'][r] + (1 if (euclid_dist_rr[:threshold] <= r).any() else 0) for r in self.radius}
         intermediate_metrics['RR'] = {r: intermediate_metrics['RR'][r]+[next((1.0/(i+1) for i, x in enumerate(euclid_dist <= r) if x), 0)] for r in radius}
+        # intermediate_metrics['tp_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] + (1 if (euclid_dist_rr[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in self.radius}
+        # intermediate_metrics['opr_rr'] = {r: intermediate_metrics['opr_rr'][r] + (1 if (euclid_dist_rr[:threshold] <= r).any() else 0) for r in self.radius}
         # intermediate_metrics['RR_rr'] = {r: intermediate_metrics['RR_rr'][r]+[next((1.0/(i+1) for i, x in enumerate(euclid_dist_rr <= r) if x), 0)] for r in self.radius}
-        if only_global:
+        if only_global or reranking:
             continue
 
         # LOCAL DESCRIPTOR EVALUATION
         # Do the evaluation only if the nn pose is within distance threshold
         # Otherwise the overlap is too small to get reasonable results
         # (evaluation continues if standard OR re-ranked nn pose is within thresh meters)
-        if euclid_dist[0] > local_max_eval_threshold:  # and euclid_dist_rr[0] > local_max_eval_threshold:
+        if euclid_dist[0] > local_max_eval_threshold:
             continue
 
         # Cache query and nn idx for metric loc eval
         metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
-        # pairs_dict['Re-Ranked'].append(query_idx, topk_rerank_indices[0]))  # TODO: Enable when re-ranking implemented
+
+    # Run re-ranking evaluation using pre-computed nearest neighbours
+    if reranking and params.model_params.rerank_mode is not None:
+        rerank_dataloader = make_eval_dataloader_reranking(
+            params, query_set, database_set, global_result_dict['query_nn_list']
+        )
+        for idx, rerank_batch_dict in tqdm.tqdm(enumerate(rerank_dataloader),
+                                    total=len(rerank_dataloader),
+                                    desc='Re-ranking',
+                                    disable=(not show_progress)):
+            if params.debug:
+                if idx >= 2:
+                    break
+            query_idx = global_result_dict['query_nn_list'][idx][0]
+            nn_indices = global_result_dict['query_nn_list'][idx][1]
+            euclid_dist = global_result_dict['euclid_dist_list'][idx]
+
+            # Move to GPU and do forward pass
+            rerank_batch_dict = to_device(rerank_batch_dict, device, non_blocking=True, construct_octree_neigh=True)
+            rerank_batch = rerank_batch_dict['batch']
+            rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+            with torch.inference_mode():
+                out = model(rerank_batch, global_only=True)
+                tic_rr = time.perf_counter()
+                rerank_scores = model.rerank_inference(out, rerank_shift_and_scale)[0, :, 0]
+                intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
+                topk_rerank, topk_rerank_indices = release_cuda(
+                    torch.sort(rerank_scores, descending=True), to_numpy=True
+                )
+
+                delta_rerank = query_position - database_positions[topk_rerank_indices]
+                euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+
+                # Log cases where re-ranking is worse (causes PR failure, or is
+                #   significantly worse than the original top-candidate)
+                rr_to_nn_euclid_dist = euclid_dist_rr[0] - euclid_dist[0]
+                if (
+                    euclid_dist[0] <= MAX_NN_EUCLID_DIST
+                    and rr_to_nn_euclid_dist > MAX_RR_TO_NN_EUCLID_DIST
+                ):
+                    # print(f'Fail: {euclid_dist_rr[0]:.2f}m > {euclid_dist[0]:.2f}m', flush=True)
+                    query_name = os.path.basename(query_set[query_idx]['query'])
+                    nn_name = os.path.basename(database_set[nn_indices[0]]['query'])
+                    nn_rerank_name = os.path.basename(database_set[topk_rerank_indices[0]]['query'])
+                    global_metrics['rr_failures'].append(
+                        (query_name, nn_name, nn_rerank_name,
+                         f'{euclid_dist[0]:.2f}', f'{euclid_dist_rr[0]:.2f}')
+                    )
+
+            intermediate_metrics['tp_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] + (1 if (euclid_dist_rr[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in radius}
+            intermediate_metrics['opr_rr'] = {r: intermediate_metrics['opr_rr'][r] + (1 if (euclid_dist_rr[:opr_threshold] <= r).any() else 0) for r in radius}
+            intermediate_metrics['RR_rr'] = {r: intermediate_metrics['RR_rr'][r]+[next((1.0/(i+1) for i, x in enumerate(euclid_dist_rr <= r) if x), 0)] for r in radius}
+            if only_global:
+                continue
+
+            # LOCAL DESCRIPTOR EVALUATION
+            # Do the evaluation only if the nn pose is within distance threshold
+            # Otherwise the overlap is too small to get reasonable results
+            # (evaluation continues if standard OR re-ranked nn pose is within thresh meters)
+            if euclid_dist[0] > local_max_eval_threshold and euclid_dist_rr[0] > local_max_eval_threshold:
+                continue
+
+            # Cache query and nn idx for metric loc eval
+            metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
+            metric_loc_pairs_list['Re-Ranked'].append((query_idx, topk_rerank_indices[0]))
 
     # Run metric localisation evaluation for initial and re-ranked top-candidate
     for eval_mode in EVAL_MODES:
         if only_global:
             break
+        if not reranking and eval_mode == 'Re-Ranked':
+            continue
         eval_dataloader = make_eval_dataloader_6DOF(
             params, query_set, database_set, metric_loc_pairs_list[eval_mode]
         )
@@ -599,12 +788,12 @@ def get_metrics(
                 }
             else:
                 batch['anc_local_feats'] = {
-                    'coarse': query_local_embeddings['coarse'][query_idx],
-                    'fine': query_local_embeddings['fine'][query_idx],
+                    'coarse': query_local_dict['local_embeddings']['coarse'][query_idx],
+                    'fine': query_local_dict['local_embeddings']['fine'][query_idx],
                 }
                 batch['pos_local_feats'] = {
-                    'coarse': database_local_embeddings['coarse'][nn_idx],
-                    'fine': database_local_embeddings['fine'][nn_idx],
+                    'coarse': database_local_dict['local_embeddings']['coarse'][nn_idx],
+                    'fine': database_local_dict['local_embeddings']['fine'][nn_idx],
                 }
             batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
 
@@ -697,22 +886,24 @@ def get_metrics(
 
             torch.cuda.empty_cache()
 
-    # TODO: ADD METRICS TO TRAINER.py WANDB
     # Calculate mean global metrics
     global_metrics['recall'] = {r: [intermediate_metrics['tp'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
-    # global_metrics['recall_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
     global_metrics['recall@1'] = {r: global_metrics['recall'][r][0] for r in radius}
-    # global_metrics['recall@1_rr'] = {r: global_metrics['recall_rr'][r][0] for r in radius}
     global_metrics['recall@1%'] = {r: intermediate_metrics['opr'][r] / num_evaluated for r in radius}
-    # global_metrics['recall@1%_rr'] = {r: intermediate_metrics['opr_rr'][r] / num_evaluated for r in radius}
     global_metrics['MRR'] = {r: np.mean(np.asarray(intermediate_metrics['RR'][r])) for r in radius}
-    # global_metrics['MRR_rr'] = {r: np.mean(np.asarray(intermediate_metrics['RR_rr'][r])) for r in radius}
-    # global_metrics['mean_t_rr'] = np.mean(np.asarray(intermediate_metrics['t_rr']))  # NOTE: this will break average_nested_dict(), so fix it
+    if reranking:
+        global_metrics['recall_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
+        global_metrics['recall@1_rr'] = {r: global_metrics['recall_rr'][r][0] for r in radius}
+        global_metrics['recall@1%_rr'] = {r: intermediate_metrics['opr_rr'][r] / num_evaluated for r in radius}
+        global_metrics['MRR_rr'] = {r: np.mean(np.asarray(intermediate_metrics['RR_rr'][r])) for r in radius}
+        global_metrics['mean_t_rr'] = {r: np.mean(np.asarray(intermediate_metrics['t_rr'])) for r in radius}  # duplicating for each radius so `average_nested_dict` doesn't break
 
     mean_local_metrics = {}
     if not only_global:
         # Calculate mean values of local descriptor metrics
         for eval_mode in EVAL_MODES:
+            if not reranking and eval_mode == 'Re-Ranked':
+                continue
             mean_local_metrics[eval_mode] = {}
             for metric in local_metrics[eval_mode]:
                 m_l = local_metrics[eval_mode][metric]
@@ -789,7 +980,13 @@ def get_metrics(
 
     return global_metrics, mean_local_metrics
 
-def print_eval_stats(global_metrics: Dict, local_metrics: Dict, icp_refine=False, print_false_positives=False):
+def print_eval_stats(
+    global_metrics: Dict,
+    local_metrics: Dict,
+    icp_refine=False,
+    print_false_positives=False,
+    reranking=False,
+):
     msg = 'Eval Results'
     for database_name in global_metrics.keys():
         msg += '\nDataset: {}'.format(database_name)
@@ -806,7 +1003,7 @@ def print_eval_stats(global_metrics: Dict, local_metrics: Dict, icp_refine=False
                 msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%'][radius])
                 msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
-            if 'Re-Ranking' in EVAL_MODES:
+            if reranking:
                 msg += '\n    Re-Ranking:'
                 recall_rr = global_metrics[database_name][split]['recall_rr']
                 for radius_rr in recall_rr.keys():
@@ -817,10 +1014,11 @@ def print_eval_stats(global_metrics: Dict, local_metrics: Dict, icp_refine=False
                             msg += "\n                  "
                     msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%_rr'][radius_rr])
                     msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR_rr'][radius_rr])
-                msg += '\n        Re-Ranking Time: {:0.3f} [ms]'.format(1000.0 *global_metrics[database_name][split]['mean_t_rr'])
-                if print_false_positives and 'rr_failures' in global_metrics[database_name][split]:
+                msg += '\n        Re-Ranking Time: {:0.3f} [ms]'.format(1000.0*global_metrics[database_name][split]['mean_t_rr'][radius_rr])
+                if (print_false_positives and 'rr_failures' in global_metrics[database_name][split]
+                    and len(global_metrics[database_name][split]['rr_failures']) > 0):
                     msg += '\n        Re-Ranking Failures (query, nn, nn_rerank, nn_dist, nn_rerank_dist):\n          '
-                    msg += '\n          '.join(global_metrics[database_name][split]['rr_failures'])
+                    msg += '\n          '.join([', '.join(x) for x in global_metrics[database_name][split]['rr_failures']])
 
             if len(local_metrics) == 0:
                 msg += '\n'
@@ -850,6 +1048,7 @@ def write_eval_stats(
     local_metrics: Dict,
     icp_refine=False,
     log_false_positives=False,
+    reranking=False,
 ):
     # Save results on the final model
     msg = prefix
@@ -869,7 +1068,7 @@ def write_eval_stats(
                     msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%'][radius])
                     msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
-                if 'Re-Ranking' in EVAL_MODES:
+                if reranking:
                     msg += '\n    Re-Ranking:'
                     recall_rr = global_metrics[database_name][split]['recall_rr']
                     for radius_rr in recall_rr.keys():
@@ -880,10 +1079,11 @@ def write_eval_stats(
                                 msg += "\n                  "
                         msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%_rr'][radius_rr])
                         msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR_rr'][radius_rr])
-                    msg += '\n        Re-Ranking Time: {:0.3f} [ms]'.format(1000.0 *global_metrics[database_name][split]['mean_t_rr'])
-                    if log_false_positives and 'rr_failures' in global_metrics[database_name][split]:
+                    msg += '\n        Re-Ranking Time: {:0.3f} [ms]'.format(1000.0*global_metrics[database_name][split]['mean_t_rr'][radius_rr])
+                    if (log_false_positives and 'rr_failures' in global_metrics[database_name][split]
+                        and len(global_metrics[database_name][split]['rr_failures']) > 0):
                         msg += '\n        Re-Ranking Failures (query, nn, nn_rerank, nn_dist, nn_rerank_dist):\n          '
-                        msg += '\n          '.join(global_metrics[database_name][split]['rr_failures'])
+                        msg += '\n          '.join([', '.join(x) for x in global_metrics[database_name][split]['rr_failures']])
 
                 if len(local_metrics) == 0:
                     msg += '\n'
@@ -908,15 +1108,15 @@ def write_eval_stats(
         f.write(msg)
 
 
-def save_embeddings_to_file(global_embeddings, local_embeddings, model_name: str,
+def save_embeddings_to_file(global_embeddings, local_dict, model_name: str,
                             dataset_name: str, location_name: str, set_name: str = "database"):
     save_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     global_embeddings_file = os.path.join(save_dir, f"{set_name}_global_embeddings.pickle")
     save_pickle(global_embeddings, global_embeddings_file)
-    local_embeddings_file = os.path.join(save_dir, f"{set_name}_local_embeddings.pickle")
-    save_pickle(local_embeddings, local_embeddings_file)
+    local_dict_file = os.path.join(save_dir, f"{set_name}_local_dict.pickle")
+    save_pickle(local_dict, local_dict_file)
 
 
 def load_embeddings_from_file(model_name: str, dataset_name: str, location_name: str, set_name: str = "database"):
@@ -926,12 +1126,12 @@ def load_embeddings_from_file(model_name: str, dataset_name: str, location_name:
     else:
         global_embeddings_file = os.path.join(load_dir, f"{set_name}_global_embeddings.pickle")
         global_embeddings = load_pickle(global_embeddings_file)
-        local_embeddings_file = os.path.join(load_dir, f"{set_name}_local_embeddings.pickle")
-        local_embeddings = load_pickle(local_embeddings_file)
-        assert (len(global_embeddings) * len(local_embeddings) > 0), (
+        local_dict_file = os.path.join(load_dir, f"{set_name}_local_dict.pickle")
+        local_dict = load_pickle(local_dict_file)
+        assert (len(global_embeddings) * len(local_dict) > 0), (
             "Saved descriptors are corrupted, rerun with `save_descriptors` enabled"
         )
-    return global_embeddings, local_embeddings
+    return global_embeddings, local_dict
 
 
 if __name__ == "__main__":
@@ -946,6 +1146,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_neighbors', type=int, default=20, help='Number of nearest neighbours to consider in evaluation and re-ranking')
     parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--log', action='store_true', help='Log false positives and top-5 retrievals')
     parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
@@ -956,6 +1157,7 @@ if __name__ == "__main__":
                               'weights paths match, not if the configs used match.'))
     parser.add_argument('--print_false_positives', action='store_true', help='Print list of query and false positive retrieval indices')
     parser.add_argument('--unfair_rte_rre', action='store_true', help='Use unfair RTE and RRE evaluation from EgoNN (only computed on metric localisation successes)')
+    parser.add_argument('--disable_reranking', action='store_true', help='Disable re-ranking evaluation to save time')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
@@ -980,13 +1182,16 @@ if __name__ == "__main__":
     print(f'Load embeddings: {args.load_embeddings}')
     print(f'Print false positives: {args.print_false_positives}')
     print(f'Unfair RTE RRE: {args.unfair_rte_rre}')
+    print(f'Disable re-ranking: {args.disable_reranking}')
     print('Debug mode: {}'.format(args.debug))
     print('Log search results: {}'.format(args.log))
     print('')
 
     set_seed()  # Seed RNG
 
-    params = TrainingParams(args.config, args.model_config, debug=args.debug)
+    params = TrainingParams(
+        args.config, args.model_config, debug=args.debug, verbose=args.verbose
+    )
     params.print()
 
     if torch.cuda.is_available():
@@ -1010,7 +1215,7 @@ if __name__ == "__main__":
 
     model.to(device)
 
-    logging_level = 'DEBUG' if params.debug else 'INFO'
+    logging_level = 'DEBUG' if params.verbose else 'INFO'
     create_logger(log_file=None, logging_level=logging_level)
 
     # Check if metric localisation is supported by model
@@ -1018,6 +1223,11 @@ if __name__ == "__main__":
         msg = 'Metric localisation not supported by model... only running PR evaluation (pass `--only_global` to prevent this warning)'
         logging.warning(msg)
         args.only_global = True
+
+    # Check if re-ranking
+    reranking = False
+    if not args.disable_reranking and (params.model_params.rerank_mode is not None):
+        reranking = True
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
@@ -1039,16 +1249,22 @@ if __name__ == "__main__":
         use_ransac=args.use_ransac,
         save_embeddings=args.save_embeddings,
         load_embeddings=args.load_embeddings,
+        reranking=reranking,
     )
     print_eval_stats(
-        global_metrics, local_metrics, icp_refine=args.icp_refine, print_false_positives=args.print_false_positives,
+        global_metrics,
+        local_metrics,
+        icp_refine=args.icp_refine,
+        print_false_positives=args.print_false_positives,
+        reranking=reranking,
     )
 
     write_eval_stats(
-        f"metloc_sgv_{params.dataset_name}_split_results.txt",
+        f'metloc_rerank_{params.dataset_name}_split_results.txt',
         prefix,
         global_metrics,
         local_metrics,
         icp_refine=args.icp_refine,
         log_false_positives=args.print_false_positives,
+        reranking=reranking,
     )

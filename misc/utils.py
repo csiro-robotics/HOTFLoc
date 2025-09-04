@@ -381,6 +381,8 @@ class TrainingParams:
             assert self.batch_split_size in [None, 0], 'Re-ranking loss not compatible with multistage backprop'
             # if self.batch_split_size is not None:  # REMOVED due to disabling re-ranking with multistage backprop
             #     assert self.rerank_batch_size <= self.batch_split_size, 'Can only compute re-ranking on single batch split during multi-stage backprop'
+        self.rerank_enable_eval = params.getboolean('rerank_enable_eval', False)  # Optionally disable evaluating re-ranking during training (until final eval)
+        self.rerank_num_neighbours = params.getint('rerank_num_neighbours', 20)  # Num neighbours to use during re-ranking (max 20 in training, unless a separate param is added to increase eval num_neighbours)
 
         self.aug_mode = params.getint('aug_mode', 1)    # Augmentation mode (1 is default)
         self.set_aug_mode = params.getint('set_aug_mode', 1)    # Augmentation mode applied to all batch samples (1 is default)

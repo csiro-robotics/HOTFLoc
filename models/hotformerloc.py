@@ -84,6 +84,13 @@ class HOTFormerLoc(torch.nn.Module):
             return self.reranker(*args, **kwargs)
         else:
             return None
+
+    def rerank_inference(self, *args, **kwargs):
+        """Re-ranking forward pass for inference batches."""
+        if self.reranker is not None:
+            return self.reranker.rerank_inference(*args, **kwargs)
+        else:
+            return None
     
     @staticmethod
     def get_qkv_std(feats_and_attn_maps: dict, octree: OctreeT) -> Tuple[dict, dict, list]:

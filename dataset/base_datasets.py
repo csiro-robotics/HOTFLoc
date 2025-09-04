@@ -356,6 +356,43 @@ class EvalDataset(Dataset):
         return data, shift_and_scale
 
 
+class EvalRerankingDataset(EvalDataset):
+    """
+    Dataset wrapper for reranking evaluation. Loads query and top-N candidates
+    as a single batch from a pre-computed list of indices.
+    """
+
+    def __init__(
+        self,
+        dataset_path: str,
+        dataset_type: str,
+        query_set: Dict,
+        database_set: Dict,
+        query_nn_list: List,
+        **kwargs,
+    ):
+        super().__init__(dataset_path, dataset_type, query_set, **kwargs)
+        self.database_dataset = EvalDataset(dataset_path, dataset_type, database_set, **kwargs)
+        self.query_nn_list = query_nn_list
+
+    def __len__(self):
+        return len(self.query_nn_list)
+
+    def __getitem__(self, ndx):
+        query_ndx, nn_indices = self.query_nn_list[ndx]
+        pc_list = []
+        shift_and_scale_list = []
+        query_pc, query_shift_and_scale = super().__getitem__(query_ndx)
+        pc_list.append(query_pc)
+        shift_and_scale_list.append(query_shift_and_scale)
+        for nn_idx in nn_indices:
+            nn_pc, nn_shift_and_scale = self.database_dataset[nn_idx]
+            pc_list.append(nn_pc)
+            shift_and_scale_list.append(nn_shift_and_scale)
+
+        return pc_list, shift_and_scale_list
+
+
 class Eval6DOFDataset(EvalDataset):
     """
     Dataset wrapper for 6DOF estimation. Loads pairs of positive point clouds

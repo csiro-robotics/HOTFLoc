@@ -805,7 +805,7 @@ def print_eval_stats(global_metrics: Dict, local_metrics: Dict, icp_refine=False
                 msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%'][radius])
                 msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
-            if 'Re-Ranking' in EVAL_MODES:
+            if 'Re-Ranked' in EVAL_MODES:
                 msg += '\n    Re-Ranking:'
                 recall_rr = global_metrics[database_name][split]['recall_rr']
                 for radius_rr in recall_rr.keys():
@@ -868,7 +868,7 @@ def write_eval_stats(
                     msg += "\n        Recall@1%: {:0.3f}".format(global_metrics[database_name][split]['recall@1%'][radius])
                     msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
-                if 'Re-Ranking' in EVAL_MODES:
+                if 'Re-Ranked' in EVAL_MODES:
                     msg += '\n    Re-Ranking:'
                     recall_rr = global_metrics[database_name][split]['recall_rr']
                     for radius_rr in recall_rr.keys():

@@ -13,8 +13,22 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.neighbors import KDTree
 from ocnn.octree import Octree, Points
 
-from dataset.base_datasets import EvaluationTuple, TrainingDataset, Training6DOFDataset, EvalDataset, Eval6DOFDataset, clip_points
-from dataset.augmentation import TrainTransform, TrainSetTransform, Train6DOFTransform, ValTransform, Val6DOFTransform
+from dataset.base_datasets import (
+    EvaluationTuple,
+    TrainingDataset,
+    Training6DOFDataset,
+    EvalDataset,
+    EvalRerankingDataset,
+    Eval6DOFDataset,
+    clip_points,
+)
+from dataset.augmentation import (
+    TrainTransform,
+    TrainSetTransform,
+    Train6DOFTransform,
+    ValTransform,
+    Val6DOFTransform,
+)
 from dataset.samplers import BatchSampler, BatchSampler6DOF
 from misc.utils import TrainingParams
 
@@ -351,6 +365,25 @@ def make_eval_dataset(params: TrainingParams, data_set: Dict) -> Dataset:
     return dataset
 
 
+def make_eval_dataset_reranking(
+    params: TrainingParams, query_set: Dict, database_set: Dict, query_nn_list: List
+) -> Dataset:
+    """
+    Create dataset class for evaluating re-ranking on pairs of query and initial
+    retrievals.
+    """
+    val_transform = ValTransform(
+        normalize_points=params.normalize_points, scale_factor=params.scale_factor,
+        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean,
+    )
+    dataset = EvalRerankingDataset(
+        params.dataset_folder, params.dataset_name, query_set, database_set,
+        query_nn_list, transform=val_transform,
+        load_octree=params.load_octree, coordinates=params.model_params.coordinates,
+    )
+    return dataset
+
+
 def make_eval_dataset_6DOF(
     params: TrainingParams, query_set: Dict, database_set: Dict, pairs_list: List
 ) -> Dataset:
@@ -385,9 +418,32 @@ def make_eval_collate_fn(quantizer, params: TrainingParams):
     def collate_fn(data_list) -> Dict:
         tic = time.perf_counter()
 
-        # Generate batches in correct format for MinkLoc/OctFormer
+        # Generate batches in correct format for MinkLoc/HOTFormer
         clouds = [e[0] for e in data_list]
         shift_and_scale = [e[1] for e in data_list]
+        batch = create_batch(clouds, quantizer, params)
+        shift_and_scale_batch = None
+        if params.normalize_points:
+            shift_and_scale_batch = torch.stack(shift_and_scale, dim=0)
+
+        logging.debug(f'Collating eval batch done in {time.perf_counter()-tic:.2f}s')
+
+        return {'batch': batch, 'shift_and_scale': shift_and_scale_batch}
+
+    return collate_fn
+
+def make_eval_collate_fn_reranking(quantizer, params: TrainingParams):
+    """
+    Custom collate function for re-ranking evaluation dataloader. Only returns batches.
+    """
+    def collate_fn(data_list) -> Dict:
+        tic = time.perf_counter()
+
+        # Unpack list of clouds from each batch item
+        clouds, shift_and_scale = [], []
+        for e in data_list:
+            clouds.extend(e[0])
+            shift_and_scale.extend(e[1])
         batch = create_batch(clouds, quantizer, params)
         shift_and_scale_batch = None
         if params.normalize_points:
@@ -410,6 +466,24 @@ def make_eval_dataloader(params: TrainingParams, data_set: Dict) -> DataLoader:
     eval_dataloader = DataLoader(eval_dataset, batch_size=params.val_batch_size,
                                  shuffle=False, pin_memory=True,
                                  num_workers=params.num_workers,
+                                 collate_fn=eval_collate_fn)
+    return eval_dataloader
+
+
+def make_eval_dataloader_reranking(
+    params: TrainingParams, query_set: Dict, database_set: Dict, query_nn_list: List
+) -> DataLoader:
+    """
+    Creates dataloader suitable for creating reranking batches.
+    """
+    quantizer = params.model_params.quantizer
+    eval_dataset = make_eval_dataset_reranking(
+        params, query_set, database_set, query_nn_list
+    )
+    eval_collate_fn = make_eval_collate_fn_reranking(quantizer, params)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=1,
+                                 shuffle=False, pin_memory=True,  
+                                 num_workers=params.num_workers,  # may increase workers to keep pace with bs 1
                                  collate_fn=eval_collate_fn)
     return eval_dataloader
 

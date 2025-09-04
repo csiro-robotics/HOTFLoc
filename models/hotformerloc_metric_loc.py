@@ -586,6 +586,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
     def rerank(self, *args, **kwargs):
         return self.hotformerloc_global.rerank(*args, **kwargs)
 
+    def rerank_inference(self, *args, **kwargs):
+        return self.hotformerloc_global.rerank_inference(*args, **kwargs)
+
     @torch.jit.ignore
     def no_weight_decay(self) -> Set[str]:
         """Set of parameters that should not use weight decay."""

@@ -33,7 +33,7 @@ from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.octree import OctreeT, get_octant_centroids_from_points
 from dataset.dataset_utils import make_dataloaders
-from eval.evaluate_metric_loc_splits_sgv import evaluate, print_eval_stats, write_eval_stats, EVAL_MODES
+from eval.evaluate_metric_loc_splits_rerank import evaluate, print_eval_stats, write_eval_stats
 from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diagonal, \
     colourise_points_by_height, colourise_points_by_similarity, \
         create_heatmap
@@ -400,7 +400,7 @@ class NetworkTrainer:
             stage_grad_mags[stage_i] = np.mean(grad_mags_list)
         return stage_grad_mags
 
-    def log_eval_stats(self, global_metrics: dict, local_metrics: dict):
+    def log_eval_stats(self, global_metrics: dict, local_metrics: dict, reranking=False):
         eval_stats = {}
         for database_name in global_metrics.keys():
             for split in global_metrics[database_name].keys():
@@ -414,7 +414,7 @@ class NetworkTrainer:
                     'recall@1%': {},
                     'MRR': {},
                 }
-                if 'Re-Ranking' in EVAL_MODES:
+                if reranking:
                     eval_stats[split_log_key].update({
                         'recall@1_rerank': {},
                         'recall@5_rerank': {},
@@ -429,7 +429,7 @@ class NetworkTrainer:
                     eval_stats[split_log_key]['recall@20'][radius] = global_metrics[database_name][split]['recall'][radius][20-1]
                     eval_stats[split_log_key]['recall@1%'][radius] = global_metrics[database_name][split]['recall@1%'][radius]
                     eval_stats[split_log_key]['MRR'][radius] = global_metrics[database_name][split]['MRR'][radius]
-                    if 'Re-Ranking' in EVAL_MODES:
+                if reranking:
                         eval_stats[split_log_key]['recall@1_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][0]
                         eval_stats[split_log_key]['recall@5_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][5-1]
                         eval_stats[split_log_key]['recall@20_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][20-1]
@@ -438,9 +438,7 @@ class NetworkTrainer:
 
                 if len(local_metrics) == 0:
                     continue
-                for eval_mode in EVAL_MODES:
-                    if eval_mode not in local_metrics[database_name][split]:
-                        continue
+                for eval_mode in local_metrics[database_name][split].keys():
                     eval_stats[split_log_key][eval_mode] = {}
                     for metric in local_metrics[database_name][split][eval_mode].keys():
                         if 'failure' in metric:  # ignore failure indices, no need to log to wandb
@@ -1114,7 +1112,9 @@ class NetworkTrainer:
         else:
             # Multi-staged training approach with large batch split into multiple smaller chunks with batch_split_size elems
             global_train_step_fn = self.multistaged_global_training_step
-
+        
+        reranking = (self.params.rerank_enable_eval and self.params.model_params.rerank_mode is not None)
+        
         ########################################################################
         # Initialize Weights&Biases logging service
         ########################################################################
@@ -1269,9 +1269,10 @@ class NetworkTrainer:
                     show_progress=self.params.verbose,
                     only_global=(not self.params.local.enable_local),
                     use_ransac=False,
+                    reranking=reranking,
                 )
-                print_eval_stats(global_eval_stats, local_eval_stats)
-                metrics['test'] = self.log_eval_stats(global_eval_stats, local_eval_stats)
+                print_eval_stats(global_eval_stats, local_eval_stats, reranking=reranking)
+                metrics['test'] = self.log_eval_stats(global_eval_stats, local_eval_stats, reranking=reranking)
                 # store best AR@1 on all test sets
                 radius_best = min(self.params.eval_radius)
                 avg_AR_1 = metrics['test']['average']['recall@1'][radius_best]
@@ -1300,6 +1301,7 @@ class NetworkTrainer:
             self.save_checkpoint(final_model_path)
 
         # Evaluate the final
+        reranking = self.params.model_params.rerank_mode is not None  # Eval re-ranking if available
         final_global_stats, final_local_stats = evaluate(
             self.model,
             self.device,
@@ -1311,8 +1313,9 @@ class NetworkTrainer:
             show_progress=self.params.verbose,
             only_global=(not self.params.local.enable_local),
             use_ransac=True,  # Enable RANSAC for final evaluation (if doing metric loc evaluation)
+            reranking=reranking,
         )
-        print_eval_stats(final_global_stats, final_local_stats)
+        print_eval_stats(final_global_stats, final_local_stats, reranking=reranking)
 
         # Append key experimental metrics to experiment summary file
         if not self.params.debug:
@@ -1321,7 +1324,13 @@ class NetworkTrainer:
             model_name = os.path.splitext(os.path.split(final_model_path)[1])[0]
             prefix = "{}, {}, {}".format(model_params_name, config_name, model_name)
 
-            write_eval_stats(f"metloc_sgv_{self.params.dataset_name}_split_results.txt", prefix, final_global_stats, final_local_stats)        
+            write_eval_stats(
+                f'metloc_rerank_{self.params.dataset_name}_split_results.txt',
+                prefix,
+                final_global_stats,
+                final_local_stats,
+                reranking=reranking
+            )
 
             if self.params.wandb and WANDB_OFFLINE:
                 self.trigger_sync()
