@@ -410,8 +410,8 @@ class Eval6DOFDataset(EvalDataset):
         positive_shift_and_scale = None
 
         query_ndx, positive_ndx = self.pairs_list[ndx]
-        query_pc = super().__getitem__(query_ndx)
-        positive_pc = self.pos_dataset[positive_ndx]
+        query_pc, _ = super().__getitem__(query_ndx)
+        positive_pc, _ = self.pos_dataset[positive_ndx]
 
         # get relative pose from global poses
         transform = torch.tensor(
