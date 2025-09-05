@@ -1001,3 +1001,128 @@ def visualise_LGR_initial_registration(
             zoom=zoom,
             angle=angle,
         )  # with rotation
+
+def visualise_relay_tokens(
+    anc_points: Union[Tensor, ndarray],
+    pos_points: Union[Tensor, ndarray],
+    anc_rt_centroids_dict: dict,
+    pos_rt_centroids_dict: dict,
+    transform: ndarray,
+    translate=[0, 0, 40],
+    zoom=0.55,
+    colourmode: str = 'patch',
+    save_dir: Optional[str] = None,
+    disable_animation=False,
+    non_interactive=False,
+):
+    """
+    Helper function for visualising relay tokens
+
+    Args:
+        TODO:
+        anc_points_coarse: Source keypoints (nodes)
+        pos_points_coarse: Target keypoints (nodes)
+        anc_points_fine: Source points
+        pos_points_fine: Target Points
+        node_corr_indices: Node correspondences
+        gt_node_corr_indices: Ground truth node correspondences
+        transform: SE(3) transform from source to target
+        anc_point_to_node: Index of points belonging to each source keypoint, used for colourising by patch instead of height
+        pos_point_to_node: Index of points belonging to each target keypoint, used for colourising by patch instead of height
+        anc_feats_coarse: Source feats (nodes)
+        pos_feats_coarse: Target feats (nodes)
+        translate: Translation applied to target for correspondence visualisation
+        plot_coarse: Plot coarse points (patch centroids)
+        coarse_colourmode: Mode for colourising patches ('height', 'patch', 'tsne', 'umap')
+        save_dir: Directory to save plots
+        disable_animation: Disables animation
+    """
+    colourmode = colourmode.lower()
+    assert colourmode in ('height', 'patch')
+    ANC_PC_COLOUR = [1, 0.7, 0.05]
+    POS_PC_COLOUR = [0, 0.629, 0.9]
+    # PC_SOURCE_COLOURMAP = 'viridis'
+    # PC_TARGET_COLOURMAP = 'gray'
+    
+    ANC_RT_COLOUR = [1.0, 0.0, 0.0]
+    POS_RT_COLOUR = [0.0, 1.0, 0.0]
+
+    # KP_RADIUS = 1.0
+    RT_BASE_RADIUS = 0.8
+
+    # VOXEL_SIZE = 0.6
+
+    anc_points_o3d = make_open3d_point_cloud(anc_points)
+    pos_points_o3d = make_open3d_point_cloud(pos_points)
+
+    # # Downsample point clouds for ease of visualisation
+    # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
+    # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
+
+    # Plot spheres for relay tokens, and change colours appropriately
+    anc_rt_spheres_o3d = []
+    pos_rt_spheres_o3d = []
+    for ii, depth_j in enumerate(anc_rt_centroids_dict):
+        rt_radius_depth_j = RT_BASE_RADIUS * (1 + ii)
+        anc_rt_spheres_o3d.extend(
+            create_spheres(anc_rt_centroids_dict[depth_j], color=ANC_RT_COLOUR, radius=rt_radius_depth_j)
+        )
+        pos_rt_spheres_o3d.extend(
+            create_spheres(pos_rt_centroids_dict[depth_j], color=POS_RT_COLOUR, radius=rt_radius_depth_j)
+        )
+
+    # Align point clouds with gt transform
+    anc_points_o3d.transform(transform)
+    for anc_rt_sphere in anc_rt_spheres_o3d:
+        anc_rt_sphere.transform(transform)
+    
+    # Manually add offset to positive for ease of visualisation
+    pos_points_o3d.translate(translate)
+    for pos_rt_sphere in pos_rt_spheres_o3d:
+        pos_rt_sphere.translate(translate)
+
+    # Set colours
+    anc_points_o3d.paint_uniform_color(ANC_PC_COLOUR)
+    pos_points_o3d.paint_uniform_color(POS_PC_COLOUR)
+
+    # # Colourise point clouds
+    # if coarse_colourmode in ('tsne', 'umap'):
+    #     combined_feats_coarse = np.concatenate([anc_feats_coarse, pos_feats_coarse], axis=0)
+    #     combined_node_colours = colourise_points_by_similarity(combined_feats_coarse, mode=coarse_colourmode)
+    #     anc_node_colours, pos_node_colours = np.split(combined_node_colours, [anc_feats_coarse.shape[0]], axis=0)
+    # elif coarse_colourmode == 'patch':
+    #     anc_node_colours = random_non_red_colors(anc_points_coarse.shape[0])
+    #     pos_node_colours = random_non_red_colors(pos_points_coarse.shape[0])
+    # if coarse_colourmode != 'height':
+    #     anc_points_colours = anc_node_colours[anc_point_to_node]
+    #     pos_points_colours = pos_node_colours[pos_point_to_node]
+    # else:
+    #     anc_points_colours = colourise_points_by_height(np.asarray(anc_points_o3d.points), PC_SOURCE_COLOURMAP)
+    #     pos_points_colours = colourise_points_by_height(np.asarray(pos_points_o3d.points), PC_TARGET_COLOURMAP)
+    # anc_points_o3d.colors = o3d.utility.Vector3dVector(anc_points_colours)
+    # pos_points_o3d.colors = o3d.utility.Vector3dVector(pos_points_colours)    
+
+    # Draw all with Open3D
+    vis_list = [anc_points_o3d, pos_points_o3d,]
+    vis_list.extend([
+        *anc_rt_spheres_o3d, *pos_rt_spheres_o3d,
+        ])
+    # vis_list = [anc_points_coarse_o3d, pos_points_coarse_o3d, gt_inliers_o3d]
+
+    if disable_animation:
+        custom_draw_geometry_load_option(  # static
+            vis_list,
+            save_dir=save_dir,
+            filename=f'relay_tokens_{colourmode}',
+            non_interactive=non_interactive,
+            zoom=zoom,
+        )
+    else:
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'relay_tokens_{colourmode}_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
+        )  # with rotation
+
