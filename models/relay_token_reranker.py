@@ -328,7 +328,10 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         B, N_RT, C = relay_tokens.shape
         # Get number of non-padding RTs per batch (accounts for padded final batch elem)
         rt_batch_idx_list = octree.ct_batch_idx[depth].split(octree.batch_num_windows[depth].tolist())
-        num_rt_per_batch = torch.tensor([torch.count_nonzero(x == i) for i, x in enumerate(rt_batch_idx_list)])
+        num_rt_per_batch = torch.tensor(
+            [torch.count_nonzero(x == i) for i, x in enumerate(rt_batch_idx_list)],
+            device=octree.device,
+        )
         anc_num_rt = num_rt_per_batch[anc_indices]
         pos_num_rt = num_rt_per_batch[pos_indices]
         neg_num_rt = num_rt_per_batch[neg_indices]
@@ -352,7 +355,10 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         _, NN, N_RT, C = relay_tokens.shape
         # Get number of non-padding RTs per batch (accounts for padded final batch elem)
         rt_batch_idx_list = octree.ct_batch_idx[depth].split(octree.batch_num_windows[depth].tolist())
-        num_rt_per_batch = torch.tensor([torch.count_nonzero(x == i) for i, x in enumerate(rt_batch_idx_list)])
+        num_rt_per_batch = torch.tensor(
+            [torch.count_nonzero(x == i) for i, x in enumerate(rt_batch_idx_list)],
+            device=octree.device,
+        )
         anc_num_rt = num_rt_per_batch[anc_idx]
         nn_num_rt = num_rt_per_batch[anc_idx+1:]
 

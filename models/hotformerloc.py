@@ -72,11 +72,16 @@ class HOTFormerLoc(torch.nn.Module):
 
         return_dict = {'global': x, 'local': local_feat_dict, 'rt': relay_token_dict,
                        'octree': octree, 'octf_qkv_std': octf_qkv_std,
-                       'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std,
-                       'rt_final_cls_attn_vals': feats_and_attn_maps['hotformer'][-1]['rt_final_cls_attn_vals']}
+                       'hosa_qkv_std': hosa_qkv_std, 'rt_qkv_std': rt_qkv_std,}
+        if self.backbone.backbone.rt_class_token:
+            return_dict.update(
+                {'rt_final_cls_attn_vals': feats_and_attn_maps['hotformer'][-1]['rt_final_cls_attn_vals']}
+            )
         if self.return_feats_and_attn_maps:
-            return_dict.update({'feats_and_attn_maps': feats_and_attn_maps['hotformer'],
-                                'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']})
+            return_dict.update(
+                {'feats_and_attn_maps': feats_and_attn_maps['hotformer'],
+                 'octf_feats_and_attn_maps': feats_and_attn_maps['octformer']}
+            )
         return return_dict
 
     def rerank(self, *args, **kwargs):
