@@ -21,6 +21,7 @@ RUN_ITERS = 3
 
 def setup_model():
     params = TrainingParams(args.config, args.model_config, debug=args.debug)
+    params.model_params.return_feats_and_attn_maps = False  # saves mem + runtime
     # params.print()
 
     if torch.cuda.is_available():

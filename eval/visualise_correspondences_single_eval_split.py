@@ -240,8 +240,7 @@ def setup_model():
     logging_level = 'DEBUG' if params.debug else 'INFO'
     create_logger(log_file=None, logging_level=logging_level)
 
-    if params.local.eval_num_workers > 0:
-        params.local.eval_num_workers = 2
+    params.local.eval_num_workers = args.num_workers
     (
         dataloader,
         query_local_embeddings,
@@ -285,7 +284,8 @@ def main():
         eval_metrics = release_cuda(metric_loc_evaluator(output_dict, batch_temp))
 
         # Skip successes
-        if args.failures and eval_metrics['RR'] > 0:
+        success = eval_metrics['RR'] > 0
+        if (success and args.failures) or (not success and args.successes):
             continue
 
         anc_points_coarse = release_cuda(output_dict['anc_points_coarse'])
@@ -340,11 +340,17 @@ def main():
         log_str += f' -- num corr patches (after OT): {len(num_corr_points)}'
         log_str += f' -- mean corr pts per patch: {num_corr_points.mean():.1f} (±{num_corr_points.std():.1f})'
         log_str += f' -- mean corr score: {corr_scores.mean():.3f} (±{corr_scores.std():.3f})'
+        if args.verbose:
+            log_str += f'\n  query file: {dataloader.dataset.data_set_dict[query_idx]['query']}'
+            log_str += f' -- nn file: {dataloader.dataset.pos_dataset.data_set_dict[nn_idx]['query']}'
+            log_str += f'\n  GT TF:\n{T_gt.numpy()}'
+            log_str += f'\n  Est TF:\n{T_estimated.numpy()}'
         print(log_str, flush=True)
 
         save_dir_ii = None
         if args.save_dir is not None:
             save_dir_ii = os.path.join(args.save_dir, f'{query_idx}')
+            save_dir_ii += '-success' if success else '-fail'
             os.makedirs(save_dir_ii, exist_ok=True)
             # Save stats to dir for future reference:
             with open(os.path.join(save_dir_ii, 'stats.txt'), 'w') as f:
@@ -421,19 +427,9 @@ def main():
                 zoom=args.zoom,
                 angle=-380,  # ~deg*10
                 save_dir=save_dir_ii,
+                disable_animation=True,
                 non_interactive=args.non_interactive,
             )
-
-        # Estimated TF
-        visualise_registration(
-            anc_points_fine=anc_points_fine,
-            pos_points_fine=pos_points_fine,
-            transform=T_estimated.numpy(),
-            zoom=args.zoom,
-            save_dir=save_dir_ii,
-            filename='registration',
-            non_interactive=args.non_interactive,
-        )
 
         # Ground truth TF (with ICP, if enabled in params)
         visualise_registration(
@@ -443,6 +439,19 @@ def main():
             zoom=args.zoom,
             save_dir=save_dir_ii,
             filename='registration_GT',
+            disable_animation=True,
+            non_interactive=args.non_interactive,
+        )
+
+        # Estimated TF
+        visualise_registration(
+            anc_points_fine=anc_points_fine,
+            pos_points_fine=pos_points_fine,
+            transform=T_estimated.numpy(),
+            zoom=args.zoom,
+            save_dir=save_dir_ii,
+            filename='registration',
+            disable_animation=args.disable_animation,
             non_interactive=args.non_interactive,
         )
 
@@ -459,6 +468,7 @@ if __name__ == "__main__":
     parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
     parser.add_argument('--save_dir', type=str, required=False, help='Save visualisations/pcds to directory (creates subdirectories for each model)')
     parser.add_argument('--failures', action='store_true', help='Only visualise metric loc failures')
+    parser.add_argument('--successes', action='store_true', help='Only visualise metric loc successes')
     parser.add_argument('--registration_only', action='store_true', help='Only visualise registration')
     parser.add_argument('--idx_list', type=int, nargs='+', default=[], help='Only visualise given list of indices (ordered by val dataloader)')
     parser.add_argument('--zoom', type=float, default=0.55, help='Zoom level for open3d viewer')
@@ -468,7 +478,9 @@ if __name__ == "__main__":
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
                               'weights paths match, not if the configs used match.'))
+    parser.add_argument('--num_workers', type=int, default=2, help='Override num workers for eval dataloader')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
@@ -492,6 +504,8 @@ if __name__ == "__main__":
             raise ValueError('Must provide valid path to weights if `--save_dir` is set')
     print('Save dir: {}'.format(args.save_dir))
     print('Failures only: {}'.format(args.failures))
+    print('Successes only: {}'.format(args.successes))
+    assert not (args.failures and args.successes), "Pick failures OR successes"
     print('Registration only: {}'.format(args.registration_only))
     print('Idx list: {}'.format(args.idx_list))
     if args.failures and len(args.idx_list) > 0:
@@ -506,7 +520,10 @@ if __name__ == "__main__":
         args.save_embeddings = False
     print(f'Save embeddings: {args.save_embeddings}')
     print(f'Load embeddings: {args.load_embeddings}')
+    print(f'Num workers: {args.num_workers}')
+    assert args.num_workers >= 0, "Invalid num_workers"
     print('Debug mode: {}'.format(args.debug))
+    print('Verbose mode: {}'.format(args.verbose))
     print('')
 
     set_seed()  # Seed RNG
