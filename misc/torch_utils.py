@@ -43,17 +43,13 @@ def to_device(x, device: Union[torch.device, str], non_blocking=False,
         x = tuple(to_device(item, device, non_blocking, construct_octree_neigh) for item in x)
     elif isinstance(x, dict):
         x = {key: to_device(value, device, non_blocking, construct_octree_neigh) for key, value in x.items()}
-    elif isinstance(x, torch.Tensor):
+    elif isinstance(x, (torch.Tensor, Points)):
         x = x.to(device=device, non_blocking=non_blocking)
     elif isinstance(x, Octree):
         x = x.to(device=device, non_blocking=non_blocking)
         if construct_octree_neigh:
             with torch.no_grad():
                 x.construct_all_neigh()  # Ensure octree neighbours are pre-computed
-    elif isinstance(x, Points):
-        batch_size = x.batch_size  # .to() method of Points is broken, doesn't transfer batch_size property
-        x = x.to(device=device, non_blocking=non_blocking)
-        x.batch_size = batch_size
     return x
 
 

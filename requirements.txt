@@ -4,7 +4,7 @@ pytorch-metric-learning==1.1.2
 numpy
 pandas
 scipy
-ocnn==2.2.6
+ocnn==2.2.7
 tqdm
 laspy[lazrs]
 scikit-learn
