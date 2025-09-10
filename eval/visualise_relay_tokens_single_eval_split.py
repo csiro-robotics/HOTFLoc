@@ -267,17 +267,13 @@ def main():
     # Get evaluator
     metric_loc_pairs_list = dataloader.dataset.pairs_list
 
+    rt_centroid_distance_avg_dict = {}
+
     for ii, local_batch in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
         query_idx, nn_idx = metric_loc_pairs_list[ii]
         if len(args.idx_list) > 0 and query_idx not in args.idx_list:
             continue
 
-        # TODO: Standard forward pass (global_only=True) to get relay tokens
-        #       and feats.
-        #       - Get orig points, TF, & relay tokens for each depth
-        #       - Plot registered anc + pos with x offset between
-        #       - Plot relay tokens as keypoints (colourised)
-        #       - Compute GT relay token correspondences (+ average dist) and plot.
         local_batch = to_device(local_batch, device, non_blocking=True, construct_octree_neigh=True)
         anc_batch = local_batch['anc_batch']
         anc_points = anc_batch['points'].points
@@ -323,29 +319,42 @@ def main():
         # Only measure horizontal distance
         pos_dist = T_gt[:2,3].norm().item()
 
-        # # Compute GT relay token correspondences (NN in euclid space)
-        # rt_gt_correspondence_dict = {}
-        # for depth_j in anc_rt_dict.keys():
-        #     anc_rt_centroids_registered_depth_j = apply_transform(anc_rt_centroids_dict[depth_j], T_gt)
-        #     rt_centroid_dist = torch.cdist(anc_rt_centroids_registered_depth_j, pos_rt_centroids_dict[depth_j])
-        #     rt_gt_correspondence_dist, rt_gt_correspondence_idx = torch.min(rt_centroid_dist, dim=1)
-        #     pass
+        # Compute avg euclid distance between relay tokens (essentially Chamfer distance)
+        rt_centroid_distance_dict = {}
+        rt_centroid_correspondence_dict = {}
+        for depth_j in anc_rt_dict.keys():
+            anc_rt_centroids_registered_depth_j = apply_transform(anc_rt_centroids_dict[depth_j], T_gt)
+            rt_centroid_distances = torch.cdist(anc_rt_centroids_registered_depth_j, pos_rt_centroids_dict[depth_j])
+            rt_centroid_distance_anc_pos, rt_centroid_correspondences = torch.min(rt_centroid_distances, dim=1)
+            rt_centroid_distance_anc_pos = rt_centroid_distance_anc_pos.mean().item()
+            rt_centroid_distance_pos_anc = torch.min(rt_centroid_distances, dim=0).values
+            rt_centroid_distance_pos_anc = rt_centroid_distance_pos_anc.mean().item()
+            rt_centroid_distance_dict[depth_j] = (rt_centroid_distance_anc_pos + rt_centroid_distance_pos_anc) / 2
+            temp_correspondences = release_cuda(rt_centroid_correspondences, to_numpy=True)
+            rt_centroid_correspondence_dict[depth_j] = np.stack(
+                [np.arange(len(temp_correspondences)), temp_correspondences],
+                axis=1,
+            )
+            # Keep track of average
+            if depth_j not in rt_centroid_distance_avg_dict:
+                rt_centroid_distance_avg_dict[depth_j] = []
+            rt_centroid_distance_avg_dict[depth_j].append(rt_centroid_distance_dict[depth_j])
 
-        # Release all from GPU prior to visualising
-        anc_points = release_cuda(anc_points, to_numpy=True)
-        pos_points = release_cuda(pos_points, to_numpy=True)
-        anc_rt_centroids_dict = release_cuda(anc_rt_centroids_dict, to_numpy=True)
-        pos_rt_centroids_dict = release_cuda(pos_rt_centroids_dict, to_numpy=True)
         T_gt = release_cuda(T_gt, to_numpy=True)
         
         # Print metrics as well
         log_str = f"Query ID: {query_idx} -- nn ID: {nn_idx}"
         log_str += f' -- nn dist: {pos_dist:.2f}m'
+        for depth_j, distance in rt_centroid_distance_dict.items():
+            log_str += f' -- avg RT dist (depth {depth_j}): {distance:.2f}m'
         if args.verbose:
             log_str += f'\n  query file: {dataloader.dataset.data_set_dict[query_idx]['query']}'
             log_str += f' -- nn file: {dataloader.dataset.pos_dataset.data_set_dict[nn_idx]['query']}'
             log_str += f'\n  GT TF:\n{T_gt}'
         print(log_str, flush=True)
+
+        if args.stats_only:
+            continue
 
         save_dir_ii = None
         if args.save_dir is not None:
@@ -355,28 +364,35 @@ def main():
             with open(os.path.join(save_dir_ii, 'stats.txt'), 'w') as f:
                 f.write(log_str)
 
-        # # Ground truth TF (with ICP, if enabled in params)
-        # visualise_registration(
-        #     anc_points_fine=anc_points,
-        #     pos_points_fine=pos_points,
-        #     transform=T_gt,
-        #     zoom=args.zoom,
-        #     save_dir=save_dir_ii,
-        #     filename='registration_GT',
-        #     disable_animation=True,
-        #     non_interactive=args.non_interactive,
-        # )
+        # Release all from GPU prior to visualising
+        anc_points = release_cuda(anc_points, to_numpy=True)
+        pos_points = release_cuda(pos_points, to_numpy=True)
+        anc_rt_centroids_dict = release_cuda(anc_rt_centroids_dict, to_numpy=True)
+        pos_rt_centroids_dict = release_cuda(pos_rt_centroids_dict, to_numpy=True)
 
-        # TODO: test this func
+        # Ground truth TF (with ICP, if enabled in params)
+        visualise_registration(
+            anc_points_fine=anc_points,
+            pos_points_fine=pos_points,
+            transform=T_gt,
+            zoom=args.zoom,
+            save_dir=save_dir_ii,
+            filename='registration_GT',
+            disable_animation=True,
+            non_interactive=args.non_interactive,
+        )
+
         visualise_relay_tokens(
             anc_points=anc_points,
             pos_points=pos_points,
             anc_rt_centroids_dict=anc_rt_centroids_dict,
             pos_rt_centroids_dict=pos_rt_centroids_dict,
+            rt_centroid_correspondence_dict=rt_centroid_correspondence_dict,
             transform=T_gt,
             translate=[0,0,0],
             # translate=[0,0,50],
             zoom=args.zoom,
+            show_points=False,
             # plot_coarse=True,  # Plot keypoints as spheres
             # coarse_colourmode='patch',
             # coarse_colourmode='umap',
@@ -428,6 +444,13 @@ def main():
             # )
 
         pass
+
+    # Tally averages
+    print('Averaged stats:')
+    for depth_j in rt_centroid_distance_avg_dict.keys():
+        avg_dist_depth_j = np.array(rt_centroid_distance_avg_dict[depth_j]).mean()
+        print(f'avg RT dist (depth {depth_j}): {avg_dist_depth_j:.2f}m')
+        
     
 
 if __name__ == "__main__":
@@ -446,6 +469,7 @@ if __name__ == "__main__":
     parser.add_argument('--zoom', type=float, default=0.55, help='Zoom level for open3d viewer')
     parser.add_argument('--disable_animation', action='store_true', help='Disables animations')
     parser.add_argument('--non_interactive', action='store_true', help='Saves visualisations instantly, then closes viewer.')
+    parser.add_argument('--stats_only', action='store_true', help='No visualisations: just compute average stats over entire set')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '

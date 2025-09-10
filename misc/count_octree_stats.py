@@ -36,6 +36,7 @@ def setup_model():
     # Get val dataloader
     # params.val_batch_size = 256
     # params.num_workers = 0
+    params.batch_split_size = 0
     dataloaders = make_dataloaders(params, validation=True)
     dataloader = dataloaders['global_val']
 

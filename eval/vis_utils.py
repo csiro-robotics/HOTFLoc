@@ -271,13 +271,17 @@ def set_initial_rotation(
     """
     Set initial z rotation of geometries
     """
-    # Assume first geometry item is point cloud - get centre for rotation
+    # Get centre for rotation from first PointCloud object
     # NOTE: use this instead of origin to ensure viewing window stays more consistent
-    pcd = np.asarray(vis_list[0].points)
-    bbmin = pcd.min(axis=0)
-    bbmax = pcd.max(axis=0)
-    rot_centre = (bbmin + bbmax) * 0.5
-    # rot_centre = np.zeros((3, 1), dtype=np.float64)  # origin
+    rot_centre = np.zeros((3, 1), dtype=np.float64)  # origin
+    for geom in vis_list:
+        if not isinstance(geom, o3d.geometry.PointCloud):
+            continue
+        pcd = np.asarray(vis_list[0].points)
+        bbmin = pcd.min(axis=0)
+        bbmax = pcd.max(axis=0)
+        rot_centre = (bbmin + bbmax) * 0.5
+        break
     rotation_matrix = R.from_euler('z', rotation, degrees=True).as_matrix()
 
     # Set rotation
@@ -1003,14 +1007,16 @@ def visualise_LGR_initial_registration(
         )  # with rotation
 
 def visualise_relay_tokens(
-    anc_points: Union[Tensor, ndarray],
-    pos_points: Union[Tensor, ndarray],
+    anc_points: Union[Tensor, ndarray, None],
+    pos_points: Union[Tensor, ndarray, None],
     anc_rt_centroids_dict: dict,
     pos_rt_centroids_dict: dict,
+    rt_centroid_correspondence_dict: dict,
     transform: ndarray,
     translate=[0, 0, 40],
     zoom=0.55,
     colourmode: str = 'patch',
+    show_points=True,
     save_dir: Optional[str] = None,
     disable_animation=False,
     non_interactive=False,
@@ -1039,16 +1045,19 @@ def visualise_relay_tokens(
     """
     colourmode = colourmode.lower()
     assert colourmode in ('height', 'patch')
-    ANC_PC_COLOUR = [1, 0.7, 0.05]
-    POS_PC_COLOUR = [0, 0.629, 0.9]
+    ANC_PC_COLOUR = np.array([1, 0.7, 0.05])
+    POS_PC_COLOUR = np.array([0, 0.629, 0.9])
     # PC_SOURCE_COLOURMAP = 'viridis'
     # PC_TARGET_COLOURMAP = 'gray'
     
-    ANC_RT_COLOUR = [1.0, 0.0, 0.0]
-    POS_RT_COLOUR = [0.0, 1.0, 0.0]
+    # ANC_RT_COLOUR = [1.0, 0.0, 0.0]
+    # POS_RT_COLOUR = [0.0, 1.0, 0.0]
+    ANC_RT_COLOUR = np.array([1, 0.7, 0.05])
+    POS_RT_COLOUR = np.array([0, 0.629, 0.9])
+    CORRESPONDENCE_COLOUR = np.array([0.0, 1.0, 0.0])
 
     # KP_RADIUS = 1.0
-    RT_BASE_RADIUS = 0.8
+    RT_BASE_RADIUS = 1.0
 
     # VOXEL_SIZE = 0.6
 
@@ -1062,13 +1071,13 @@ def visualise_relay_tokens(
     # Plot spheres for relay tokens, and change colours appropriately
     anc_rt_spheres_o3d = []
     pos_rt_spheres_o3d = []
-    for ii, depth_j in enumerate(anc_rt_centroids_dict):
-        rt_radius_depth_j = RT_BASE_RADIUS * (1 + ii)
+    for ii, depth_j in enumerate(anc_rt_centroids_dict.keys()):
+        rt_radius_depth_j = RT_BASE_RADIUS + (RT_BASE_RADIUS / 2) * ii
         anc_rt_spheres_o3d.extend(
-            create_spheres(anc_rt_centroids_dict[depth_j], color=ANC_RT_COLOUR, radius=rt_radius_depth_j)
+            create_spheres(anc_rt_centroids_dict[depth_j], color=ANC_RT_COLOUR / (ii+1), radius=rt_radius_depth_j)
         )
         pos_rt_spheres_o3d.extend(
-            create_spheres(pos_rt_centroids_dict[depth_j], color=POS_RT_COLOUR, radius=rt_radius_depth_j)
+            create_spheres(pos_rt_centroids_dict[depth_j], color=POS_RT_COLOUR / (ii+1), radius=rt_radius_depth_j)
         )
 
     # Align point clouds with gt transform
@@ -1080,6 +1089,16 @@ def visualise_relay_tokens(
     pos_points_o3d.translate(translate)
     for pos_rt_sphere in pos_rt_spheres_o3d:
         pos_rt_sphere.translate(translate)
+
+    # Create lineset between correspondences
+    rt_centroid_correspondences_o3d = []
+    for ii, depth_j in enumerate(rt_centroid_correspondence_dict.keys()):
+        rt_centroid_correspondences_o3d.append(
+            o3d.geometry.LineSet.create_from_point_cloud_correspondences(
+                anc_points_o3d, pos_points_o3d, rt_centroid_correspondence_dict[depth_j]
+            )
+        )
+        rt_centroid_correspondences_o3d[ii].paint_uniform_color(CORRESPONDENCE_COLOUR / (ii+1))  # scale colour with depth
 
     # Set colours
     anc_points_o3d.paint_uniform_color(ANC_PC_COLOUR)
@@ -1103,11 +1122,13 @@ def visualise_relay_tokens(
     # pos_points_o3d.colors = o3d.utility.Vector3dVector(pos_points_colours)    
 
     # Draw all with Open3D
-    vis_list = [anc_points_o3d, pos_points_o3d,]
+    vis_list = []
+    if show_points:
+        vis_list.extend([anc_points_o3d, pos_points_o3d,])
     vis_list.extend([
         *anc_rt_spheres_o3d, *pos_rt_spheres_o3d,
+        # *rt_centroid_correspondences_o3d,  # Currently causes issues
         ])
-    # vis_list = [anc_points_coarse_o3d, pos_points_coarse_o3d, gt_inliers_o3d]
 
     if disable_animation:
         custom_draw_geometry_load_option(  # static
