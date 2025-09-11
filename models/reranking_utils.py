@@ -168,8 +168,8 @@ def batched_cal_spatial_consistency( M, leading_eig):
 def batched_sgv_parallel(
     src_keypts: Tensor,
     tgt_keypts: Tensor,
-    src_features: Tensor,
-    tgt_features: Tensor,
+    src_features: Optional[Tensor] = None,
+    tgt_features: Optional[Tensor] = None,
     d_thresh=5.0,
     mask: Optional[Tensor] = None,
     # mask_zeros=False,
@@ -178,10 +178,10 @@ def batched_sgv_parallel(
     """
     Batched version of SGV.
     Input:
-        - src_keypts: [B, 1, num_pts, 3] or [B, num_pts, 3]
+        - src_keypts: [B, 1, num_pts, 3] or [B, nn, num_pts, 3] or [B, num_pts, 3]
         - tgt_keypts: [B, nn, num_pts, 3]
-        - src_features: [B, 1, num_pts, D] or [B, num_pts, D]
-        - tgt_features: [B, nn, num_pts, D]
+        - src_features: [B, 1, num_pts, D] or [B, num_pts, D] (if None, assume keypts already sorted by correspondences)
+        - tgt_features: [B, nn, num_pts, D] (if None, assume keypts already sorted by correspondences)
         - d_thresh: Distance threshold for adjacency matrix
         # - mask_zeros: Ignore feats filled with all zeros (assumes they are masked) 
         - mask: Mask of keypts to ignore of shape [B, nn, num_pts, num_pts] (True to keep, False to ignore)
@@ -191,19 +191,28 @@ def batched_sgv_parallel(
     """
     if src_keypts.ndim == 3:
         src_keypts = src_keypts.unsqueeze(1)
-    if src_features.ndim == 3:
-        src_features = src_features.unsqueeze(1)
     assert src_keypts.ndim == 4
     assert tgt_keypts.ndim == 4
-    assert src_features.ndim == 4
-    assert tgt_features.ndim == 4
     assert src_keypts.size(3) == 3
     assert tgt_keypts.size(3) == 3
-    assert src_keypts.size(1) == 1
-    assert src_features.size(1) == 1
+    if src_features is not None:
+        assert tgt_features is not None
+        assert src_keypts.size(1) == 1
+        if src_features.ndim == 3:
+            src_features = src_features.unsqueeze(1)
+        assert src_features.ndim == 4
+        assert tgt_features.ndim == 4
+        assert src_features.size(1) == 1
+    else:
+        assert tgt_features is None
+        assert src_keypts.size(1) == tgt_keypts.size(1)
 
-    # Correspondence Estimation: Nearest Neighbour Matching
-    src_keypts_corr, tgt_keypts_corr = batched_match_pair_parallel(src_keypts, tgt_keypts, src_features, tgt_features, mask)
+    if src_features is None:
+        # Assume keypts already sorted by correspondences
+        src_keypts_corr, tgt_keypts_corr = src_keypts, tgt_keypts
+    else:
+        # Correspondence Estimation: Nearest Neighbour Matching
+        src_keypts_corr, tgt_keypts_corr = batched_match_pair_parallel(src_keypts, tgt_keypts, src_features, tgt_features, mask)
 
     # Spatial Consistency Adjacency Matrix
     src_dist = torch.norm((src_keypts_corr[..., None, :] - src_keypts_corr[..., None, :, :]), dim=-1)

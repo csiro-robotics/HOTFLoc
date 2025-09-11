@@ -168,7 +168,7 @@ class CTAttention(torch.nn.Module):
         ct = pad_sequence(ct)
 
         # get CT attn mask
-        ct_mask = octree.ct_mask[depth]
+        ct_mask = octree.rt_mask[depth]
 
         # qkv
         qkv = self.qkv(ct)
@@ -340,7 +340,7 @@ class OctFormerBlock(torch.nn.Module):
         # On last block, propagate carrier token features to local feature map
         if self.last and self.use_ct and self.ct_propagation:
             # TODO: Make this work with ct_size > 1
-            mask = octree.ct_init_mask[depth].unsqueeze(-1)
+            mask = octree.rt_init_mask[depth].unsqueeze(-1)
             ct_upsampled = ct.unsqueeze(0).transpose(1, 2)
             ct_upsampled = self.upsampler(ct_upsampled).transpose(1,2).squeeze(0)
             ct_upsampled = ct_upsampled.view(-1, K//G, C)
@@ -405,7 +405,7 @@ class TokenInitialiser(torch.nn.Module):
         # Reshape to windows, and mask out ignored values as NaN
         # TODO: Make this work with ct_size > 1
         data = data.view(-1, K//G, C)
-        mask = octree.ct_init_mask[depth].unsqueeze(-1)
+        mask = octree.rt_init_mask[depth].unsqueeze(-1)
         data = data.masked_fill(mask, value=torch.nan)
         # Avg pool over spatial dimension
         # NOTE: AvgPool1D can't handle NaNs, so use nanmean() instead

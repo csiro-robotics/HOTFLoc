@@ -80,11 +80,9 @@ def main():
         octree.build_t(points=points)
         # Get number of non-padding RTs per batch (accounts for padded final batch elem)
         for depth in octree.pyramid_depths:
-            rt_batch_idx_list = octree.ct_batch_idx[depth].split(octree.batch_num_windows[depth].tolist())
-            num_rt_per_batch = [torch.count_nonzero(x == i).item() for i, x in enumerate(rt_batch_idx_list)]
             if depth not in num_relay_tokens_dict:
                 num_relay_tokens_dict[depth] = []
-            num_relay_tokens_dict[depth].extend(num_rt_per_batch)
+            num_relay_tokens_dict[depth].extend(octree.batch_num_rt_no_padding[depth].tolist())
         # Get number of non-empty octants (local feats) per depth
         all_octf_depths = range(octree.max_depth, octree.start_depth-1, -1)
         for depth in all_octf_depths:

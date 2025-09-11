@@ -475,7 +475,7 @@ class NetworkTrainer:
                         # Compute similarity between all RTs
                         for j, depth_j in enumerate(rt_feats_i.keys()):
                             # Select only tokens from a single batch
-                            token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
+                            token_batch_mask_depth_j = octree.rt_batch_idx[depth_j] == BATCH_IDX
                             rt_feats_i_batch_list.append(rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j])
                             ############ if block_idx == 0:  # NOTE: THIS BLOCK COMPUTES RT SIMILARITY FOR EACH DEPTH SEPARATELY
                             ############     stats['rt_token_sim_matrix'][f'stage_{j}'] = {}

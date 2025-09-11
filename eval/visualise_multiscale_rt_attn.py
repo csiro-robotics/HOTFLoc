@@ -126,7 +126,7 @@ def plot_rt_attn_per_block_head(
     )
     rt_boundary_idx = [
         (octree.batch_num_windows[depth_j].item()
-         - torch.count_nonzero(octree.ct_batch_idx[depth_j]).item())
+         - torch.count_nonzero(octree.rt_batch_idx[depth_j]).item())
         for depth_j in pyramid_depths
     ]
     rt_boundary_idx = np.cumsum(rt_boundary_idx).tolist()

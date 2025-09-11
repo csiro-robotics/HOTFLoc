@@ -114,7 +114,7 @@ def get_rt_boundary_idx(
     """
     rt_boundary_idx = [
         (octree.batch_num_windows[depth_j].item()
-         - torch.count_nonzero(octree.ct_batch_idx[depth_j]).item())
+         - torch.count_nonzero(octree.rt_batch_idx[depth_j]).item())
         for depth_j in pyramid_depths
     ]
     if not return_cumsum:

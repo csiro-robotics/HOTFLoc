@@ -27,7 +27,6 @@ def concat_and_pad_rt(
     each batch element (for processing after the end of the network), but will
     cause issues if you try to call `unpad_and_split_rt` on it.
     """
-    assert not (pad and remove_final_padding), '`pad` must be False if `remove_final_padding` is True'
     if pyramid_depths is None:
         pyramid_depths = octree.pyramid_depths
     # Split relay tokens into batches for each depth
@@ -38,7 +37,7 @@ def concat_and_pad_rt(
             list(relay_token_dict[depth_j].split(batch_num_relay_tokens_depth_j))
         )
         if remove_final_padding:  # Remove padded RTs from end of batch
-            rt_batch_idx_list = octree.ct_batch_idx[depth_j].split(batch_num_relay_tokens_depth_j)
+            rt_batch_idx_list = octree.rt_batch_idx[depth_j].split(batch_num_relay_tokens_depth_j)
             final_batch_num_relay_tokens = torch.count_nonzero(rt_batch_idx_list[-1] == len(rt_batch_idx_list) - 1)
             relay_tokens_split_per_depth[-1][-1] = relay_tokens_split_per_depth[-1][-1][:final_batch_num_relay_tokens]
     

@@ -264,7 +264,7 @@ class OctreeDropPath(torch.nn.Module):
             # Check if dealing with Octree batch or windowed/ct batch
             if self.use_ct:
                 # Get batch id of each ct
-                batch_id = octree.ct_batch_idx[depth]
+                batch_id = octree.rt_batch_idx[depth]
             elif ndim == 3:
                 if K == octree.patch_size:  # standard window attn
                     batch_id = octree.data_to_windows(

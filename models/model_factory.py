@@ -8,7 +8,10 @@ from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
-from models.relay_token_reranker import RelayTokenGeometricConsistencyReranker
+from models.relay_token_reranker import (
+    RelayTokenGeometricConsistencyReranker,
+    RelayTokenLocalGeometricConsistencyReranker,
+)
 from geotransformer.modules.geotransformer import GeometricTransformer
 from misc.utils import TrainingParams
 from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
@@ -56,7 +59,7 @@ def model_factory(params: TrainingParams):
             normalize_embeddings=model_params.normalize_embeddings,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
-    elif 'hotformermetricloc' in model_params.model.lower():
+    elif any(model in model_params.model.lower() for model in ('hotformerloc', 'hotformermetricloc')):
         in_channels = get_in_channels(model_params.input_features)
         backbone = HOTFormer(
             in_channels=in_channels,
@@ -111,6 +114,15 @@ def model_factory(params: TrainingParams):
                 rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 use_attn_vals=model_params.rerank_use_attn_vals,
             )
+        elif model_params.rerank_mode == 'relay_token_local_gc':
+            reranker = RelayTokenLocalGeometricConsistencyReranker(
+                rerank_rt_indices=model_params.rerank_rt_indices,
+                geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
+                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
+                local_dims=model_params.channels[model_params.num_octf_levels:],
+                num_correspondences=model_params.rerank_num_correspondences,
+                min_correspondences_per_window=model_params.rerank_min_correspondences_per_window,
+            )
         elif model_params.rerank_mode is not None:
             raise NotImplementedError
         hotformerloc_global = HOTFormerLoc(
@@ -121,6 +133,9 @@ def model_factory(params: TrainingParams):
             input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
+        if 'hotformermetricloc' not in model_params.model.lower():
+            # Return only HOTFormerLoc backbone
+            return hotformerloc_global
         if not model_params.geotransformer.disable:
             coarse_feat_refiner = GeometricTransformer(
                 input_dim=model_params.geotransformer.input_dim,
@@ -149,71 +164,6 @@ def model_factory(params: TrainingParams):
             freeze_hotformerloc=model_params.freeze_hotformerloc,
             quantizer=model_params.quantizer,
             grad_checkpoint=model_params.grad_checkpoint,
-            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
-        )
-    elif 'hotformerloc' in model_params.model.lower():
-        in_channels = get_in_channels(model_params.input_features)
-        backbone = HOTFormer(
-            in_channels=in_channels,
-            channels=model_params.channels,
-            num_blocks=model_params.num_blocks,
-            num_heads=model_params.num_heads,
-            num_pyramid_levels=model_params.num_pyramid_levels,
-            num_octf_levels=model_params.num_octf_levels,
-            patch_size=model_params.patch_size,
-            dilation=model_params.dilation,
-            drop_path=model_params.drop_path,
-            stem_down=model_params.num_input_downsamples,
-            num_top_down=model_params.num_top_down,
-            fpn_channel=model_params.feature_size,
-            rt_size=model_params.ct_size,
-            rt_propagation=model_params.ct_propagation,
-            rt_propagation_scale=model_params.ct_propagation_scale,
-            rt_init_type=model_params.rt_init_type,
-            rt_rpe_init=model_params.ct_rpe_init,
-            rt_class_token=model_params.rt_class_token,
-            disable_rt=model_params.disable_rt,
-            ADaPE_mode=model_params.ADaPE_mode,
-            ADaPE_use_accurate_point_stats=model_params.ADaPE_use_accurate_point_stats,
-            grad_checkpoint=model_params.grad_checkpoint,
-            downsample_input_embeddings=model_params.downsample_input_embeddings,
-            disable_RPE=model_params.disable_RPE,
-            conv_norm=model_params.conv_norm,
-            layer_scale=model_params.layer_scale,
-            qkv_init=model_params.qkv_init,
-            xcpe=model_params.xcpe,
-            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
-        )
-        pooling = PoolingWrapper(
-            pool_method=model_params.pooling,
-            in_dim=model_params.feature_size,
-            output_dim=model_params.output_dim,
-            num_pyramid_levels=model_params.num_pyramid_levels,
-            channels=model_params.channels[model_params.num_octf_levels:],
-            k_pooled_tokens=model_params.k_pooled_tokens,
-        )
-        if model_params.disable_rt:
-            assert pooling.pooled_feats != 'relaytokens', (
-                "If relay tokens are disabled, a local feature pooling method "
-                + "must be used!"
-            )
-        reranker = None
-        if model_params.rerank_mode == 'relay_token_gc':
-            reranker = RelayTokenGeometricConsistencyReranker(
-                rerank_rt_indices=model_params.rerank_rt_indices,
-                attn_topk=model_params.rerank_rt_attn_topk,
-                geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
-                rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
-                use_attn_vals=model_params.rerank_use_attn_vals,
-            )
-        elif model_params.rerank_mode is not None:
-            raise NotImplementedError
-        model = HOTFormerLoc(
-            backbone=backbone,
-            pooling=pooling,
-            reranker=reranker,
-            normalize_embeddings=model_params.normalize_embeddings,
-            input_features=model_params.input_features,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):

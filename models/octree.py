@@ -72,16 +72,17 @@ class OctreeT(Octree):
         num = self.max_depth + 1
         self.batch_idx = [None] * num
         self.hat_batch_window_idx = [None] * num
-        self.ct_batch_idx = [None] * num
+        self.rt_batch_idx = [None] * num
         self.batch_boundary = [None] * num
         self.batch_num_windows = [None] * num
+        self.batch_num_rt_no_padding = [None] * num
         self.batch_num_relay_tokens_combined = None
         self.batch_window_overlap_mask = [None] * num
         self.patch_mask = [None] * num
         self.dilate_mask = [None] * num
         self.hat_window_mask = [None] * num
-        self.ct_mask = [None] * num
-        self.ct_init_mask  = [None] * num
+        self.rt_mask = [None] * num
+        self.rt_init_mask  = [None] * num
         self.rt_attn_mask = None
         self.rel_pos = [None] * num
         self.dilate_pos = [None] * num
@@ -97,53 +98,53 @@ class OctreeT(Octree):
         if self.ADaPE_use_accurate_point_stats and points is None:
             raise ValueError('Must provide Points if computing accurate point stats')
         for i, depth in enumerate(range(self.start_depth, self.max_depth + 1)):
-            use_ct = self.rt_layers[-(i+1)]
-            self.build_batch_idx(depth, use_ct)
-            self.build_batch_boundary(depth, use_ct)
-            self.build_attn_mask(depth, use_ct)
+            use_rt = self.rt_layers[-(i+1)]
+            self.build_batch_idx(depth, use_rt)
+            self.build_batch_boundary(depth, use_rt)
+            self.build_attn_mask(depth, use_rt)
             self.build_rel_pos(depth)
-            self.compute_window_stats(depth, use_ct, points)
+            self.compute_window_stats(depth, use_rt, points)
             
         if self.num_pyramid_levels > 0:
             self.build_rt_attn_mask()
 
-    def build_batch_idx(self, depth: int, use_ct: bool):
+    def build_batch_idx(self, depth: int, use_rt: bool):
         # Build batch idx for regular octree operation
         batch = self.batch_id(depth, self.nempty)
         batch = self.patch_partition(batch, depth, self.batch_size)
         self.batch_idx[depth] = batch
-        if not use_ct:
+        if not use_rt:
             return
 
-        # Build idx for HAT windows, with CT added to local windows
-        # NOTE: Currently, overlapping CTs are not masked out, and instead are
+        # Build idx for HAT windows, with RT added to local windows
+        # NOTE: Currently, overlapping RTs are not masked out, and instead are
         #       masked so that they only attend to features from the leftmost
         #       batch element (i.e. floor of the batch idxs they belong to)
         batch_window = batch.view(-1, self.patch_size)
-        batch_ct_idx = batch_window.min(1, keepdim=True).values
-        # Save mask for CT initialisation (prevents pooling erroneous features)
-        self.ct_init_mask[depth] = batch_window != batch_ct_idx
-        # Add CT to mask
+        batch_rt_idx = batch_window.min(1, keepdim=True).values
+        # Save mask for RT initialisation (prevents pooling erroneous features)
+        self.rt_init_mask[depth] = batch_window != batch_rt_idx
+        # Add RT to mask
         hat_batch_window = F.pad(batch_window, pad=(self.rt_size, 0))
-        hat_batch_window[:, :self.rt_size] += batch_ct_idx  # insert CT batch idx
+        hat_batch_window[:, :self.rt_size] += batch_rt_idx  # insert RT batch idx
         ##### OLD CODE #####
         # overlap_idx = self.batch_boundary[depth][self.batch_window_overlap_mask[depth] == 1] - 1
-        # mask[overlap_idx, :self.ct_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP CTs
-        # mask[overlap_idx, :self.ct_size] = mask[overlap_idx].mode(dim=1, keepdim=True).values  # KEEP OVERLAP CTs FOR BATCH ELEMENT WITH MORE DATA
+        # mask[overlap_idx, :self.rt_size] = self.batch_size + 1e4                               # MASK OUT ALL OVERLAP RTs
+        # mask[overlap_idx, :self.rt_size] = mask[overlap_idx].mode(dim=1, keepdim=True).values  # KEEP OVERLAP RTs FOR BATCH ELEMENT WITH MORE DATA
         ##### OLD CODE #####
         self.hat_batch_window_idx[depth] = hat_batch_window
 
-        # Build idx for CT global attn
-        # TODO: ensure this works with ct_size > 1
-        batch_ct = batch.view(-1, self.patch_size // self.rt_size)
-        self.ct_batch_idx[depth] = batch_ct.min(1).values
+        # Build idx for RT global attn
+        # TODO: ensure this works with rt_size > 1
+        batch_rt = batch.view(-1, self.patch_size // self.rt_size)
+        self.rt_batch_idx[depth] = batch_rt.min(1).values
 
-    def build_batch_boundary(self, depth: int, use_ct: bool):
+    def build_batch_boundary(self, depth: int, use_rt: bool):
         """
-        Get the boundary indices for each batch elem. Useful for separating CTs
+        Get the boundary indices for each batch elem. Useful for separating RTs
         into batches with torch.split().
         """
-        if not use_ct:
+        if not use_rt:
             return
         batch_nnum_cumsum = self.batch_nnum_nempty[depth].cumsum(0)
         # Add patch partition padding to last elem
@@ -167,11 +168,16 @@ class OctreeT(Octree):
         self.batch_num_windows[depth] = torch.diff(
             self.batch_boundary[depth], prepend=torch.zeros(1)
         ).int()
+        # Get number of non-padding RTs per batch (accounts for padded final batch elem)
+        rt_batch_idx_list = self.rt_batch_idx[depth].split(self.batch_num_windows[depth].tolist())
+        self.batch_num_rt_no_padding[depth] = torch.tensor(
+            [torch.count_nonzero(x == i) for i, x in enumerate(rt_batch_idx_list)],
+        )
 
-    def build_attn_mask(self, depth: int, use_ct: bool):
+    def build_attn_mask(self, depth: int, use_rt: bool):
         """
-        Compute attention masks for window attention and carrier token attention,
-        so that attention ignores padding and all CTs that contain neighbouring
+        Compute attention masks for window attention and relay token attention,
+        so that attention ignores padding and all RTs that contain neighbouring
         batch information.
         """
         # Window and dilation masks
@@ -183,17 +189,17 @@ class OctreeT(Octree):
         mask = mask.transpose(1, 2).reshape(-1, self.patch_size)
         self.dilate_mask[depth] = self._calc_attn_mask(mask)
 
-        # Window + CT mask (HAT)
-        if not use_ct:
+        # Window + RT mask (HAT)
+        if not use_rt:
             return
-        # NOTE: Currently, overlapping CTs are not masked out, and instead are
+        # NOTE: Currently, overlapping RTs are not masked out, and instead are
         #       masked so that they only attend to features from the leftmost
         #       batch element they belong to
-        # TODO: check this works with ct_size > 1
+        # TODO: check this works with rt_size > 1
         mask = self.hat_batch_window_idx[depth]
         self.hat_window_mask[depth] = self._calc_attn_mask(mask)
 
-        # CT Mask
+        # RT Mask
         batch_num_windows_list = self.batch_num_windows[depth].tolist()
         mask = batch.view(-1, self.patch_size)
         mask_split = mask.split(batch_num_windows_list)
@@ -202,9 +208,9 @@ class OctreeT(Octree):
         mask_padded = pad_sequence(
             mask_split, fill_value=(self.batch_size + 1e4)
         )
-        # Use left-most batch idx for carrier tokens
+        # Use left-most batch idx for relay tokens
         mask_padded = mask_padded.min(dim=2).values
-        self.ct_mask[depth] = self._calc_attn_mask(mask_padded)
+        self.rt_mask[depth] = self._calc_attn_mask(mask_padded)
 
         # # NOTE: Below is the start of code to correct mask for overlap windows,
         # #       so that batch element with higher overlap is unmasked
@@ -240,7 +246,7 @@ class OctreeT(Octree):
         # Correct the mask for last batch (as padding is unaccounted for)
         prev_end_idx = 0 + int(self.rt_class_token)
         for depth_j in self.pyramid_depths:
-            num_padded_tokens = torch.sum(self.ct_batch_idx[depth_j]
+            num_padded_tokens = torch.sum(self.rt_batch_idx[depth_j]
                                           >= B).item()
             batch_rel_idx = self.batch_num_windows[depth_j][-1].item()
             if num_padded_tokens > 0:
@@ -275,7 +281,7 @@ class OctreeT(Octree):
     ):
         """
         Pre-compute mean and covariance of each point window. Used to enhance
-        positional encoding (ADaPE) learned by MLP for carrier token attention.
+        positional encoding (ADaPE) learned by MLP for relay token attention.
         Also used in relay token re-ranking to provide relay token centroids. 
         """
         if not use_ct or not self.use_ADaPE:
@@ -296,7 +302,7 @@ class OctreeT(Octree):
             assert points is not None, 'Must provide Points if computing accurate point stats'
             points_curr_depth = get_octant_centroids_from_points(points, depth)
         points_curr_depth = self.data_to_windows(points_curr_depth, depth, dilated_windows=False)
-        mask = self.ct_init_mask[depth]
+        mask = self.rt_init_mask[depth]
         window_stats = torch.zeros(N, C, device=self.device)
         # Compute (μx, μy, μz, σx, σxy, σxz, σy, σyz, σz) for all windows
         for i, window_points in enumerate(points_curr_depth):
@@ -416,17 +422,18 @@ class OctreeT(Octree):
         )
         octree.batch_idx = list_to_device(self.batch_idx)
         octree.hat_batch_window_idx = list_to_device(self.hat_batch_window_idx)
-        octree.ct_batch_idx = list_to_device(self.ct_batch_idx)
+        octree.rt_batch_idx = list_to_device(self.rt_batch_idx)
         octree.batch_boundary = list_clone(self.batch_boundary)  # CPU
         octree.batch_num_windows = list_clone(self.batch_num_windows)  # CPU
+        octree.batch_num_rt_no_padding = list_clone(self.batch_num_rt_no_padding)  # CPU
         if isinstance(self.batch_num_relay_tokens_combined, torch.Tensor):
             octree.batch_num_relay_tokens_combined = self.batch_num_relay_tokens_combined.clone()  # CPU
         octree.batch_window_overlap_mask = list_clone(self.batch_window_overlap_mask)  # CPU
         octree.patch_mask = list_to_device(self.patch_mask)
         octree.dilate_mask = list_to_device(self.dilate_mask)
         octree.hat_window_mask = list_to_device(self.hat_window_mask)
-        octree.ct_mask = list_to_device(self.ct_mask)
-        octree.ct_init_mask  = list_to_device(self.ct_init_mask)
+        octree.rt_mask = list_to_device(self.rt_mask)
+        octree.rt_init_mask  = list_to_device(self.rt_init_mask)
         if isinstance(self.rt_attn_mask, torch.Tensor):
             octree.rt_attn_mask = self.rt_attn_mask.to(device, non_blocking=non_blocking)
         octree.rel_pos = list_to_device(self.rel_pos)

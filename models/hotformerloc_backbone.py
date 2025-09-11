@@ -213,7 +213,7 @@ class HOTFormerBlock(torch.nn.Module):
         # On last block, propagate relay token features to local feature map
         if self.last and self.rt_propagation:
             # TODO: Make this work with rt_size > 1
-            mask = octree.ct_init_mask[depth].unsqueeze(-1)
+            mask = octree.rt_init_mask[depth].unsqueeze(-1)
             rt_upsampled = rt.unsqueeze(0).transpose(1, 2)
             rt_upsampled = self.upsampler(rt_upsampled).transpose(1,2).squeeze(0)
             rt_upsampled = rt_upsampled.view(-1, K//G, C)
@@ -367,7 +367,7 @@ class RelayTokenInitialiser(torch.nn.Module):
         # Reshape to windows
         # TODO: Make this work with rt_size > 1
         data = data.view(-1, K//G, C)
-        mask = octree.ct_init_mask[depth].unsqueeze(-1)
+        mask = octree.rt_init_mask[depth].unsqueeze(-1)
         if self.rt_init_type == 'avg_pool':
             # Mask out ignored values with NaNs
             data = data.masked_fill(mask, value=torch.nan)
@@ -777,7 +777,7 @@ class HOTFormerBase(torch.nn.Module):
         self.num_stages = num_octf_levels + num_pyramid_levels
         self.stem_down = stem_down
         self.downsample_input_embeddings = downsample_input_embeddings
-        self.ct_size = rt_size
+        self.rt_size = rt_size
         self.rt_class_token = rt_class_token
         self.ADaPE_mode = ADaPE_mode
         self.use_ADaPE = (ADaPE_mode is not None)
@@ -830,7 +830,7 @@ class HOTFormerBase(torch.nn.Module):
             depth = depth - self.stem_down   # current octree depth
         octree = OctreeT(octree, self.patch_size, self.dilation, self.nempty,
                          max_depth=depth, start_depth=depth-self.num_stages+1,
-                         rt_size=self.ct_size, rt_class_token=self.rt_class_token,
+                         rt_size=self.rt_size, rt_class_token=self.rt_class_token,
                          ADaPE_mode=self.ADaPE_mode,
                          ADaPE_use_accurate_point_stats=self.ADaPE_use_accurate_point_stats,
                          num_pyramid_levels=self.num_pyramid_levels,

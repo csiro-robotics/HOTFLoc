@@ -715,7 +715,7 @@ def get_metrics(
             with torch.inference_mode():
                 out = model(rerank_batch, global_only=True)
                 tic_rr = time.perf_counter()
-                rerank_scores = model.rerank_inference(out, rerank_shift_and_scale)[0, :, 0]
+                rerank_scores = model.rerank_inference(out, rerank_shift_and_scale, rerank_batch['points'])[0, :, 0]
                 intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
                 topk_rerank, topk_rerank_indices = release_cuda(
                     torch.sort(rerank_scores, descending=True), to_numpy=True

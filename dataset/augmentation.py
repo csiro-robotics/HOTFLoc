@@ -4,6 +4,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+from ocnn.octree import Octree
 from scipy.linalg import expm, norm
 from torchvision import transforms as transforms
 
@@ -541,8 +542,11 @@ class Normalize:
         return coords_unnormalized
 
     @staticmethod
-    def batch_unnormalize(coords: torch.Tensor, shift_and_scale: torch.Tensor,
-                          mask: Optional[torch.Tensor]):
+    def batch_unnormalize(
+        coords: torch.Tensor,
+        shift_and_scale: torch.Tensor,
+        mask: Optional[torch.Tensor],
+    ):
         """
         Undo normalization using shift and scale output from Normalize(). Supports
         batched inputs with shape (B, N, 3). Expects shift_and_scale for whole
@@ -561,3 +565,26 @@ class Normalize:
         if mask is not None:
             coords_unnormalized.masked_fill_(mask[..., None].logical_not(), 0.0)
         return coords_unnormalized
+    
+    @staticmethod
+    def batch_unnormalize_concat(
+        coords: torch.Tensor,
+        shift_and_scale: torch.Tensor,
+        octree: Octree,
+        depth: int,
+    ):
+        """
+        Undo normalization for a batch of points in octree concat format. Expects
+        (B*N, 3) input.
+        """
+        assert coords.size(0) == octree.batch_id(depth, nempty=True).size(0), (
+            f"Points must correspond to the octree at depth {depth}"
+        )
+        # TODO: Implement vectorised form of this
+        for batch_idx in range(octree.batch_size):
+            batch_mask = octree.batch_id(depth, nempty=True) == batch_idx
+            coords[batch_mask] = Normalize.unnormalize(
+                coords[batch_mask],
+                shift_and_scale[batch_idx],
+            )
+        return coords

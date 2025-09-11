@@ -624,7 +624,7 @@ class NetworkTrainer:
                         # Compute similarity between all RTs
                         for j, depth_j in enumerate(rt_feats_i.keys()):
                             # Select only tokens from a single batch
-                            token_batch_mask_depth_j = octree.ct_batch_idx[depth_j] == BATCH_IDX
+                            token_batch_mask_depth_j = octree.rt_batch_idx[depth_j] == BATCH_IDX
                             rt_feats_i_batch_list.append(rt_feats_i[depth_j].to(self.device)[token_batch_mask_depth_j])
                             ############ if block_idx == 0:  # NOTE: THIS BLOCK COMPUTES RT SIMILARITY FOR EACH DEPTH SEPARATELY
                             ############     stats['rt_token_sim_matrix'][f'stage_{j}'] = {}
@@ -897,7 +897,7 @@ class NetworkTrainer:
             if self.rerank_loss_fn is not None:
                 shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
                 rerank_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
-                rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale)
+                rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale, batch['points'])
                 rerank_loss, rerank_stats = self.rerank_loss_fn(rerank_scores, targets)
                 stats.update(rerank_stats)
                 loss += rerank_loss
