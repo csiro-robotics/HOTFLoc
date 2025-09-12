@@ -169,7 +169,7 @@ class ModelParams:
                 if 'rerank_min_correspondences_per_window' in params:  # Minimum number of local correspondences per attention window to use for geoemetric consistency, per relay token level.
                     self.rerank_min_correspondences_per_window = tuple([int(e) for e in params['rerank_min_correspondences_per_window'].split(',')])
                 else:
-                    self.rerank_min_correspondences_per_window = (16,)
+                    self.rerank_min_correspondences_per_window = (8,)
                 self.rerank_use_attn_vals = params.getboolean('rerank_use_attn_vals', False)  # Use relay token attention values as a feature in the re-ranking classifier
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################

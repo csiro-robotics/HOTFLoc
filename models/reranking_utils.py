@@ -233,6 +233,11 @@ def batched_sgv_parallel(
 
     # Spatial Consistency Score
     lead_eigvec = batched_power_iteration(adj_mat)
+
+    # # Visualise
+    # plot_eigvec(lead_eigvec, 0, 0)
+    # plot_eigvec(lead_eigvec, 0, 1)
+    
     if not return_spatial_consistency:
         return lead_eigvec
 
@@ -253,3 +258,17 @@ def plot_adj_mat(adj_mat: Tensor, batch_idx=0, nn_idx=0):
     fig = plt.figure()
     ax = fig.add_subplot()
     ax.imshow(adj_mat)
+
+def plot_eigvec(eigvec: Tensor, batch_idx=0, nn_idx=0):
+    import matplotlib.pyplot as plt
+    eigvec = eigvec.detach().cpu().numpy()
+    if eigvec.ndim == 2:
+        eigvec = np.repeat(eigvec[nn_idx, ..., None], 10, axis=-1)
+    elif eigvec.ndim == 3:
+        eigvec = np.repeat(eigvec[batch_idx, nn_idx, ..., None], 10, axis=-1)
+    else:
+        raise ValueError
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    ax.set_xticks([])
+    ax.imshow(eigvec)
