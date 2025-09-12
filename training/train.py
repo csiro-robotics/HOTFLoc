@@ -22,6 +22,7 @@ if __name__ == '__main__':
     parser.set_defaults(debug=False)
     parser.add_argument('--verbose', dest='verbose', action='store_true')
     parser.set_defaults(verbose=False)
+    parser.add_argument('--disable_wandb', action='store_true', help='Disable wandb logging')
 
     args = parser.parse_args()
     print('Training config path: {}'.format(args.config))
@@ -35,10 +36,11 @@ if __name__ == '__main__':
         print('Finetuning from checkpoint path: {}'.format(args.finetune_from))
     print('Debug mode: {}'.format(args.debug))
     print('Verbose mode: {}'.format(args.verbose))
+    print('Disable wandb: {}'.format(args.disable_wandb))
     
     params = TrainingParams(args.config, args.model_config,
                             debug=args.debug, verbose=args.verbose)
-    # params.print()
+    params.wandb = not args.disable_wandb
 
     if args.debug:
         torch.autograd.set_detect_anomaly(True)
