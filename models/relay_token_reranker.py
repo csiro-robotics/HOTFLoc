@@ -352,7 +352,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         rt_dim: int,
         local_dims: Tuple[int],
         quantizer: Optional[CoordinateSystem] = None,
-        num_correspondences: Tuple[int] = (128, 48),
+        num_correspondences: Tuple[int] = (96, 48),
         min_correspondences_per_window: Tuple[int] = (8, 8),
         sort_eigvec: bool = True,
         mutual: bool = False,
@@ -453,167 +453,208 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
                 local_mask_depth_j_padded, (0, pad_len), value=True
             ).view(B_orig, -1, K)
 
-            if self.separate_batch_by_num_rt:
-                # TODO: Create logic for separating batch into groups. Only
-                #       separate those with num_RT < self.num_correspondences[ii] / self.num_correspondences_per_window[ii]
-                pass
-                # num_correspondences_per_window = self.min_correspondences_per_window[ii]
-                # batch_num_rt_no_padding = (  # disregard RTs of windows with too few points
-                #     octree.batch_num_rt_no_padding[depth]
-                #     - (octree.batch_nnum_nempty[depth] % octree.patch_size < num_correspondences_per_window).int()
-                # )
-                # # TODO sort by num rt
-
-                # for subbatch_idx in ...:
-                #     pass
-
-            # Determine num RTs required to reach num correspondences 
+            # Get num RTs per batch elem (excl. padding)
             num_correspondences_per_window = self.min_correspondences_per_window[ii]
-            batch_num_rt_no_padding = (  # disregard RTs of windows with too few points
-                octree.batch_num_rt_no_padding[depth]
-                - (octree.batch_nnum_nempty[depth] % octree.patch_size < num_correspondences_per_window).int()
-            )
-            min_num_rt = min(batch_num_rt_no_padding).item()
-            if math.ceil(self.num_correspondences[ii] / num_correspondences_per_window) > min_num_rt:
-                # Need to collect more correspondences per window to reach target
-                # NOTE: maybe better to do this per batch item, but would be slower
-                num_correspondences_per_window = math.ceil(self.num_correspondences[ii] / min_num_rt)
-                assert num_correspondences_per_window <= octree.patch_size
-            num_rt_correspondences = math.ceil(self.num_correspondences[ii] / num_correspondences_per_window)
-            ############################ DEBUGGING ############################
-            logging.debug(f'Re-ranking num RTs (depth {depth}): {num_rt_correspondences}')
-            ############################ DEBUGGING ############################
+            batch_num_rt_no_padding = get_num_rt_excl_border(
+                octree, depth, num_correspondences_per_window
+            ).to(octree.device)
+            if not self.separate_batch_by_num_rt:
+                subbatch_indices_list = [list(range(len(anc_indices)))]
+            else:
+                # Get num RTs per batch elem (excl. padding)
+                max_rt_correspondences = math.ceil(self.num_correspondences[ii] / num_correspondences_per_window)
+                # Get minimum num RTs per triplet
+                triplet_min_rt = torch.max(torch.tensor(1), torch.stack([
+                    batch_num_rt_no_padding[anc_indices],
+                    batch_num_rt_no_padding[pos_indices],
+                    batch_num_rt_no_padding[neg_indices],
+                ], dim=1).min(dim=-1).values)
+                # Collect unique groups of batch elems with num RT < min RT 
+                triplet_min_rt_unique = triplet_min_rt.unique()
+                have_reached_max_rt = False
+                subbatch_indices_list = []
+                for num_rt in triplet_min_rt_unique:
+                    idx = (triplet_min_rt == num_rt).nonzero(as_tuple=True)[0]
+                    if not have_reached_max_rt:
+                        subbatch_indices_list.append(idx.tolist())
+                        if num_rt >= max_rt_correspondences:
+                            have_reached_max_rt = True
+                    else:
+                        subbatch_indices_list[-1].extend(idx.tolist())                
+
+            # Loop through sub-batches and aggregate outputs
+            batch_anc_final_points = torch.zeros(len(anc_indices), 2, self.num_correspondences[ii], 3, device=octree.device)
+            batch_nn_final_points = torch.zeros(len(anc_indices), 2, self.num_correspondences[ii], 3, device=octree.device)
+            for subbatch_indices in subbatch_indices_list:
+                anc_indices_subbatch = anc_indices[subbatch_indices]
+                pos_indices_subbatch = pos_indices[subbatch_indices]
+                neg_indices_subbatch = neg_indices[subbatch_indices]
+                num_correspondences_per_window = self.min_correspondences_per_window[ii]
+                # Get minimum num RTs per triplet
+                triplet_min_rt_subbatch = max(1, torch.stack([
+                    batch_num_rt_no_padding[anc_indices_subbatch],
+                    batch_num_rt_no_padding[pos_indices_subbatch],
+                    batch_num_rt_no_padding[neg_indices_subbatch],
+                ], dim=1).min().item())
+                # Determine num RTs required to reach num correspondences 
+                if math.ceil(self.num_correspondences[ii] / num_correspondences_per_window) > triplet_min_rt_subbatch:
+                    # Need to collect more correspondences per window to reach target
+                    # NOTE: maybe better to do this per batch item, but would be slower
+                    num_correspondences_per_window = math.ceil(self.num_correspondences[ii] / triplet_min_rt_subbatch)
+                    assert num_correspondences_per_window <= octree.patch_size
+                num_rt_correspondences = math.ceil(self.num_correspondences[ii] / num_correspondences_per_window)
+                # ############################# DEBUGGING ############################
+                # logging.debug(f'Re-ranking num RTs (depth {depth}): {num_rt_correspondences}')
+                # ############################# DEBUGGING ############################
+
+                # Separate into anc and nn sets
+                anc_rt = rt_depth_j[anc_indices_subbatch]
+                nn_rt = torch.stack(
+                    [rt_depth_j[pos_indices_subbatch], rt_depth_j[neg_indices_subbatch]],
+                    dim=1,
+                )
+                anc_points_depth_j_padded = local_points_depth_j_padded_windows[anc_indices_subbatch][:, None, ...].expand(-1, 2, -1, -1, -1)
+                B = anc_points_depth_j_padded.size(0)  # recompute B to get correct batch size
+                nn_points_depth_j_padded = torch.stack(
+                    [local_points_depth_j_padded_windows[pos_indices_subbatch], local_points_depth_j_padded_windows[neg_indices_subbatch]],
+                    dim=1,
+                )
+                anc_feats_depth_j_padded = local_feats_depth_j_padded_windows[anc_indices_subbatch][:, None, ...].expand(-1, 2, -1, -1, -1)
+                nn_feats_depth_j_padded = torch.stack(
+                    [local_feats_depth_j_padded_windows[pos_indices_subbatch], local_feats_depth_j_padded_windows[neg_indices_subbatch]],
+                    dim=1,
+                )
+                anc_mask_depth_j_padded = local_mask_depth_j_padded_windows[anc_indices_subbatch][:, None, ...].expand(-1, 2, -1, -1)
+                nn_mask_depth_j_padded = torch.stack(
+                    [local_mask_depth_j_padded_windows[pos_indices_subbatch], local_mask_depth_j_padded_windows[neg_indices_subbatch]],
+                    dim=1,
+                )
+                # Compute RT mask for anc and nn
+                rt_sgv_mask = compute_rt_sgv_mask(
+                    anc_rt, anc_indices_subbatch, pos_indices_subbatch, neg_indices_subbatch, octree, depth,
+                    num_correspondences_per_window=num_correspondences_per_window
+                )
+
+                ####################################################################
+                ### COMPUTE CORRESPONDENCES
+                ####################################################################
+                # TODO: Trial Sinkhorn for RT correspondences?
+                anc_rt = anc_rt[:, None, ...].expand(-1, 2, -1, -1)  # match shape of nn_rt
+                rt_similarity_matrix = torch.matmul(  # (*, N, C) x (*, C, M) -> (*, N, M)
+                    anc_rt, nn_rt.transpose(-1, -2)
+                )
+                rt_similarity_matrix.masked_fill_(
+                    torch.logical_not(rt_sgv_mask), self.similarity_mask_val
+                )
+                # Compute RT correspondences
+                # TODO: First compute NN with .max for each anc RT, then run top-k on the scores
+                #       Alternatively, can do mutual NN (see point_matching.py)
+                if self.mutual:
+                    raise NotImplementedError
+                else:
+                    # Just use top-k correspondences from anc side
+                    # NOTE: Currently this doesn't guarantee a one-to-one mapping,
+                    #       so the same RT window could be used multiple times.
+                    anc_rt_correspondence_scores, anc_rt_correspondence_indices = torch.max(rt_similarity_matrix, dim=-1)
+                    _, nn_rt_topk_correspondence_indices = torch.topk(
+                        anc_rt_correspondence_scores, k=num_rt_correspondences, dim=-1
+                    )
+                    anc_rt_topk_correspondence_indices = torch.gather(
+                        anc_rt_correspondence_indices, dim=-1, index=nn_rt_topk_correspondence_indices
+                    )
+                # Select points and feats within top-k windows
+                anc_topk_points_depth_j_padded = torch.gather(
+                    anc_points_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, 3)
+                )
+                anc_topk_feats_depth_j_padded = torch.gather(
+                    anc_feats_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, C)
+                )
+                anc_topk_mask_depth_j_padded = torch.gather(
+                    anc_mask_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None].expand(-1, -1, -1, K)
+                )
+                nn_topk_points_depth_j_padded = torch.gather(
+                    nn_points_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, 3)
+                )
+                nn_topk_feats_depth_j_padded = torch.gather(
+                    nn_feats_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, C)
+                )
+                nn_topk_mask_depth_j_padded = torch.gather(
+                    nn_mask_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None].expand(-1, -1, -1, K)
+                )
+
+                # # DEBUGGING VISUALISATIONS
+                # from misc.point_clouds import plot_points, plot_registration_result                
+                # plot_points(anc_points_depth_j_padded[-1,0].view(-1,3).cpu()) # all anc points
+                # plot_points(nn_points_depth_j_padded[-1,0].view(-1,3).cpu())  # all pos points
+                # plot_points(anc_topk_points_depth_j_padded[-1,0].view(-1,3).cpu())  # top-k anc windows
+                # plot_points(nn_topk_points_depth_j_padded[-1,0].view(-1,3).cpu())  # top-k pos windows
+
+                # Compute pair-wise cosine similarity within window correspondences
+                point_similarity_matrix = torch.matmul(
+                    anc_topk_feats_depth_j_padded, nn_topk_feats_depth_j_padded.transpose(-1, -2)
+                )
+                # Mask out correspondences of any padded points
+                point_similarity_mask = torch.logical_or(
+                    anc_topk_mask_depth_j_padded[..., None], nn_topk_mask_depth_j_padded[..., None, :]
+                )
+                point_similarity_matrix.masked_fill_(point_similarity_mask, self.similarity_mask_val)
+
+                # Compute top-k correspondences per window, and combine
+                if self.mutual:
+                    raise NotImplementedError
+                else:
+                    # Just use top-k correspondences from anc side
+                    # NOTE: Currently this doesn't guarantee a one-to-one mapping,
+                    #       so the same points be used multiple times.
+                    anc_points_correspondence_scores, anc_points_correspondence_indices = torch.max(point_similarity_matrix, dim=-1)
+                    _, nn_points_topk_correspondence_indices = torch.topk(
+                        anc_points_correspondence_scores, k=num_correspondences_per_window, dim=-1
+                    )
+                    anc_points_topk_correspondence_indices = torch.gather(
+                        anc_points_correspondence_indices, dim=-1, index=nn_points_topk_correspondence_indices
+                    )
+                # Select top-k point correspondences
+                anc_final_points = torch.gather(
+                    anc_topk_points_depth_j_padded, dim=-2, index=nn_points_topk_correspondence_indices[..., None].expand(-1, -1, -1, -1, 3)
+                ).view(B, 2, -1, 3)[..., :self.num_correspondences[ii], :]
+                nn_final_points = torch.gather(
+                    nn_topk_points_depth_j_padded, dim=-2, index=anc_points_topk_correspondence_indices[..., None].expand(-1, -1, -1, -1, 3)
+                ).view(B, 2, -1, 3)[..., :self.num_correspondences[ii], :]
+
+                # Sanity check we have correct num points and no padding points made it through
+                assert anc_final_points.size(-2) == nn_final_points.size(-2) == self.num_correspondences[ii]
+                # NOTE: Ignoring padding points for now, which only occur here very rarely on very small submaps
+                # assert not torch.any((anc_final_points == 0).all(dim=-1, keepdim=True))
+                # assert not torch.any((nn_final_points == 0).all(dim=-1, keepdim=True))
+
+                # # DEBUGGING VISUALISATIONS
+                # from misc.point_clouds import plot_points, plot_registration_result                
+                # plot_points(anc_final_points[-1,0].cpu()) # all anc points
+                # plot_points(nn_final_points[-1,0].cpu())  # all pos points
+
+                # Combine output before SGV
+                subbatch_indices = torch.tensor(subbatch_indices).to(octree.device)
+                batch_anc_final_points[subbatch_indices] = anc_final_points
+                batch_nn_final_points[subbatch_indices] = nn_final_points
+
+            # # Final sanity check to ensure no indexing errors
+            # assert not torch.any((batch_anc_final_points == 0).all(dim=-1, keepdim=True))
+            # assert not torch.any((batch_nn_final_points == 0).all(dim=-1, keepdim=True))
             
-            # Separate into anc and nn sets
-            anc_rt = rt_depth_j[anc_indices]
-            nn_rt = torch.stack(
-                [rt_depth_j[pos_indices], rt_depth_j[neg_indices]],
-                dim=1,
+            # Mask out any invalid correspondences (i.e. padding points)
+            batch_anc_sgv_mask = (batch_anc_final_points == 0).all(dim=-1)  # (B, NN, K)
+            batch_nn_sgv_mask = (batch_nn_final_points == 0).all(dim=-1)
+            batch_sgv_mask = torch.logical_not(
+                torch.logical_or(batch_anc_sgv_mask[..., None], batch_nn_sgv_mask[..., None, :])
             )
-            anc_points_depth_j_padded = local_points_depth_j_padded_windows[anc_indices][:, None, ...].expand(-1, 2, -1, -1, -1)
-            B = anc_points_depth_j_padded.size(0)  # recompute B to get correct batch size
-            nn_points_depth_j_padded = torch.stack(
-                [local_points_depth_j_padded_windows[pos_indices], local_points_depth_j_padded_windows[neg_indices]],
-                dim=1,
-            )
-            anc_feats_depth_j_padded = local_feats_depth_j_padded_windows[anc_indices][:, None, ...].expand(-1, 2, -1, -1, -1)
-            nn_feats_depth_j_padded = torch.stack(
-                [local_feats_depth_j_padded_windows[pos_indices], local_feats_depth_j_padded_windows[neg_indices]],
-                dim=1,
-            )
-            anc_mask_depth_j_padded = local_mask_depth_j_padded_windows[anc_indices][:, None, ...].expand(-1, 2, -1, -1)
-            nn_mask_depth_j_padded = torch.stack(
-                [local_mask_depth_j_padded_windows[pos_indices], local_mask_depth_j_padded_windows[neg_indices]],
-                dim=1,
-            )
-            # Compute RT mask for anc and nn
-            rt_sgv_mask = compute_rt_sgv_mask(
-                anc_rt, anc_indices, pos_indices, neg_indices, octree, depth,
-                num_correspondences_per_window=num_correspondences_per_window
-            )
-
-            ####################################################################
-            ### COMPUTE CORRESPONDENCES
-            ####################################################################
-            # TODO: Trial Sinkhorn for RT correspondences?
-            anc_rt = anc_rt[:, None, ...].expand(-1, 2, -1, -1)  # match shape of nn_rt
-            rt_similarity_matrix = torch.matmul(  # (*, N, C) x (*, C, M) -> (*, N, M)
-                anc_rt, nn_rt.transpose(-1, -2)
-            )
-            rt_similarity_matrix.masked_fill_(
-                torch.logical_not(rt_sgv_mask), self.similarity_mask_val
-            )
-            # Compute RT correspondences
-            # TODO: First compute NN with .max for each anc RT, then run top-k on the scores
-            #       Alternatively, can do mutual NN (see point_matching.py)
-            if self.mutual:
-                raise NotImplementedError
-            else:
-                # Just use top-k correspondences from anc side
-                # NOTE: Currently this doesn't guarantee a one-to-one mapping,
-                #       so the same RT window could be used multiple times.
-                anc_rt_correspondence_scores, anc_rt_correspondence_indices = torch.max(rt_similarity_matrix, dim=-1)
-                _, nn_rt_topk_correspondence_indices = torch.topk(
-                    anc_rt_correspondence_scores, k=num_rt_correspondences, dim=-1
-                )
-                anc_rt_topk_correspondence_indices = torch.gather(
-                    anc_rt_correspondence_indices, dim=-1, index=nn_rt_topk_correspondence_indices
-                )
-            # Select points and feats within top-k windows
-            anc_topk_points_depth_j_padded = torch.gather(
-                anc_points_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, 3)
-            )
-            anc_topk_feats_depth_j_padded = torch.gather(
-                anc_feats_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, C)
-            )
-            anc_topk_mask_depth_j_padded = torch.gather(
-                anc_mask_depth_j_padded, dim=2, index=nn_rt_topk_correspondence_indices[..., None].expand(-1, -1, -1, K)
-            )
-            nn_topk_points_depth_j_padded = torch.gather(
-                nn_points_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, 3)
-            )
-            nn_topk_feats_depth_j_padded = torch.gather(
-                nn_feats_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None, None].expand(-1, -1, -1, K, C)
-            )
-            nn_topk_mask_depth_j_padded = torch.gather(
-                nn_mask_depth_j_padded, dim=2, index=anc_rt_topk_correspondence_indices[..., None].expand(-1, -1, -1, K)
-            )
-
-            # # DEBUGGING VISUALISATIONS
-            # from misc.point_clouds import plot_points, plot_registration_result                
-            # plot_points(anc_points_depth_j_padded[-1,0].view(-1,3).cpu()) # all anc points
-            # plot_points(nn_points_depth_j_padded[-1,0].view(-1,3).cpu())  # all pos points
-            # plot_points(anc_topk_points_depth_j_padded[-1,0].view(-1,3).cpu())  # top-k anc windows
-            # plot_points(nn_topk_points_depth_j_padded[-1,0].view(-1,3).cpu())  # top-k pos windows
-
-            # Compute pair-wise cosine similarity within window correspondences
-            point_similarity_matrix = torch.matmul(
-                anc_topk_feats_depth_j_padded, nn_topk_feats_depth_j_padded.transpose(-1, -2)
-            )
-            # Mask out correspondences of any padded points
-            point_similarity_mask = torch.logical_or(
-                anc_topk_mask_depth_j_padded[..., None], nn_topk_mask_depth_j_padded[..., None, :]
-            )
-            point_similarity_matrix.masked_fill_(point_similarity_mask, self.similarity_mask_val)
-
-            # Compute top-k correspondences per window, and combine
-            if self.mutual:
-                raise NotImplementedError
-            else:
-                # Just use top-k correspondences from anc side
-                # NOTE: Currently this doesn't guarantee a one-to-one mapping,
-                #       so the same points be used multiple times.
-                anc_points_correspondence_scores, anc_points_correspondence_indices = torch.max(point_similarity_matrix, dim=-1)
-                _, nn_points_topk_correspondence_indices = torch.topk(
-                    anc_points_correspondence_scores, k=num_correspondences_per_window, dim=-1
-                )
-                anc_points_topk_correspondence_indices = torch.gather(
-                    anc_points_correspondence_indices, dim=-1, index=nn_points_topk_correspondence_indices
-                )
-            # Select top-k point correspondences
-            anc_final_points = torch.gather(
-                anc_topk_points_depth_j_padded, dim=-2, index=nn_points_topk_correspondence_indices[..., None].expand(-1, -1, -1, -1, 3)
-            ).view(B, 2, -1, 3)[..., :self.num_correspondences[ii], :]
-            nn_final_points = torch.gather(
-                nn_topk_points_depth_j_padded, dim=-2, index=anc_points_topk_correspondence_indices[..., None].expand(-1, -1, -1, -1, 3)
-            ).view(B, 2, -1, 3)[..., :self.num_correspondences[ii], :]
-
-            # Sanity check we have correct num points and no padding points made it through
-            assert anc_final_points.size(-2) == nn_final_points.size(-2) == self.num_correspondences[ii]
-            assert not torch.any((anc_final_points == 0).all(dim=-1, keepdim=True))
-            assert not torch.any((nn_final_points == 0).all(dim=-1, keepdim=True))
-
-            # # DEBUGGING VISUALISATIONS
-            # from misc.point_clouds import plot_points, plot_registration_result                
-            # plot_points(anc_final_points[-1,0].cpu()) # all anc points
-            # plot_points(nn_final_points[-1,0].cpu())  # all pos points
-
+            
             # Compute spectral geometric consistency
             leading_eigvec, spatial_consistency_score = batched_sgv_parallel(
-                anc_final_points,
-                nn_final_points,
+                batch_anc_final_points,
+                batch_nn_final_points,
                 d_thresh=self.geometric_consistency_d_thresh[ii],
                 return_spatial_consistency=True,
+                mask=batch_sgv_mask,
             )
             if self.sort_eigvec:
                 leading_eigvec, sort_indices = torch.sort(leading_eigvec, dim=-1, descending=True)
@@ -647,6 +688,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         Returns:
             rerank_scores (Tensor)
         """
+        raise NotImplementedError
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         tic = time.perf_counter()
         # Collect batch relay tokens
@@ -755,9 +797,14 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         return rerank_scores
 
 def compute_rt_sgv_mask(
-    relay_tokens: Tensor, anc_indices, pos_indices, neg_indices, octree: OctreeT, depth: int,
+    relay_tokens: Tensor,
+    anc_indices,
+    pos_indices,
+    neg_indices,
+    octree: OctreeT,
+    depth: int,
     num_correspondences_per_window: int = -1,
-):
+) -> torch.Tensor:
     """
     Computes mask to ignore padding relay tokens during geometric
     consistency [B, NN, N_RT, N_RT]  
@@ -765,9 +812,8 @@ def compute_rt_sgv_mask(
     threshold (typically only the last window in a batch element)
     """
     B, N_RT, C = relay_tokens.shape
-    batch_num_rt_no_padding = (
-        octree.batch_num_rt_no_padding[depth]
-        - (octree.batch_nnum_nempty[depth] % octree.patch_size < num_correspondences_per_window).int()
+    batch_num_rt_no_padding = get_num_rt_excl_border(
+        octree, depth, num_correspondences_per_window
     ).to(octree.device)
     anc_num_rt = batch_num_rt_no_padding[anc_indices]
     pos_num_rt = batch_num_rt_no_padding[pos_indices]
@@ -782,9 +828,12 @@ def compute_rt_sgv_mask(
     return rt_sgv_mask
 
 def compute_rt_sgv_mask_inference(
-    relay_tokens: Tensor, anc_idx: int, octree: OctreeT, depth: int,
+    relay_tokens: Tensor,
+    anc_idx: int,
+    octree: OctreeT,
+    depth: int,
     num_correspondences_per_window: int = -1,
-):
+) -> torch.Tensor:
     """
     Computes mask to ignore padding relay tokens during geometric
     consistency [1, NN, N_RT, N_RT] (assumes batch size 1 for inference)
@@ -792,9 +841,8 @@ def compute_rt_sgv_mask_inference(
     threshold (typically only the last window in a batch element)
     """
     _, NN, N_RT, C = relay_tokens.shape
-    batch_num_rt_no_padding = (
-        octree.batch_num_rt_no_padding[depth]
-        - (octree.batch_nnum_nempty[depth] % octree.patch_size < num_correspondences_per_window).int()
+    batch_num_rt_no_padding = get_num_rt_excl_border(
+        octree, depth, num_correspondences_per_window
     ).to(octree.device)
     anc_num_rt = batch_num_rt_no_padding[anc_idx]
     nn_num_rt = batch_num_rt_no_padding[anc_idx+1:]
@@ -805,3 +853,20 @@ def compute_rt_sgv_mask_inference(
     for nn_idx in range(NN):
         rt_sgv_mask[:, :, :, nn_num_rt[nn_idx]:] = False
     return rt_sgv_mask
+
+def get_num_rt_excl_border(
+    octree: OctreeT, depth: int, num_correspondences_per_window: int = -1
+) -> torch.Tensor:
+    """
+    Get the number of relay tokens per batch item, excluding relay tokens on
+    the border between batches (which can have fewer points).
+    """
+    # batch_num_rt_no_padding = (  # disregard RTs of windows with too few points (border windows)
+    #     octree.batch_num_rt_no_padding[depth]
+    #     - (octree.batch_nnum_nempty[depth] % octree.patch_size < num_correspondences_per_window).int()
+    # )
+    batch_num_rt_no_padding = (  # disregard any border RTs that overlap with the next batch
+        octree.batch_num_rt_no_padding[depth]
+        - (octree.batch_nnum_nempty[depth] % octree.patch_size != 0).int()
+    )
+    return batch_num_rt_no_padding
