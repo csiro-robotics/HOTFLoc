@@ -60,7 +60,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, model_out: dict, hard_triplets: Tuple, shift_and_scale: Tensor, *args, **kwargs):
+    def forward(self, model_out: dict, hard_triplets: Tuple, shift_and_scale: Tensor, **kwargs):
         """
         Perform re-ranking of query and N candidates. Note that only 'octree',
         'rt', and 'rt_final_cls_attn_vals' keys are needed from HOTFormerLoc outputs.
@@ -202,7 +202,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         logging.debug(log_str)
         return rerank_scores, targets
 
-    def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, *args, **kwargs):
+    def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, **kwargs):
         """
         Perform re-ranking of query and N candidates. Note that only 'octree',
         'rt', and 'rt_final_cls_attn_vals' keys are needed from HOTFormerLoc outputs.
@@ -390,7 +390,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, model_out: dict, hard_triplets: Tuple, shift_and_scale: Tensor, points: Points, *args, **kwargs):
+    def forward(self, model_out: dict, hard_triplets: Tuple, shift_and_scale: Tensor, points: Points, **kwargs):
         """
         Perform re-ranking of query and N candidates. Note that only 'octree',
         'rt', and 'local' keys are needed from HOTFormerLoc outputs.
@@ -676,7 +676,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         logging.debug(log_str)
         return rerank_scores, targets
 
-    def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, points: Points, *args, **kwargs):
+    def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, points: Points, **kwargs):
         """
         Perform re-ranking of query and N candidates. Note that only 'octree',
         'rt', and 'local' keys are needed from HOTFormerLoc outputs.

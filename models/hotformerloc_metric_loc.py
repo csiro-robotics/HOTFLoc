@@ -8,7 +8,7 @@ by Peng-Shuai Wang.
 """
 import time
 import logging
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -50,7 +50,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         coarse_feat_refiner: Optional[GeometricTransformer],
         model_params: ModelParams,
         octree_depth: int,
-        coarse_idx: int,
+        coarse_idx: Tuple[int],
         fine_idx: int,
         coarse_feat_embed_dim: Optional[int] = None,
         fine_feat_embed_dim: Optional[int] = None,
@@ -59,6 +59,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         quantizer: Optional[CoordinateSystem] = None,
         grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
+        **kwargs,
     ):
         """
         Class for HOTFormerLoc-based metric localisation, with coarse-to-fine
@@ -69,8 +70,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
             coarse_feat_refiner (nn.Module): GeoTransformer (or other) instance for refining coarse features and correspondences.
             model_params (ModelParams): Model parameters instance.
             octree_depth (int): Octree depth (must be fixed for this instance of the model).
-            coarse_idx (int): Index corresponding to depth of coarse features, ranging from [0, num_pyramid_levels)
-                              (sorted from finest to coarsest). Supports negative indices.
+            coarse_idx (tuple): List of indices corresponding to depth of coarse features, ranging from [0, num_pyramid_levels)
+                                (sorted from finest to coarsest). Supports negative indices.
             fine_idx (int): Index corresponding to depth of fine features, ranging from [0, num_pyramid_levels)
                             (sorted from finest to coarsest). Supports negative indices.
             coarse_feat_embed_dim (int): Embedding dim for coarse features (using MLP), set None to disable
@@ -105,23 +106,28 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.point_padding = 1e10
         self._benchmark = False
-        if self.depth_coarse >= self.depth_fine:
-            err_str = ('Coarse feature depth in octree must be less than fine'
-                       ' feature depth, check idx parameters.')
-            raise ValueError(err_str)
-        if self.depth_coarse < 1:
-            err_str = 'Select a valid feature depth (minimum 1)'
-            raise ValueError(err_str)
+        for depth_coarse_ii in self.depth_coarse:
+            if depth_coarse_ii >= self.depth_fine:
+                err_str = ('Coarse feature depth in octree must be less than fine'
+                           ' feature depth, check idx parameters.')
+                raise ValueError(err_str)
+            if depth_coarse_ii < 1:
+                err_str = 'Select a valid feature depth (minimum 1)'
+                raise ValueError(err_str)
 
         if self.freeze_hotformerloc:
             for param in self.hotformerloc_global.parameters():
                 param.requires_grad = False
 
-        self.coarse_feat_decoder = MLP(
-            self.coarse_feat_input_dim,
-            int(self.coarse_feat_input_dim * self.mlp_ratio),
-            self.coarse_feat_embed_dim,
-        ) if self.coarse_feat_embed_dim is not None else nn.Identity()
+        self.coarse_feat_decoder = nn.ModuleList()
+        for coarse_feat_input_dim in self.coarse_feat_input_dim:
+            self.coarse_feat_decoder.append(
+                MLP(
+                    coarse_feat_input_dim,
+                    int(coarse_feat_input_dim * self.mlp_ratio),
+                    self.coarse_feat_embed_dim,
+                ) if self.coarse_feat_embed_dim is not None else nn.Identity()
+            )
         self.fine_feat_decoder = MLP(
             self.fine_feat_input_dim,
             int(self.fine_feat_input_dim * self.mlp_ratio),
@@ -177,10 +183,13 @@ class HOTFormerMetricLoc(torch.nn.Module):
                            else 0)
         num_stages = self.hotformerloc_global.backbone.backbone.num_stages
         depth_start = self.octree_depth - num_downsamples
-        if self.coarse_idx >= 0:
-            self.depth_coarse = depth_start - self.coarse_idx
-        else:  # neg idx
-            self.depth_coarse = depth_start - num_stages - self.coarse_idx
+        self.depth_coarse = []
+        for coarse_idx in self.coarse_idx:
+            if coarse_idx >= 0:
+                depth_coarse = depth_start - coarse_idx
+            else:  # neg idx
+                depth_coarse = depth_start - num_stages - coarse_idx
+            self.depth_coarse.append(depth_coarse)
         if self.fine_idx >= 0:
             self.depth_fine = depth_start - self.fine_idx
         else:
@@ -196,7 +205,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
         num_pyramid_levels = self.hotformerloc_global.backbone.backbone.num_pyramid_levels
         if len(channels[num_octf_levels:]) == 1:
             channels[num_octf_levels:] = channels[num_octf_levels:] * num_pyramid_levels
-        self.coarse_feat_input_dim = channels[self.coarse_idx]
+        self.coarse_feat_input_dim = []
+        for coarse_idx in self.coarse_idx:
+            self.coarse_feat_input_dim.append(channels[coarse_idx])
         self.fine_feat_input_dim = channels[self.fine_idx]
         
     def forward(self, batch, global_only=False, **kwargs) -> List[dict]:
@@ -222,6 +233,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
         pos_points: Points = batch['pos_batch']['points']
 
         # Get coarse and fine feats and points
+        if len(self.depth_coarse) > 1:
+            raise NotImplementedError('Hierarchical coarse feat refinement not yet implemented')
+        depth_coarse = self.depth_coarse[0]
+        coarse_ii = 0
+        
         time_dict['local backbone forward'] = 0.0
         if 'anc_local_feats' in batch:
             # If pre-computed, skip forward pass
@@ -232,7 +248,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             tic = time.perf_counter()
             anc_global_out = self.hotformerloc_global(batch['anc_batch'])
             time_dict['local backbone forward'] += time.perf_counter() - tic
-            anc_feats_coarse = anc_global_out['local'][self.depth_coarse]
+            anc_feats_coarse = anc_global_out['local'][depth_coarse]
             anc_feats_fine = anc_global_out['local'][self.depth_fine]
         if 'pos_local_feats' in batch:
             pos_feats_coarse = batch['pos_local_feats']['coarse']
@@ -241,21 +257,21 @@ class HOTFormerMetricLoc(torch.nn.Module):
             tic = time.perf_counter()
             pos_global_out = self.hotformerloc_global(batch['pos_batch'])
             time_dict['local backbone forward'] += time.perf_counter() - tic
-            pos_feats_coarse = pos_global_out['local'][self.depth_coarse]
+            pos_feats_coarse = pos_global_out['local'][depth_coarse]
             pos_feats_fine = pos_global_out['local'][self.depth_fine]
 
         # Embed coarse and fine feats
         tic = time.perf_counter()
-        anc_feats_coarse = self.coarse_feat_decoder(anc_feats_coarse)
+        anc_feats_coarse = self.coarse_feat_decoder[coarse_ii](anc_feats_coarse)
         anc_feats_fine = self.fine_feat_decoder(anc_feats_fine)
-        pos_feats_coarse = self.coarse_feat_decoder(pos_feats_coarse)
+        pos_feats_coarse = self.coarse_feat_decoder[coarse_ii](pos_feats_coarse)
         pos_feats_fine = self.fine_feat_decoder(pos_feats_fine)
         time_dict['feat decoder'] = time.perf_counter() - tic
 
         # Get accurate centroids for octants (instead of naively using octant centres)
         tic = time.perf_counter()
-        anc_points_coarse = get_octant_centroids_from_points(anc_points, self.depth_coarse, self.quantizer)
-        pos_points_coarse = get_octant_centroids_from_points(pos_points, self.depth_coarse, self.quantizer)
+        anc_points_coarse = get_octant_centroids_from_points(anc_points, depth_coarse, self.quantizer)
+        pos_points_coarse = get_octant_centroids_from_points(pos_points, depth_coarse, self.quantizer)
         anc_points_fine = get_octant_centroids_from_points(anc_points, self.depth_fine, self.quantizer)
         pos_points_fine = get_octant_centroids_from_points(pos_points, self.depth_fine, self.quantizer)
         time_dict['compute centroids'] = time.perf_counter() - tic
@@ -283,14 +299,14 @@ class HOTFormerMetricLoc(torch.nn.Module):
         tic = time.perf_counter()
         if batch['anc_shift_and_scale'] is not None:
             anc_points_coarse = self.batch_unnormalize(
-                anc_points_coarse, batch['anc_shift_and_scale'], anc_octree, self.depth_coarse
+                anc_points_coarse, batch['anc_shift_and_scale'], anc_octree, depth_coarse
             )
             anc_points_fine = self.batch_unnormalize(
                 anc_points_fine, batch['anc_shift_and_scale'], anc_octree, self.depth_fine
             )
         if batch['pos_shift_and_scale'] is not None:
             pos_points_coarse = self.batch_unnormalize(
-                pos_points_coarse, batch['pos_shift_and_scale'], pos_octree, self.depth_coarse
+                pos_points_coarse, batch['pos_shift_and_scale'], pos_octree, depth_coarse
             )
             pos_points_fine = self.batch_unnormalize(
                 pos_points_fine, batch['pos_shift_and_scale'], pos_octree, self.depth_fine
@@ -300,16 +316,16 @@ class HOTFormerMetricLoc(torch.nn.Module):
         # Pad batched tensors and create attn mask
         #   (pad points with large value to prevent interactions with distance embedding)
         anc_points_coarse_padded = split_and_pad_data(
-            anc_octree, anc_points_coarse, self.depth_coarse, fill_value=self.point_padding
+            anc_octree, anc_points_coarse, depth_coarse, fill_value=self.point_padding
         )
         pos_points_coarse_padded = split_and_pad_data(
-            pos_octree, pos_points_coarse, self.depth_coarse, fill_value=self.point_padding
+            pos_octree, pos_points_coarse, depth_coarse, fill_value=self.point_padding
         )
         anc_feats_coarse_padded, anc_coarse_mask = split_and_pad_data(
-            anc_octree, anc_feats_coarse, self.depth_coarse, fill_value=0., return_mask=True
+            anc_octree, anc_feats_coarse, depth_coarse, fill_value=0., return_mask=True
         )
         pos_feats_coarse_padded, pos_coarse_mask = split_and_pad_data(
-            pos_octree, pos_feats_coarse, self.depth_coarse, fill_value=0., return_mask=True
+            pos_octree, pos_feats_coarse, depth_coarse, fill_value=0., return_mask=True
         )
 
         # NOTE: Padding does change the output slightly, as it softens the softmax
@@ -342,10 +358,10 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
         # Convert feats back to concatenated form
         anc_feats_coarse_norm = unpad_and_concat_data(
-            anc_octree, anc_feats_coarse_norm_padded, self.depth_coarse
+            anc_octree, anc_feats_coarse_norm_padded, depth_coarse
         )
         pos_feats_coarse_norm = unpad_and_concat_data(
-            pos_octree, pos_feats_coarse_norm_padded, self.depth_coarse
+            pos_octree, pos_feats_coarse_norm_padded, depth_coarse
         )
 
         time_dict['coarse matching'] = 0.0
@@ -354,8 +370,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
         tic_lgr_start = time.perf_counter()
         # TODO: Convert coarse matching to work in batches (may require zero padding or selecting k coarse points)
         for batch_idx in range(pos_octree.batch_size):
-            anc_batch_mask_coarse = anc_octree.batch_id(self.depth_coarse, nempty=True) == batch_idx
-            pos_batch_mask_coarse = pos_octree.batch_id(self.depth_coarse, nempty=True) == batch_idx
+            anc_batch_mask_coarse = anc_octree.batch_id(depth_coarse, nempty=True) == batch_idx
+            pos_batch_mask_coarse = pos_octree.batch_id(depth_coarse, nempty=True) == batch_idx
             anc_batch_mask_fine = anc_octree.batch_id(self.depth_fine, nempty=True) == batch_idx
             pos_batch_mask_fine = pos_octree.batch_id(self.depth_fine, nempty=True) == batch_idx
             anc_points_coarse_ii = anc_points_coarse[anc_batch_mask_coarse]

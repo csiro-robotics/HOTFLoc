@@ -68,7 +68,7 @@ class ModelParams:
 
         # Metric loc params
         if local:
-            self.coarse_idx = params.getint('coarse_idx')
+            self.coarse_idx = tuple([int(e) for e in params['coarse_idx'].split(',')])
             self.fine_idx = params.getint('fine_idx')
             assert self.coarse_idx is not None and self.fine_idx is not None
             self.coarse_feat_embed_dim = params.getint('coarse_feat_embed_dim', None)  # Dimension to project coarse features with MLP before metric localisation (None to disable)
@@ -148,7 +148,7 @@ class ModelParams:
                 self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
                 if self.rerank_mode is not None:
                     self.rerank_mode = self.rerank_mode.lower()
-                    if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc'):
+                    if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc'):
                         raise ValueError('Invalid re-ranking mode')
                 if 'rerank_rt_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
                     self.rerank_rt_indices = tuple([int(e) for e in params['rerank_rt_indices'].split(',')])
@@ -162,7 +162,7 @@ class ModelParams:
                     self.geometric_consistency_d_thresh = tuple([float(e) for e in params['geometric_consistency_d_thresh'].split(',')])
                 else:
                     self.geometric_consistency_d_thresh = (5.,)
-                if 'rerank_num_correspondences' in params:  # Total number of local correspondences for geometric consistency, per relay token level.
+                if 'rerank_num_correspondences' in params:  # Total number of local correspondences for geometric consistency, per relay token/coarse feat level.
                     self.rerank_num_correspondences = tuple([int(e) for e in params['rerank_num_correspondences'].split(',')])
                 else:
                     self.rerank_num_correspondences = (128,)
@@ -171,6 +171,7 @@ class ModelParams:
                 else:
                     self.rerank_min_correspondences_per_window = (8,)
                 self.rerank_use_attn_vals = params.getboolean('rerank_use_attn_vals', False)  # Use relay token attention values as a feature in the re-ranking classifier
+                self.rerank_geotransformer_refinement = params.getboolean('rerank_geotransformer_refinement', True)  # Use geotransformer to refine local features for re-ranking
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params

@@ -8,6 +8,7 @@ from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.hotformerloc_metric_loc_reranking import HOTFormerMetricLocReRanking
 from models.relay_token_reranker import (
     RelayTokenGeometricConsistencyReranker,
     RelayTokenLocalGeometricConsistencyReranker,
@@ -106,6 +107,7 @@ def model_factory(params: TrainingParams):
                 + "must be used!"
             )
         reranker = None
+        geotransformer_reranker = False
         if model_params.rerank_mode == 'relay_token_gc':
             reranker = RelayTokenGeometricConsistencyReranker(
                 rerank_rt_indices=model_params.rerank_rt_indices,
@@ -123,6 +125,8 @@ def model_factory(params: TrainingParams):
                 num_correspondences=model_params.rerank_num_correspondences,
                 min_correspondences_per_window=model_params.rerank_min_correspondences_per_window,
             )
+        elif model_params.rerank_mode == 'local_hierarchical_gc':  # Need GeoTrans layers for local hierarchical GC
+            geotransformer_reranker = True
         elif model_params.rerank_mode is not None:
             raise NotImplementedError
         hotformerloc_global = HOTFormerLoc(
@@ -151,21 +155,41 @@ def model_factory(params: TrainingParams):
             )
         else:
             coarse_feat_refiner = None
-        model = HOTFormerMetricLoc(
-            hotformerloc_global=hotformerloc_global,
-            coarse_feat_refiner=coarse_feat_refiner,
-            model_params=model_params,
-            octree_depth=params.octree_depth,
-            coarse_idx=model_params.coarse_idx,
-            fine_idx=model_params.fine_idx,
-            coarse_feat_embed_dim=model_params.coarse_feat_embed_dim,
-            fine_feat_embed_dim=model_params.fine_feat_embed_dim,
-            mlp_ratio=model_params.metloc_mlp_ratio,
-            freeze_hotformerloc=model_params.freeze_hotformerloc,
-            quantizer=model_params.quantizer,
-            grad_checkpoint=model_params.grad_checkpoint,
-            return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
-        )
+        if not geotransformer_reranker:
+            model = HOTFormerMetricLoc(
+                hotformerloc_global=hotformerloc_global,
+                coarse_feat_refiner=coarse_feat_refiner,
+                model_params=model_params,
+                octree_depth=params.octree_depth,
+                coarse_idx=model_params.coarse_idx,
+                fine_idx=model_params.fine_idx,
+                coarse_feat_embed_dim=model_params.coarse_feat_embed_dim,
+                fine_feat_embed_dim=model_params.fine_feat_embed_dim,
+                mlp_ratio=model_params.metloc_mlp_ratio,
+                freeze_hotformerloc=model_params.freeze_hotformerloc,
+                quantizer=model_params.quantizer,
+                grad_checkpoint=model_params.grad_checkpoint,
+                return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+            )
+        else:
+            model = HOTFormerMetricLocReRanking(
+                hotformerloc_global=hotformerloc_global,
+                coarse_feat_refiner=coarse_feat_refiner,
+                model_params=model_params,
+                octree_depth=params.octree_depth,
+                coarse_idx=model_params.coarse_idx,
+                fine_idx=model_params.fine_idx,
+                coarse_feat_embed_dim=model_params.coarse_feat_embed_dim,
+                fine_feat_embed_dim=model_params.fine_feat_embed_dim,
+                mlp_ratio=model_params.metloc_mlp_ratio,
+                freeze_hotformerloc=model_params.freeze_hotformerloc,
+                quantizer=model_params.quantizer,
+                grad_checkpoint=model_params.grad_checkpoint,
+                return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+                rerank_mode=model_params.rerank_mode,
+                rerank_geotransformer_refinement=model_params.rerank_geotransformer_refinement,
+                rerank_num_correspondences=model_params.rerank_num_correspondences,
+            )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)
         backbone = OctFormer(

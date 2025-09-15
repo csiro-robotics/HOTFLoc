@@ -896,8 +896,13 @@ class NetworkTrainer:
             # Compute re-ranking loss
             if self.rerank_loss_fn is not None:
                 shift_and_scale = to_device(shift_and_scale, self.device, non_blocking=True)
-                rerank_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
-                rerank_scores, targets = self.model.rerank(y, rerank_triplets, shift_and_scale, batch['points'])
+                hard_triplets = self.rerank_loss_fn.get_hard_triplets(embeddings, positives_mask, negatives_mask)
+                rerank_scores, targets = self.model.rerank(
+                    model_out=y,
+                    hard_triplets=hard_triplets,
+                    shift_and_scale=shift_and_scale,
+                    points=batch['points']
+                )
                 rerank_loss, rerank_stats = self.rerank_loss_fn(rerank_scores, targets)
                 stats.update(rerank_stats)
                 loss += rerank_loss
