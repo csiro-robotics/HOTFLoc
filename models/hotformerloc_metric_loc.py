@@ -434,7 +434,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             with torch.no_grad():
                 tic = time.perf_counter()
                 anc_node_corr_indices_ii, pos_node_corr_indices_ii, node_corr_scores_ii = self.coarse_matching(
-                    anc_feats_coarse_norm, pos_feats_coarse_norm, anc_node_masks_ii, pos_node_masks_ii
+                    anc_feats_coarse_norm_ii, pos_feats_coarse_norm_ii, anc_node_masks_ii, pos_node_masks_ii
                 )
                 time_dict['coarse matching'] += time.perf_counter() - tic
 
