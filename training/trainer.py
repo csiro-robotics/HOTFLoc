@@ -429,7 +429,7 @@ class NetworkTrainer:
                     eval_stats[split_log_key]['recall@20'][radius] = global_metrics[database_name][split]['recall'][radius][20-1]
                     eval_stats[split_log_key]['recall@1%'][radius] = global_metrics[database_name][split]['recall@1%'][radius]
                     eval_stats[split_log_key]['MRR'][radius] = global_metrics[database_name][split]['MRR'][radius]
-                if reranking:
+                    if reranking:
                         eval_stats[split_log_key]['recall@1_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][0]
                         eval_stats[split_log_key]['recall@5_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][5-1]
                         eval_stats[split_log_key]['recall@20_rerank'][radius] = global_metrics[database_name][split]['recall_rr'][radius][20-1]
