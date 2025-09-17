@@ -901,7 +901,7 @@ class NetworkTrainer:
                     model_out=y,
                     hard_triplets=hard_triplets,
                     shift_and_scale=shift_and_scale,
-                    points=batch['points']
+                    batch=batch,
                 )
                 rerank_loss, rerank_stats = self.rerank_loss_fn(rerank_scores, targets)
                 stats.update(rerank_stats)

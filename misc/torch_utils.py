@@ -87,3 +87,20 @@ def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
     std_syn = torch.std(timings)
     print(f"{func.__class__} runtime:")
     print(f"  mean - {mean_syn:.2f}ms, std - {std_syn:.2f}ms")
+
+
+def min_max_normalize(x: torch.Tensor, eps: float = 1e-8):
+    """
+    Scale values of a (*, N) tensor to [0, 1] along the last dimension.
+
+    Args:
+        x: (*, N) tensor
+        eps: small constant to avoid division by zero
+
+    Returns:
+        scaled: (*, N) tensor with values in [0, 1]
+    """
+    min_vals, _ = x.min(dim=-1, keepdim=True)   # (*, 1)
+    max_vals, _ = x.max(dim=-1, keepdim=True)   # (*, 1)
+    scaled = (x - min_vals) / (max_vals - min_vals + eps)
+    return scaled

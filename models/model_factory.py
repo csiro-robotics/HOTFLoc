@@ -141,7 +141,7 @@ def model_factory(params: TrainingParams):
             # Return only HOTFormerLoc backbone
             return hotformerloc_global
         if not model_params.geotransformer.disable:
-            coarse_feat_refiner = GeometricTransformer(
+            coarse_feat_refiner = nn.ModuleList([GeometricTransformer(
                 input_dim=model_params.geotransformer.input_dim,
                 output_dim=model_params.geotransformer.output_dim,
                 hidden_dim=model_params.geotransformer.hidden_dim,
@@ -152,7 +152,7 @@ def model_factory(params: TrainingParams):
                 angle_k=model_params.geotransformer.angle_k,
                 activation_fn=model_params.geotransformer.activation_fn,
                 reduction_a=model_params.geotransformer.reduction_a,
-            )
+            ) for ii in model_params.coarse_idx])
         else:
             coarse_feat_refiner = None
         if not geotransformer_reranker:
@@ -187,8 +187,10 @@ def model_factory(params: TrainingParams):
                 grad_checkpoint=model_params.grad_checkpoint,
                 return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
                 rerank_mode=model_params.rerank_mode,
+                geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
                 rerank_geotransformer_refinement=model_params.rerank_geotransformer_refinement,
                 rerank_num_correspondences=model_params.rerank_num_correspondences,
+                rerank_num_sinkhorn_iterations=model_params.rerank_num_sinkhorn_iterations,
             )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)

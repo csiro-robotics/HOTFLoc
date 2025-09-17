@@ -471,11 +471,17 @@ def make_eval_dataloader(params: TrainingParams, data_set: Dict) -> DataLoader:
 
 
 def make_eval_dataloader_reranking(
-    params: TrainingParams, query_set: Dict, database_set: Dict, query_nn_list: List
+    params: TrainingParams,
+    query_set: Dict,
+    database_set: Dict,
+    query_nn_list: List,
+    num_workers: int = None,
 ) -> DataLoader:
     """
     Creates dataloader suitable for creating reranking batches.
     """
+    if num_workers is None:
+        num_workers = params.num_workers
     quantizer = params.model_params.quantizer
     eval_dataset = make_eval_dataset_reranking(
         params, query_set, database_set, query_nn_list
@@ -483,7 +489,7 @@ def make_eval_dataloader_reranking(
     eval_collate_fn = make_eval_collate_fn_reranking(quantizer, params)
     eval_dataloader = DataLoader(eval_dataset, batch_size=1,
                                  shuffle=False, pin_memory=True,  
-                                 num_workers=params.num_workers,  # may increase workers to keep pace with bs 1
+                                 num_workers=num_workers,
                                  collate_fn=eval_collate_fn)
     return eval_dataloader
 

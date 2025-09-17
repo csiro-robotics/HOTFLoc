@@ -282,11 +282,12 @@ def get_latent_vectors(
     ### NOTE: Disabled so that eval can be tested during training debug mode
     if params.debug:
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
-        local_dict = {'local_embeddings': {'coarse': [], 'fine': []}}
+        local_dict = {'local_embeddings': {'coarse': [[] for _ in model.depth_coarse], 'fine': []}}
         if not only_global:
             for _ in range(len(data_set)):
-                local_dict['local_embeddings']['coarse'].append(torch.randn(128, params.model_params.channels[-1]))
-                local_dict['local_embeddings']['fine'].append(torch.randn(512, params.model_params.channels[-3]))
+                for ii, coarse_idx in enumerate(model.coarse_idx):
+                    local_dict['local_embeddings']['coarse'][ii].append(torch.randn(128, params.model_params.channels[coarse_idx]))
+                local_dict['local_embeddings']['fine'].append(torch.randn(512, params.model_params.channels[model.fine_idx]))
         return global_embeddings, local_dict
 
     # Create dataloader for data_set
@@ -335,11 +336,15 @@ def compute_embedding(
             if isinstance(model, HOTFormerMetricLoc):
                 # Only keep the coarse and fine indices to save mem
                 # Batch stored in concat mode, so need to split back to batch elems
-                batch_lengths_coarse = y['octree'].batch_nnum_nempty[model.depth_coarse].tolist()
+                local_embedding_coarse_list = [[] for _ in range(y['octree'].batch_size)]
+                for depth_coarse in model.depth_coarse:
+                    batch_lengths_coarse = y['octree'].batch_nnum_nempty[depth_coarse].tolist()
+                    batch_embedding_coarse = local_embedding[depth_coarse].split(batch_lengths_coarse)
+                    for ii, embedding in enumerate(batch_embedding_coarse):
+                        local_embedding_coarse_list[ii].append(embedding)
                 batch_lengths_fine = y['octree'].batch_nnum_nempty[model.depth_fine].tolist()
-                local_embedding_coarse = local_embedding[model.depth_coarse].split(batch_lengths_coarse)
                 local_embedding_fine = local_embedding[model.depth_fine].split(batch_lengths_fine)
-                local_dict['local_embedding'] = release_cuda({'coarse': local_embedding_coarse, 'fine': local_embedding_fine})
+                local_dict['local_embedding'] = release_cuda({'coarse': local_embedding_coarse_list, 'fine': local_embedding_fine})
             else:
                 local_dict['local_embedding'] = release_cuda(local_embedding)
         # # Get relay tokens and attn vals for re-ranking
@@ -573,109 +578,111 @@ def get_metrics(
         # # Re-ranking with SGV
         # # NOTE: TO DO THIS, NEED TO PRE-COMPUTE THE COARSE CENTROIDS, OR GET THEM AFTER RUNNING FORWARD PASS OF HOTFORMERMETRICLOC
         if reranking:
+            assert num_neighbors >= params.rerank_num_neighbours, 'Set num_neighbours higher'
             global_result_dict['query_nn_list'].append((query_idx, nn_indices[:params.rerank_num_neighbours]))
             global_result_dict['euclid_dist_list'].append(euclid_dist)
             
-            if params.model_params.rerank_mode == 'sgv':
-                # topk = min(num_neighbors, len(nn_indices))
-                # tick = time.perf_counter()
-                # candidate_local_embeddings = database_local_embeddings[m][nn_indices]
-                # candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
-                # fitness_list = sgv_fn(query_local_embeddings[n][query_idx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
-                # topk_rerank = np.flip(np.asarray(fitness_list).argsort())
-                # topk_rerank_indices = copy.deepcopy(nn_indices)
-                # topk_rerank_indices[:topk] = nn_indices[topk_rerank]
-                # t_rerank = time.perf_counter() - tick
-                # intermediate_metrics['t_rr'].append(t_rerank)
-                raise NotImplementedError
+            # if params.model_params.rerank_mode == 'sgv':
+            #     # topk = min(num_neighbors, len(nn_indices))
+            #     # tick = time.perf_counter()
+            #     # candidate_local_embeddings = database_local_embeddings[m][nn_indices]
+            #     # candidate_keypoints = local_map_embeddings_keypoints[m][nn_indices]
+            #     # fitness_list = sgv_fn(query_local_embeddings[n][query_idx], candidate_local_embeddings, candidate_keypoints, d_thresh=0.4)
+            #     # topk_rerank = np.flip(np.asarray(fitness_list).argsort())
+            #     # topk_rerank_indices = copy.deepcopy(nn_indices)
+            #     # topk_rerank_indices[:topk] = nn_indices[topk_rerank]
+            #     # t_rerank = time.perf_counter() - tick
+            #     # intermediate_metrics['t_rr'].append(t_rerank)
+            #     raise NotImplementedError
 
-            # Re-ranking with relay token geometric consistency 
-            elif params.model_params.rerank_mode == 'relay_token_gc':
-                pass
-                ####################################################################
-                # THIS BLOCK CONTAINS THE SIMPLE BATCH CREATION APPROACH FOR
-                # RE-RANKING, i.e. DIRECTLY LOADING ALL OCTREES AND RUNNING A NEW
-                # (WASTED) FORWARD PASS. CURENTLY WORKS BUT IS SLOW. REPLACING WITH
-                # A TORCH DATALOADER THAT DOES THE SAME THING.
-                ####################################################################
-                # rerank_batch_temp = []
-                # rerank_batch_temp.append(query_dataset[query_idx])
-                # for nn_idx in nn_indices:
-                #     rerank_batch_temp.append(database_dataset[nn_idx])
-                # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
-                # rerank_batch = rerank_batch_dict['batch']
-                # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
-                # with torch.inference_mode():
-                #     out = model(rerank_batch, global_only=True)
-                #     rerank_scores = model.rerank_inference(out, rerank_shift_and_scale)
-                #     topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, dim=1, descending=True)
-                ####################################################################
+            # # Re-ranking with relay token geometric consistency 
+            # elif params.model_params.rerank_mode == 'relay_token_gc':
+            #     pass
+            #     ####################################################################
+            #     # THIS BLOCK CONTAINS THE SIMPLE BATCH CREATION APPROACH FOR
+            #     # RE-RANKING, i.e. DIRECTLY LOADING ALL OCTREES AND RUNNING A NEW
+            #     # (WASTED) FORWARD PASS. CURENTLY WORKS BUT IS SLOW. REPLACING WITH
+            #     # A TORCH DATALOADER THAT DOES THE SAME THING.
+            #     ####################################################################
+            #     # rerank_batch_temp = []
+            #     # rerank_batch_temp.append(query_dataset[query_idx])
+            #     # for nn_idx in nn_indices:
+            #     #     rerank_batch_temp.append(database_dataset[nn_idx])
+            #     # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
+            #     # rerank_batch = rerank_batch_dict['batch']
+            #     # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+            #     # with torch.inference_mode():
+            #     #     out = model(rerank_batch, global_only=True)
+            #     #     rerank_scores = model.rerank_inference(out, rerank_shift_and_scale)
+            #     #     topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, dim=1, descending=True)
+            #     ####################################################################
 
-                ####################################################################
-                # THIS BLOCK CONTAINS INITIAL ATTEMPTS TO PRE-COMPUTE RELAY TOKENS
-                # AND COMBINE THEM INTO NEW BATCHES FOR RE-RANKING. UNFINISHED.
-                ####################################################################
-                # NOTE: Currently I don't think this is feasible to do, due to the
-                #       way that the number of relay tokens for a given batch element
-                #       will vary depending on the length of it's neighbour elements.
-                #       Simple solution is just to run the forward pass again, which is
-                #       slow, but is guaranteed to output RTs in the right format.
-                # rerank_batch_temp, rt_batch, rt_attn_batch = [], [], []
-                # rerank_batch_temp.append(query_dataset[query_idx])
-                # rt_batch.append(query_local_dict['rt'][query_idx])
-                # rt_attn_batch.append(query_local_dict['rt_final_cls_attn_vals'][query_idx])
-                # for nn_idx in nn_indices:
-                #     rerank_batch_temp.append(database_dataset[nn_idx])
-                #     rt_batch.append(database_local_dict['rt'][nn_idx])
-                #     rt_attn_batch.append(database_local_dict['rt_final_cls_attn_vals'][nn_idx])
-                # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
-                # rerank_batch = rerank_batch_dict['batch']
-                # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
-                # # Create OctreeT
-                # if 'hotformerloc' in model_name.lower():
-                #     octree = model.backbone.backbone.construct_OctreeT(
-                #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
-                #     )
-                # elif 'hotformermetricloc' in model_name.lower():
-                #     octree = model.hotformerloc_global.backbone.backbone.construct_OctreeT(
-                #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
-                #     )
-                # else:
-                #     raise NotImplementedError
-                # query_rt = query_local_dict['rt'][query_idx]
-                # nn_rt_list = [database_local_dict['rt'][nn_idx] for nn_idx in nn_indices]
-                # concat_and_pad_rt(out['rt'], octree, pad=False, remove_final_padding=True)
-                # unpad_and_split_rt()
-                # TODO: Pass through model
-                # rerank_scores = model.rerank_inference(rerank_batch, rerank_shift_and_scale)
-                # topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, descending=True)
-                ####################################################################
+            #     ####################################################################
+            #     # THIS BLOCK CONTAINS INITIAL ATTEMPTS TO PRE-COMPUTE RELAY TOKENS
+            #     # AND COMBINE THEM INTO NEW BATCHES FOR RE-RANKING. UNFINISHED.
+            #     ####################################################################
+            #     # NOTE: Currently I don't think this is feasible to do, due to the
+            #     #       way that the number of relay tokens for a given batch element
+            #     #       will vary depending on the length of it's neighbour elements.
+            #     #       Simple solution is just to run the forward pass again, which is
+            #     #       slow, but is guaranteed to output RTs in the right format.
+            #     # rerank_batch_temp, rt_batch, rt_attn_batch = [], [], []
+            #     # rerank_batch_temp.append(query_dataset[query_idx])
+            #     # rt_batch.append(query_local_dict['rt'][query_idx])
+            #     # rt_attn_batch.append(query_local_dict['rt_final_cls_attn_vals'][query_idx])
+            #     # for nn_idx in nn_indices:
+            #     #     rerank_batch_temp.append(database_dataset[nn_idx])
+            #     #     rt_batch.append(database_local_dict['rt'][nn_idx])
+            #     #     rt_attn_batch.append(database_local_dict['rt_final_cls_attn_vals'][nn_idx])
+            #     # rerank_batch_dict = to_device(eval_collate_fn(rerank_batch_temp), device, construct_octree_neigh=True)
+            #     # rerank_batch = rerank_batch_dict['batch']
+            #     # rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+            #     # # Create OctreeT
+            #     # if 'hotformerloc' in model_name.lower():
+            #     #     octree = model.backbone.backbone.construct_OctreeT(
+            #     #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
+            #     #     )
+            #     # elif 'hotformermetricloc' in model_name.lower():
+            #     #     octree = model.hotformerloc_global.backbone.backbone.construct_OctreeT(
+            #     #         rerank_batch, depth=(params.octree_depth-params.model_params.num_input_downsamples)
+            #     #     )
+            #     # else:
+            #     #     raise NotImplementedError
+            #     # query_rt = query_local_dict['rt'][query_idx]
+            #     # nn_rt_list = [database_local_dict['rt'][nn_idx] for nn_idx in nn_indices]
+            #     # concat_and_pad_rt(out['rt'], octree, pad=False, remove_final_padding=True)
+            #     # unpad_and_split_rt()
+            #     # TODO: Pass through model
+            #     # rerank_scores = model.rerank_inference(rerank_batch, rerank_shift_and_scale)
+            #     # topk_rerank, topk_rerank_indices = torch.sort(rerank_scores, descending=True)
+            #     ####################################################################
 
-            elif params.model_params.rerank_mode is not None:
-                raise NotImplementedError
+            # elif params.model_params.rerank_mode is not None:
+            #     raise NotImplementedError
 
-                # delta_rerank = query_position - database_positions[m][topk_rerank_indices]
-                # euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+            #     # delta_rerank = query_position - database_positions[m][topk_rerank_indices]
+            #     # euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
 
-                # # Log cases where re-ranking is worse (causes PR failure, or is
-                # #   significantly worse than the original top-candidate)
-                # rr_to_nn_euclid_dist = euclid_dist_rr - euclid_dist
-                # if (euclid_dist <= self.MAX_NN_EUCLID_DIST
-                #         and rr_to_nn_euclid_dist > self.MAX_RR_TO_NN_EUCLID_DIST):
-                #     # print(f'Fail: {euclid_dist_rr:.2f}m > {euclid_dist:.2f}m', flush=True)
-                #     query_name = os.path.basename(self.eval_set.query_set[query_idx].rel_scan_filepath)
-                #     nn_name = os.path.basename(self.eval_set.map_set[nn_indices].rel_scan_filepath)
-                #     nn_rerank_name = os.path.basename(self.eval_set.map_set[topk_rerank_indices].rel_scan_filepath)
-                #     global_metrics['rr_failures'].append((query_name, nn_name,
-                #                                             nn_rerank_name,
-                #                                             f'{euclid_dist:.2f}',
-                #                                             f'{euclid_dist_rr:.2f}'))
-            ########################################################################
+            #     # # Log cases where re-ranking is worse (causes PR failure, or is
+            #     # #   significantly worse than the original top-candidate)
+            #     # rr_to_nn_euclid_dist = euclid_dist_rr - euclid_dist
+            #     # if (euclid_dist <= self.MAX_NN_EUCLID_DIST
+            #     #         and rr_to_nn_euclid_dist > self.MAX_RR_TO_NN_EUCLID_DIST):
+            #     #     # print(f'Fail: {euclid_dist_rr:.2f}m > {euclid_dist:.2f}m', flush=True)
+            #     #     query_name = os.path.basename(self.eval_set.query_set[query_idx].rel_scan_filepath)
+            #     #     nn_name = os.path.basename(self.eval_set.map_set[nn_indices].rel_scan_filepath)
+            #     #     nn_rerank_name = os.path.basename(self.eval_set.map_set[topk_rerank_indices].rel_scan_filepath)
+            #     #     global_metrics['rr_failures'].append((query_name, nn_name,
+            #     #                                             nn_rerank_name,
+            #     #                                             f'{euclid_dist:.2f}',
+            #     #                                             f'{euclid_dist_rr:.2f}'))
+            # ########################################################################
 
         # Count true positives and 1% retrieved for different radius and NN number
         intermediate_metrics['tp'] = {r: [intermediate_metrics['tp'][r][nn] + (1 if (euclid_dist[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in radius}
         intermediate_metrics['opr'] = {r: intermediate_metrics['opr'][r] + (1 if (euclid_dist[:opr_threshold] <= r).any() else 0) for r in radius}
         intermediate_metrics['RR'] = {r: intermediate_metrics['RR'][r]+[next((1.0/(i+1) for i, x in enumerate(euclid_dist <= r) if x), 0)] for r in radius}
+        # NOTE: rr metrics now handled in below loop
         # intermediate_metrics['tp_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] + (1 if (euclid_dist_rr[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in self.radius}
         # intermediate_metrics['opr_rr'] = {r: intermediate_metrics['opr_rr'][r] + (1 if (euclid_dist_rr[:threshold] <= r).any() else 0) for r in self.radius}
         # intermediate_metrics['RR_rr'] = {r: intermediate_metrics['RR_rr'][r]+[next((1.0/(i+1) for i, x in enumerate(euclid_dist_rr <= r) if x), 0)] for r in self.radius}
@@ -689,13 +696,15 @@ def get_metrics(
         if euclid_dist[0] > local_max_eval_threshold:
             continue
 
-        # Cache query and nn idx for metric loc eval
+        # Cache query and nn idx for metric loc eval (if not considering re-ranking)
         metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
 
     # Run re-ranking evaluation using pre-computed nearest neighbours
+    # NOTE: Could be faster if done in the PR loop, but requires additional implementation
+    #       to pre-compute local point coords (or octrees). Usable for now.
     if reranking and params.model_params.rerank_mode is not None:
-        rerank_dataloader = make_eval_dataloader_reranking(
-            params, query_set, database_set, global_result_dict['query_nn_list']
+        rerank_dataloader = make_eval_dataloader_reranking(  # Increased num workers to minimise bottleneck (assumes enough threads are available)
+            params, query_set, database_set, global_result_dict['query_nn_list'], num_workers=(params.num_workers * 3)
         )
         for idx, rerank_batch_dict in tqdm.tqdm(enumerate(rerank_dataloader),
                                     total=len(rerank_dataloader),
@@ -707,24 +716,37 @@ def get_metrics(
             query_idx = global_result_dict['query_nn_list'][idx][0]
             nn_indices = global_result_dict['query_nn_list'][idx][1]
             euclid_dist = global_result_dict['euclid_dist_list'][idx]
+            query_metadata = query_set[query_idx]  # {'query': path, 'northing': , 'easting': , 'pose': }
+            query_position = np.array((query_metadata['northing'], query_metadata['easting']))
 
             # Move to GPU and do forward pass
             rerank_batch_dict = to_device(rerank_batch_dict, device, non_blocking=True, construct_octree_neigh=True)
             rerank_batch = rerank_batch_dict['batch']
             rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+
             with torch.inference_mode():
-                out = model(rerank_batch, global_only=True)
+                # TODO: Add sgv as an option here
+                if params.model_params.rerank_mode in ('relay_token_gc', 'relay_token_local_gc'):
+                    out_dict = model(rerank_batch, global_only=True)
+                elif params.model_params.rerank_mode == 'local_hierarchical_gc':
+                    # Use pre-computed local descriptors
+                    rerank_batch_local_embeddings = [
+                        query_local_dict['local_embeddings']['coarse'][query_idx],
+                        *[database_local_dict['local_embeddings']['coarse'][nn_idx] for nn_idx in nn_indices]
+                    ]
+                    out_dict = {'local': rerank_batch_local_embeddings}
+                    out_dict = to_device(out_dict, device)
                 tic_rr = time.perf_counter()
                 rerank_scores = model.rerank_inference(
-                    model_out=out,
+                    model_out=out_dict,
                     shift_and_scale=rerank_shift_and_scale,
-                    points=rerank_batch["points"],
+                    batch=rerank_batch,
                 )[0, :, 0]
                 intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
-                topk_rerank, topk_rerank_indices = release_cuda(
+                _, rerank_sort_indices = release_cuda(
                     torch.sort(rerank_scores, descending=True), to_numpy=True
                 )
-
+                topk_rerank_indices = nn_indices[rerank_sort_indices]
                 delta_rerank = query_position - database_positions[topk_rerank_indices]
                 euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
 

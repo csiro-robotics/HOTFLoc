@@ -62,7 +62,7 @@ def sgv_parallel(
     tgt_keypts,
     src_features,
     tgt_features,
-    d_thresh=5.0,
+    d_thresh=0.4,
     return_spatial_consistency=False,
 ):
     """
@@ -170,7 +170,7 @@ def batched_sgv_parallel(
     tgt_keypts: Tensor,
     src_features: Optional[Tensor] = None,
     tgt_features: Optional[Tensor] = None,
-    d_thresh=5.0,
+    d_thresh=0.4,
     mask: Optional[Tensor] = None,
     # mask_zeros=False,
     return_spatial_consistency=False,
