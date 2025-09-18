@@ -190,6 +190,8 @@ def model_factory(params: TrainingParams):
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
                 rerank_geotransformer_refinement=model_params.rerank_geotransformer_refinement,
                 rerank_num_correspondences=model_params.rerank_num_correspondences,
+                rerank_scale_eigvec=model_params.rerank_scale_eigvec,
+                rerank_eigvec_layernorm=model_params.rerank_eigvec_layernorm,
                 rerank_num_sinkhorn_iterations=model_params.rerank_num_sinkhorn_iterations,
             )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):

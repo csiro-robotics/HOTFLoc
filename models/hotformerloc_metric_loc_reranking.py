@@ -36,9 +36,6 @@ from geotransformer.modules.geotransformer import (
     GeometricTransformer,
 )
 
-VIZ = False
-SAVE_VIZ_PCL = True
-SAVE_DIR = './node_coloring_pcls'
 
 class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
     def __init__(
@@ -62,6 +59,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         rerank_num_correspondences: Tuple[int] = (128, 256),
         rerank_sort_eigvec: bool = True,
         rerank_scale_eigvec: bool = True,
+        rerank_eigvec_layernorm: bool = False,
         rerank_num_sinkhorn_iterations: int = 100,
         **kwargs,
     ):
@@ -93,6 +91,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             rerank_num_correspondences (tuple): Total number of local correspondences for geometric consistency re-ranking, per coarse level.
             rerank_sort_eigvec (bool): Sort eigenvector prior to MLP
             rerank_scale_eigvec (bool): Scale eigenvector to range [0, 1] prior to MLP
+            rerank_eigvec_layernorm (bool): Instead apply layernorm to the eigvec priot to the MLP
             rerank_num_sinkhorn_iterations (int): Number of sinkhorn iterations. Set to 0 to disable OT.
 
         Returns:
@@ -120,7 +119,10 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         self.rerank_num_correspondences=rerank_num_correspondences
         self.rerank_sort_eigvec = rerank_sort_eigvec
         self.rerank_scale_eigvec = rerank_scale_eigvec
+        self.rerank_eigvec_layernorm = rerank_eigvec_layernorm
         self.rerank_num_sinkhorn_iterations = rerank_num_sinkhorn_iterations
+        if self.rerank_scale_eigvec and self.rerank_eigvec_layernorm:
+            raise ValueError('Redundant choice of parameters, select one or the other')
 
         self.rerank_coarse_feat_decoder = nn.ModuleList()
         for ii, coarse_feat_input_dim in enumerate(self.coarse_feat_input_dim):
@@ -142,6 +144,10 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             self.output_dim = sum(self.rerank_num_correspondences)
             self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
             self.sigmoid = nn.Sigmoid()
+            if self.rerank_eigvec_layernorm:
+                self.eigvec_layernorms = nn.ModuleList(
+                    [nn.LayerNorm(dim) for dim in self.rerank_num_correspondences]
+                )
         else:
             raise NotImplementedError
 
@@ -257,8 +263,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 time_dict[f'geotrans forward {coarse_ii}'] = time.perf_counter() - tic
 
             # Sinkhorn matching
+            tic = time.perf_counter()
             if self.rerank_optimal_transport is not None:
-                tic = time.perf_counter()
                 matching_scores_depth_j = torch.einsum('bnd,bmd->bnm', anc_feats_depth_j_padded, nn_feats_depth_j_padded)  # (B*NN, N, N)
                 matching_scores_depth_j = matching_scores_depth_j / C ** 0.5
                 if self.grad_checkpoint and self.training:
@@ -285,6 +291,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 matching_scores_depth_j = torch.einsum('bnd,bmd->bnm', anc_feats_depth_j_padded, nn_feats_depth_j_padded)  # (NN, N, N)
                 mask = torch.logical_or(anc_mask_depth_j_padded[..., None], nn_mask_depth_j_padded[..., None, :])
                 matching_scores_depth_j.masked_fill_(mask, -1e10)
+                time_dict[f'coarse matching {coarse_ii}'] = time.perf_counter() - tic
             
             # Consider NN from anc side
             k_corr = min(N, self.rerank_num_correspondences[coarse_ii])
@@ -340,6 +347,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
             if self.rerank_scale_eigvec:
                 leading_eigvec = min_max_normalize(leading_eigvec)
+            elif self.rerank_eigvec_layernorm:
+                leading_eigvec = self.eigvec_layernorms[coarse_ii](leading_eigvec)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
@@ -524,6 +533,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
             if self.rerank_scale_eigvec:
                 leading_eigvec = min_max_normalize(leading_eigvec)
+            elif self.rerank_eigvec_layernorm:
+                leading_eigvec = self.eigvec_layernorms[coarse_ii](leading_eigvec)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores

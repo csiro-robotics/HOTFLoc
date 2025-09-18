@@ -178,6 +178,8 @@ class ModelParams:
                 self.rerank_use_attn_vals = params.getboolean('rerank_use_attn_vals', False)  # Use relay token attention values as a feature in the re-ranking classifier
                 self.rerank_geotransformer_refinement = params.getboolean('rerank_geotransformer_refinement', True)  # Use geotransformer to refine local features for re-ranking
                 self.rerank_num_sinkhorn_iterations = params.getint('rerank_num_sinkhorn_iterations', 100)
+                self.rerank_scale_eigvec = params.getboolean('rerank_scale_eigvec', True)
+                self.rerank_eigvec_layernorm = params.getboolean('rerank_eigvec_layernorm', False)
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params
