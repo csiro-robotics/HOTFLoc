@@ -8,6 +8,7 @@ from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_backbone import HOTFormer
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.hotformerloc_metric_loc_legacy import HOTFormerMetricLoc as HOTFormerMetricLocLegacy
 from models.hotformerloc_metric_loc_reranking import HOTFormerMetricLocReRanking
 from models.relay_token_reranker import (
     RelayTokenGeometricConsistencyReranker,
@@ -32,7 +33,7 @@ def get_in_channels(input_features: str) -> int:
     
     return in_channels
 
-def model_factory(params: TrainingParams):
+def model_factory(params: TrainingParams, legacy: bool = False):
     model_params = params.model_params
     in_channels = 1
 
@@ -127,6 +128,8 @@ def model_factory(params: TrainingParams):
             )
         elif model_params.rerank_mode == 'local_hierarchical_gc':  # Need GeoTrans layers for local hierarchical GC
             geotransformer_reranker = True
+        elif model_params.rerank_mode == 'sgv':
+            pass
         elif model_params.rerank_mode is not None:
             raise NotImplementedError
         hotformerloc_global = HOTFormerLoc(
@@ -156,7 +159,12 @@ def model_factory(params: TrainingParams):
         else:
             coarse_feat_refiner = None
         if not geotransformer_reranker:
-            model = HOTFormerMetricLoc(
+            hotformermetricloc_class = HOTFormerMetricLoc
+            if legacy:
+                # Allow loading old version of HOTFormerMetricLoc for compatibility with old weights
+                hotformermetricloc_class = HOTFormerMetricLocLegacy
+                coarse_feat_refiner = coarse_feat_refiner[0]
+            model = hotformermetricloc_class(
                 hotformerloc_global=hotformerloc_global,
                 coarse_feat_refiner=coarse_feat_refiner,
                 model_params=model_params,

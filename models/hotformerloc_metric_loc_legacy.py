@@ -5,6 +5,8 @@ CSIRO Data61
 
 Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
 by Peng-Shuai Wang.
+
+LEGACY VERSION FOR RUNNING MODELS TRAINED PRE- MULTISTAGE RE-LOC CHANGES
 """
 import time
 import logging
@@ -121,15 +123,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
             for param in self.hotformerloc_global.parameters():
                 param.requires_grad = False
 
-        self.coarse_feat_decoder = nn.ModuleList()
-        for ii, coarse_feat_input_dim in enumerate(self.coarse_feat_input_dim):
-            self.coarse_feat_decoder.append(
-                MLP(
-                    coarse_feat_input_dim,
-                    int(coarse_feat_input_dim * self.mlp_ratio),
-                    self.coarse_feat_embed_dim[ii],
-                ) if self.coarse_feat_embed_dim is not None else nn.Identity()
-            )
+        self.coarse_feat_decoder = MLP(
+            self.coarse_feat_input_dim[0],
+            int(self.coarse_feat_input_dim[0] * self.mlp_ratio),
+            self.coarse_feat_embed_dim[0],
+        ) if self.coarse_feat_embed_dim is not None else nn.Identity()
         self.fine_feat_decoder = MLP(
             self.fine_feat_input_dim,
             int(self.fine_feat_input_dim * self.mlp_ratio),
@@ -266,9 +264,9 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
         # Embed coarse and fine feats
         tic = time.perf_counter()
-        anc_feats_coarse = self.coarse_feat_decoder[coarse_ii](anc_feats_coarse)
+        anc_feats_coarse = self.coarse_feat_decoder(anc_feats_coarse)
         anc_feats_fine = self.fine_feat_decoder(anc_feats_fine)
-        pos_feats_coarse = self.coarse_feat_decoder[coarse_ii](pos_feats_coarse)
+        pos_feats_coarse = self.coarse_feat_decoder(pos_feats_coarse)
         pos_feats_fine = self.fine_feat_decoder(pos_feats_fine)
         time_dict['feat decoder'] = time.perf_counter() - tic
 
@@ -334,11 +332,11 @@ class HOTFormerMetricLoc(torch.nn.Module):
 
         # NOTE: Padding does change the output slightly, as it softens the softmax
         #       output, but is a difference on the order of 0.01-0.1 on average.
-        if self.coarse_feat_refiner[coarse_ii] is not None:
+        if self.coarse_feat_refiner is not None:
             tic = time.perf_counter()
             if self.grad_checkpoint and self.training:
                 anc_feats_coarse_padded, pos_feats_coarse_padded = checkpoint(
-                    self.coarse_feat_refiner[coarse_ii],
+                    self.coarse_feat_refiner,
                     anc_points_coarse_padded,
                     pos_points_coarse_padded,
                     anc_feats_coarse_padded,
@@ -348,7 +346,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                     use_reentrant=False,
                 )
             else:
-                anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner[coarse_ii](
+                anc_feats_coarse_padded, pos_feats_coarse_padded = self.coarse_feat_refiner(
                     anc_points_coarse_padded,
                     pos_points_coarse_padded,
                     anc_feats_coarse_padded,

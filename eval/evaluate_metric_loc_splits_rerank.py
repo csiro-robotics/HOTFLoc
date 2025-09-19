@@ -35,6 +35,7 @@ from misc.torch_utils import set_seed, to_device, release_cuda
 from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.hotformerloc_metric_loc_legacy import HOTFormerMetricLoc as HOTFormerMetricLocLegacy
 from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 
 DISABLE_ICP = False
@@ -331,9 +332,9 @@ def compute_embedding(
         global_embedding = release_cuda(y['global'], to_numpy=True)
         local_dict = {}
         # Get local descriptors for each pyramid level
-        if not only_global and 'local' in y:
+        if 'local' in y:
             local_embedding = y['local']  # keep as tensors for future forward pass
-            if isinstance(model, HOTFormerMetricLoc):
+            if isinstance(model, (HOTFormerMetricLoc, HOTFormerMetricLocLegacy)):
                 # Only keep the coarse and fine indices to save mem
                 # Batch stored in concat mode, so need to split back to batch elems
                 local_embedding_coarse_list = [[] for _ in range(y['octree'].batch_size)]
@@ -728,20 +729,29 @@ def get_metrics(
                 # TODO: Add sgv as an option here
                 if params.model_params.rerank_mode in ('relay_token_gc', 'relay_token_local_gc'):
                     out_dict = model(rerank_batch, global_only=True)
-                elif params.model_params.rerank_mode == 'local_hierarchical_gc':
+                elif params.model_params.rerank_mode in ('local_hierarchical_gc', 'sgv'):
+                    sgv_feat_type = 'fine'  # TODO: make this a configurable param
                     # Use pre-computed local descriptors
                     rerank_batch_local_embeddings = [
-                        query_local_dict['local_embeddings']['coarse'][query_idx],
-                        *[database_local_dict['local_embeddings']['coarse'][nn_idx] for nn_idx in nn_indices]
+                        query_local_dict['local_embeddings'][sgv_feat_type][query_idx],
+                        *[database_local_dict['local_embeddings'][sgv_feat_type][nn_idx] for nn_idx in nn_indices]
                     ]
                     out_dict = {'local': rerank_batch_local_embeddings}
                     out_dict = to_device(out_dict, device)
                 tic_rr = time.perf_counter()
-                rerank_scores = model.rerank_inference(
-                    model_out=out_dict,
-                    shift_and_scale=rerank_shift_and_scale,
-                    batch=rerank_batch,
-                )[0, :, 0]
+                if params.model_params.rerank_mode == 'sgv':
+                    rerank_scores = model.sgv_rerank_inference(
+                        model_out=out_dict,
+                        shift_and_scale=rerank_shift_and_scale,
+                        batch=rerank_batch,
+                        feat_type=sgv_feat_type,
+                    )
+                else:
+                    rerank_scores = model.rerank_inference(
+                        model_out=out_dict,
+                        shift_and_scale=rerank_shift_and_scale,
+                        batch=rerank_batch,
+                    )[0, :, 0]
                 intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
                 _, rerank_sort_indices = release_cuda(
                     torch.sort(rerank_scores, descending=True), to_numpy=True
@@ -1177,6 +1187,7 @@ if __name__ == "__main__":
     parser.add_argument('--log', action='store_true', help='Log false positives and top-5 retrievals')
     parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
     parser.add_argument('--use_ransac', action='store_true', help='Compare LGR with RANSAC in metric loc evaluation')
+    parser.add_argument('--use_sgv', action='store_true', help='Use SGV for re-ranking')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
@@ -1193,6 +1204,7 @@ if __name__ == "__main__":
     print(f'Local max eval threshold: {args.local_max_eval_threshold}')
     print(f'Num neighbors: {args.num_neighbors}')
     print(f'Use RANSAC: {args.use_ransac}')
+    print(f'Use SGV: {args.use_sgv}')
     if args.weights is None:
         if args.save_embeddings or args.load_embeddings:
             raise ValueError('Cannot save or load embeddings for random weights')
@@ -1231,11 +1243,20 @@ if __name__ == "__main__":
         assert os.path.exists(args.weights), 'Cannot open network weights: {}'.format(args.weights)
         model_name = os.path.splitext(os.path.split(args.weights)[1])[0]
         print('Loading weights: {}'.format(args.weights))
-        if os.path.splitext(args.weights)[1] == '.ckpt':
-            state = torch.load(args.weights)
-            model.load_state_dict(state['model_state_dict'])
-        else:  # .pt or .pth
-            model.load_state_dict(torch.load(args.weights, map_location=device))
+        try:
+            if os.path.splitext(args.weights)[1] == '.ckpt':
+                state = torch.load(args.weights)
+                model.load_state_dict(state['model_state_dict'])
+            else:  # .pt or .pth
+                model.load_state_dict(torch.load(args.weights, map_location=device))
+        except RuntimeError:
+            # Try legacy mode
+            model = model_factory(params, legacy=True)
+            if os.path.splitext(args.weights)[1] == '.ckpt':
+                state = torch.load(args.weights)
+                model.load_state_dict(state['model_state_dict'])
+            else:  # .pt or .pth
+                model.load_state_dict(torch.load(args.weights, map_location=device))
     else:
         model_name = w
 
@@ -1252,8 +1273,12 @@ if __name__ == "__main__":
 
     # Check if re-ranking
     reranking = False
-    if not args.disable_reranking and (params.model_params.rerank_mode is not None):
-        reranking = True
+    if not args.disable_reranking:
+        if params.model_params.rerank_mode is not None or args.use_sgv:
+            reranking = True
+        if args.use_sgv:
+            reranking = True
+            params.model_params.rerank_mode = 'sgv'
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]

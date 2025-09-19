@@ -153,7 +153,7 @@ class ModelParams:
                 self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
                 if self.rerank_mode is not None:
                     self.rerank_mode = self.rerank_mode.lower()
-                    if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc'):
+                    if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc', 'sgv'):
                         raise ValueError('Invalid re-ranking mode')
                 if 'rerank_rt_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
                     self.rerank_rt_indices = tuple([int(e) for e in params['rerank_rt_indices'].split(',')])

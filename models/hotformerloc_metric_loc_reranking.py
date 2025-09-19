@@ -124,23 +124,26 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         if self.rerank_scale_eigvec and self.rerank_eigvec_layernorm:
             raise ValueError('Redundant choice of parameters, select one or the other')
 
-        self.rerank_coarse_feat_decoder = nn.ModuleList()
-        for ii, coarse_feat_input_dim in enumerate(self.coarse_feat_input_dim):
-            self.rerank_coarse_feat_decoder.append(
-                MLP(
-                    coarse_feat_input_dim,
-                    int(coarse_feat_input_dim * self.mlp_ratio),
-                    self.coarse_feat_embed_dim[ii],
-                ) if self.coarse_feat_embed_dim is not None else nn.Identity()
-            )
-
-        self.rerank_optimal_transport = None
-        if self.rerank_num_sinkhorn_iterations > 0:
-            self.rerank_optimal_transport = LearnableLogOptimalTransport(
-                self.rerank_num_sinkhorn_iterations
-            )
-
         if self.rerank_mode == 'local_hierarchical_gc':
+            if self.rerank_geotransformer_refinement:  # Use same MLP as geotrans
+                self.rerank_coarse_feat_decoder = self.coarse_feat_decoder
+            else:  # If not, create new MLP
+                self.rerank_coarse_feat_decoder = nn.ModuleList()
+                for ii, coarse_feat_input_dim in enumerate(self.coarse_feat_input_dim):
+                    self.rerank_coarse_feat_decoder.append(
+                        MLP(
+                            coarse_feat_input_dim,
+                            int(coarse_feat_input_dim * self.mlp_ratio),
+                            self.coarse_feat_embed_dim[ii],
+                        ) if self.coarse_feat_embed_dim is not None else nn.Identity()
+                    )
+
+            self.rerank_optimal_transport = None
+            if self.rerank_num_sinkhorn_iterations > 0:
+                self.rerank_optimal_transport = LearnableLogOptimalTransport(
+                    self.rerank_num_sinkhorn_iterations
+                )
+
             self.output_dim = sum(self.rerank_num_correspondences)
             self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
             self.sigmoid = nn.Sigmoid()
@@ -148,6 +151,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 self.eigvec_layernorms = nn.ModuleList(
                     [nn.LayerNorm(dim) for dim in self.rerank_num_correspondences]
                 )
+        elif self.rerank_mode == 'sgv':
+            pass
         else:
             raise NotImplementedError
 
@@ -183,7 +188,6 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         leading_eigvec_list = []
         for coarse_ii, depth_j in enumerate(self.depth_coarse):
             # Get local points and features
-            # TODO: ALLOW PRE-COMPUTED LOCAL FEATS TO BE USED AS IN METLOC LOOP
             local_feats_depth_j = model_out['local'][depth_j]
             local_points_depth_j = get_octant_centroids_from_points(points, depth_j, self.quantizer)
             if shift_and_scale is not None:
@@ -552,6 +556,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             return self.hotformerloc_global.rerank(*args, **kwargs)
         elif self.rerank_mode == 'local_hierarchical_gc':
             return self.local_hierarchical_gc_rerank(*args, **kwargs)
+        elif self.rerank_mode == 'sgv':
+            raise NotImplementedError
         else:
             raise NotImplementedError
 
@@ -560,6 +566,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             return self.hotformerloc_global.rerank_inference(*args, **kwargs)
         elif self.rerank_mode == 'local_hierarchical_gc':
             return self.local_hierarchical_gc_rerank_inference(*args, **kwargs)
+        elif self.rerank_mode == 'sgv':
+            return self.sgv_rerank_inference(*args, **kwargs)
         else:
             raise NotImplementedError
 
