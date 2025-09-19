@@ -26,7 +26,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
     Relay token re-ranker with geometric consistency.
 
     Args:
-        rerank_rt_indices (tuple): Indices of relay token levels to use for re-ranking
+        rerank_indices (tuple): Indices of relay token levels to use for re-ranking
         attn_topk (tuple): Number of top-k relay tokens to select based on CLS attn maps, per level
         geometric_consistency_d_thresh (tuple): Distance threshold to use in geometric consistency adjacency matrix, per relay token level
         rt_dim (int): Dimension of relay tokens 
@@ -36,7 +36,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
 
     def __init__(
         self,
-        rerank_rt_indices: Tuple[int],
+        rerank_indices: Tuple[int],
         attn_topk: Tuple[int],
         geometric_consistency_d_thresh: Tuple[float],  # metres
         rt_dim: int,
@@ -44,13 +44,13 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         use_attn_vals: bool = False,
     ):
         super().__init__()
-        self.rerank_rt_indices = rerank_rt_indices
+        self.rerank_indices = rerank_indices
         self.attn_topk = attn_topk
         if self.attn_topk is None:
             raise ValueError('`attn_topk` currently required to ensure consistent number of relay tokens')
         self.geometric_consistency_d_thresh = geometric_consistency_d_thresh
-        if len(attn_topk) != len(rerank_rt_indices) != len(geometric_consistency_d_thresh):
-            raise ValueError('`attn_topk` must have same num elems as `rerank_rt_indices` and `geometric_consistency_d_thresh`')
+        if len(attn_topk) != len(rerank_indices) != len(geometric_consistency_d_thresh):
+            raise ValueError('`attn_topk` must have same num elems as `rerank_indices` and `geometric_consistency_d_thresh`')
         self.rt_dim = rt_dim
         self.sort_eigvec = sort_eigvec
         self.use_attn_vals = use_attn_vals
@@ -87,7 +87,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         leading_eigvec_list = []
         anc_pos_attn_scores_list = []
         anc_neg_attn_scores_list = []
-        for ii, rt_idx in enumerate(self.rerank_rt_indices):
+        for ii, rt_idx in enumerate(self.rerank_indices):
             depth = octree.pyramid_depths[rt_idx]
             rt_depth_j = concat_and_pad_rt(model_out['rt'], octree, [depth])
             B, N, C = rt_depth_j.shape
@@ -227,7 +227,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         # Process each RT level
         leading_eigvec_list = []
         anc_nn_attn_scores_list = []
-        for ii, rt_idx in enumerate(self.rerank_rt_indices):
+        for ii, rt_idx in enumerate(self.rerank_indices):
             depth = octree.pyramid_depths[rt_idx]
             rt_depth_j = concat_and_pad_rt(model_out['rt'], octree, [depth])
             B, N, C = rt_depth_j.shape
@@ -329,7 +329,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
     provides more stable centroids than using relay tokens alone.
 
     Args:
-        rerank_rt_indices (tuple): Indices of relay token levels to use for re-ranking.
+        rerank_indices (tuple): Indices of relay token levels to use for re-ranking.
         geometric_consistency_d_thresh (tuple): Distance threshold to use in geometric
             consistency adjacency matrix, per relay token level.
         rt_dim (int): Dimension of relay tokens.
@@ -347,7 +347,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
 
     def __init__(
         self,
-        rerank_rt_indices: Tuple[int],
+        rerank_indices: Tuple[int],
         geometric_consistency_d_thresh: Tuple[float],  # metres
         rt_dim: int,
         local_dims: Tuple[int],
@@ -359,7 +359,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         separate_batch_by_num_rt: bool = True,
     ):
         super().__init__()
-        self.rerank_rt_indices = rerank_rt_indices
+        self.rerank_indices = rerank_indices
         self.geometric_consistency_d_thresh = geometric_consistency_d_thresh
         self.rt_dim = rt_dim
         self.local_dims = local_dims
@@ -367,14 +367,14 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         self.num_correspondences = num_correspondences
         self.min_correspondences_per_window = min_correspondences_per_window
         if (
-            len(rerank_rt_indices)
+            len(rerank_indices)
             != len(geometric_consistency_d_thresh)
             != len(local_dims)
             != len(num_correspondences)
             != len(min_correspondences_per_window)
         ):
             raise ValueError(
-                'Ensure same num elems for `rerank_rt_indices`, `geometric_consistency_d_thresh`, '
+                'Ensure same num elems for `rerank_indices`, `geometric_consistency_d_thresh`, '
                 '`num_correspondences`, `min_correspondences_per_window`'
             )
         self.sort_eigvec = sort_eigvec
@@ -411,7 +411,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
 
         # Process each pyramid level
         leading_eigvec_list = []
-        for ii, rt_idx in enumerate(self.rerank_rt_indices):
+        for ii, rt_idx in enumerate(self.rerank_indices):
             ####################################################################
             ### PRE-PROCESSING
             ####################################################################
@@ -703,7 +703,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         # Process each RT level
         leading_eigvec_list = []
         anc_nn_attn_scores_list = []
-        for ii, rt_idx in enumerate(self.rerank_rt_indices):
+        for ii, rt_idx in enumerate(self.rerank_indices):
             depth = octree.pyramid_depths[rt_idx]
             rt_depth_j = concat_and_pad_rt(model_out['rt'], octree, [depth])
             B, N, C = rt_depth_j.shape

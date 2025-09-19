@@ -111,7 +111,7 @@ def model_factory(params: TrainingParams, legacy: bool = False):
         geotransformer_reranker = False
         if model_params.rerank_mode == 'relay_token_gc':
             reranker = RelayTokenGeometricConsistencyReranker(
-                rerank_rt_indices=model_params.rerank_rt_indices,
+                rerank_indices=model_params.rerank_indices,
                 attn_topk=model_params.rerank_rt_attn_topk,
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
                 rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
@@ -119,7 +119,7 @@ def model_factory(params: TrainingParams, legacy: bool = False):
             )
         elif model_params.rerank_mode == 'relay_token_local_gc':
             reranker = RelayTokenLocalGeometricConsistencyReranker(
-                rerank_rt_indices=model_params.rerank_rt_indices,
+                rerank_indices=model_params.rerank_indices,
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
                 rt_dim=max(model_params.channels[model_params.num_octf_levels:]),
                 local_dims=model_params.channels[model_params.num_octf_levels:],
@@ -195,12 +195,15 @@ def model_factory(params: TrainingParams, legacy: bool = False):
                 grad_checkpoint=model_params.grad_checkpoint,
                 return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
                 rerank_mode=model_params.rerank_mode,
+                rerank_indices=model_params.rerank_indices,
+                rerank_feat_embed_dim=model_params.rerank_feat_embed_dim,
                 geometric_consistency_d_thresh=model_params.geometric_consistency_d_thresh,
                 rerank_geotransformer_refinement=model_params.rerank_geotransformer_refinement,
                 rerank_num_correspondences=model_params.rerank_num_correspondences,
                 rerank_scale_eigvec=model_params.rerank_scale_eigvec,
                 rerank_eigvec_layernorm=model_params.rerank_eigvec_layernorm,
                 rerank_num_sinkhorn_iterations=model_params.rerank_num_sinkhorn_iterations,
+                rerank_output_mlp_ratio=model_params.rerank_output_mlp_ratio,
             )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)

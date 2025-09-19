@@ -243,8 +243,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
         time_dict['local backbone forward'] = 0.0
         if 'anc_local_feats' in batch:
             # If pre-computed, skip forward pass
-            anc_feats_coarse = batch['anc_local_feats']['coarse'][coarse_ii]
-            anc_feats_fine = batch['anc_local_feats']['fine']
+            anc_feats_coarse = batch['anc_local_feats'][depth_coarse]
+            anc_feats_fine = batch['anc_local_feats'][self.depth_fine]
         else:
             # TODO: Process anchor and positive batch in single forward pass
             tic = time.perf_counter()
@@ -253,8 +253,8 @@ class HOTFormerMetricLoc(torch.nn.Module):
             anc_feats_coarse = anc_global_out['local'][depth_coarse]
             anc_feats_fine = anc_global_out['local'][self.depth_fine]
         if 'pos_local_feats' in batch:
-            pos_feats_coarse = batch['pos_local_feats']['coarse'][coarse_ii]
-            pos_feats_fine = batch['pos_local_feats']['fine']
+            pos_feats_coarse = batch['pos_local_feats'][depth_coarse]
+            pos_feats_fine = batch['pos_local_feats'][self.depth_fine]
         else:
             tic = time.perf_counter()
             pos_global_out = self.hotformerloc_global(batch['pos_batch'])
@@ -649,10 +649,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         if isinstance(model_out['local'], dict):  # standard HOTFloc output
             local_feats = model_out['local'][depth_j]
         elif isinstance(model_out['local'], list):  # inference output, nested list of local feats from query and NNs
-            if feat_type == 'coarse':
-                local_feats_list = [feat_list[coarse_feat_ii] for feat_list in model_out['local']]
-            elif feat_type == 'fine':
-                local_feats_list = model_out['local']
+            local_feats_list = [feat_dict[depth_j] for feat_dict in model_out['local']]
             local_feats = torch.concat(local_feats_list, dim=0)
             assert local_feats.size(0) == octree.batch_nnum_nempty[depth_j].sum(), 'Octree does not match local feats'
         local_points = get_octant_centroids_from_points(points, depth_j, self.quantizer)

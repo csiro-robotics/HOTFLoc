@@ -155,10 +155,14 @@ class ModelParams:
                     self.rerank_mode = self.rerank_mode.lower()
                     if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc', 'sgv'):
                         raise ValueError('Invalid re-ranking mode')
-                if 'rerank_rt_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
-                    self.rerank_rt_indices = tuple([int(e) for e in params['rerank_rt_indices'].split(',')])
+                if 'rerank_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
+                    self.rerank_indices = tuple([int(e) for e in params['rerank_indices'].split(',')])
                 else:
-                    self.rerank_rt_indices = (0,)
+                    self.rerank_indices = (0,)
+                if 'rerank_feat_embed_dim' in params:  # Dimension to project coarse features with MLP before metric localisation and/or re-ranking (None to disable) 
+                    self.rerank_feat_embed_dim = tuple([int(e) for e in params['rerank_feat_embed_dim'].split(',')])
+                else:
+                    self.rerank_feat_embed_dim = None
                 if 'rerank_rt_attn_topk' in params:  # Top-k attn vals to keep from each pyramid level of relay tokens (must be same length as RT indices)
                     self.rerank_rt_attn_topk = tuple([int(e) for e in params['rerank_rt_attn_topk'].split(',')])
                 else:
@@ -180,6 +184,7 @@ class ModelParams:
                 self.rerank_num_sinkhorn_iterations = params.getint('rerank_num_sinkhorn_iterations', 100)
                 self.rerank_scale_eigvec = params.getboolean('rerank_scale_eigvec', True)
                 self.rerank_eigvec_layernorm = params.getboolean('rerank_eigvec_layernorm', False)
+                self.rerank_output_mlp_ratio = params.getfloat('rerank_output_mlp_ratio', 1.0)
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params

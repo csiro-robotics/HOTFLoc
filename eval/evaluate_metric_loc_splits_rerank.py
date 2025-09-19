@@ -19,11 +19,9 @@ import tqdm
 from typing import Sequence, List, Dict, Optional
 
 from dataset.dataset_utils import (
-    make_eval_dataset,
     make_eval_dataloader,
     make_eval_dataloader_reranking,
     make_eval_dataloader_6DOF,
-    make_eval_collate_fn,
 )
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
@@ -36,7 +34,6 @@ from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.hotformerloc_metric_loc_legacy import HOTFormerMetricLoc as HOTFormerMetricLocLegacy
-from models.relay_token_utils import concat_and_pad_rt, unpad_and_split_rt
 
 DISABLE_ICP = False
 EVAL_MODES = ['Initial', 'Re-Ranked']
@@ -283,8 +280,9 @@ def get_latent_vectors(
     ### NOTE: Disabled so that eval can be tested during training debug mode
     if params.debug:
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
-        local_dict = {'local_embeddings': {'coarse': [[] for _ in model.depth_coarse], 'fine': []}}
+        local_dict = {'local_embeddings': []}
         if not only_global:
+            raise NotImplementedError
             for _ in range(len(data_set)):
                 for ii, coarse_idx in enumerate(model.coarse_idx):
                     local_dict['local_embeddings']['coarse'][ii].append(torch.randn(128, params.model_params.channels[coarse_idx]))
@@ -294,9 +292,7 @@ def get_latent_vectors(
     # Create dataloader for data_set
     dataloader = make_eval_dataloader(params, data_set)
     global_embeddings = None
-    local_dict = {'local_embeddings': {'coarse': [], 'fine': []}}
-    # if reranking:
-    #     local_dict.update({'rt': [], 'rt_final_cls_attn_vals': []})
+    local_dict = {'local_embeddings': []}
     model.eval()
     with tqdm.tqdm(total=len(dataloader.dataset), disable=(not show_progress)) as pbar:
         for ii, batch_dict in enumerate(dataloader):
@@ -308,13 +304,7 @@ def get_latent_vectors(
             global_embeddings[ii*params.val_batch_size:(ii*params.val_batch_size + len(temp_global_embedding))] = temp_global_embedding
             # Split local embeddings from batch
             if 'local_embedding' in temp_local_dict:
-                for embedding_resolution, embedding in temp_local_dict['local_embedding'].items():
-                    local_dict['local_embeddings'][embedding_resolution].extend(embedding)
-            # Split relay tokens from batch
-            # if 'rt' in temp_local_dict:
-            #     local_dict['rt'].extend(temp_local_dict['rt'])
-            # if 'rt_final_cls_attn_vals' in temp_local_dict:
-            #     local_dict['rt_final_cls_attn_vals'].extend(temp_local_dict['rt_final_cls_attn_vals'])
+                local_dict['local_embeddings'].extend(temp_local_dict['local_embedding'])
             pbar.update(len(temp_global_embedding))
     
     return global_embeddings, local_dict
@@ -333,34 +323,19 @@ def compute_embedding(
         local_dict = {}
         # Get local descriptors for each pyramid level
         if 'local' in y:
-            local_embedding = y['local']  # keep as tensors for future forward pass
+            local_embeddings = y['local']  # keep as tensors for future forward pass
             if isinstance(model, (HOTFormerMetricLoc, HOTFormerMetricLocLegacy)):
-                # Only keep the coarse and fine indices to save mem
+                octree = y['octree']
+                local_embeddings_list = [{} for _ in range(octree.batch_size)]
                 # Batch stored in concat mode, so need to split back to batch elems
-                local_embedding_coarse_list = [[] for _ in range(y['octree'].batch_size)]
-                for depth_coarse in model.depth_coarse:
-                    batch_lengths_coarse = y['octree'].batch_nnum_nempty[depth_coarse].tolist()
-                    batch_embedding_coarse = local_embedding[depth_coarse].split(batch_lengths_coarse)
-                    for ii, embedding in enumerate(batch_embedding_coarse):
-                        local_embedding_coarse_list[ii].append(embedding)
-                batch_lengths_fine = y['octree'].batch_nnum_nempty[model.depth_fine].tolist()
-                local_embedding_fine = local_embedding[model.depth_fine].split(batch_lengths_fine)
-                local_dict['local_embedding'] = release_cuda({'coarse': local_embedding_coarse_list, 'fine': local_embedding_fine})
+                for depth_j in local_embeddings.keys():
+                    batch_lengths_depth_j = octree.batch_nnum_nempty[depth_j].tolist()
+                    batch_embeddings_depth_j = local_embeddings[depth_j].split(batch_lengths_depth_j)
+                    for ii, embedding in enumerate(batch_embeddings_depth_j):
+                        local_embeddings_list[ii][depth_j] = embedding
+                local_dict['local_embedding'] = release_cuda(local_embeddings_list)
             else:
-                local_dict['local_embedding'] = release_cuda(local_embedding)
-        # # Get relay tokens and attn vals for re-ranking
-        # if reranking:
-        #     # Batch stored in concat mode, so need to split back to batch elems
-        #     local_dict['rt'] = release_cuda(
-        #         concat_and_pad_rt(y['rt'], y['octree'], pad=False, remove_final_padding=True)
-        #     )
-        #     # Do below operation to get cls attn in correct format for each batch item
-        #     rt_cls_attn_temp = unpad_and_split_rt(
-        #         y['rt_final_cls_attn_vals'][..., None], y['octree']
-        #     )
-        #     local_dict['rt_final_cls_attn_vals'] = release_cuda(
-        #         concat_and_pad_rt(rt_cls_attn_temp, y['octree'], pad=False, remove_final_padding=True)
-        #     )
+                local_dict['local_embedding'] = release_cuda(local_embeddings)
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     return global_embedding, local_dict
@@ -726,15 +701,14 @@ def get_metrics(
             rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
 
             with torch.inference_mode():
-                # TODO: Add sgv as an option here
                 if params.model_params.rerank_mode in ('relay_token_gc', 'relay_token_local_gc'):
                     out_dict = model(rerank_batch, global_only=True)
                 elif params.model_params.rerank_mode in ('local_hierarchical_gc', 'sgv'):
                     sgv_feat_type = 'fine'  # TODO: make this a configurable param
                     # Use pre-computed local descriptors
                     rerank_batch_local_embeddings = [
-                        query_local_dict['local_embeddings'][sgv_feat_type][query_idx],
-                        *[database_local_dict['local_embeddings'][sgv_feat_type][nn_idx] for nn_idx in nn_indices]
+                        query_local_dict['local_embeddings'][query_idx],
+                        *[database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices]
                     ]
                     out_dict = {'local': rerank_batch_local_embeddings}
                     out_dict = to_device(out_dict, device)
@@ -823,14 +797,9 @@ def get_metrics(
                     'fine': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
                 }
             else:
-                batch['anc_local_feats'] = {
-                    'coarse': query_local_dict['local_embeddings']['coarse'][query_idx],
-                    'fine': query_local_dict['local_embeddings']['fine'][query_idx],
-                }
-                batch['pos_local_feats'] = {
-                    'coarse': database_local_dict['local_embeddings']['coarse'][nn_idx],
-                    'fine': database_local_dict['local_embeddings']['fine'][nn_idx],
-                }
+                batch['anc_local_feats'] = query_local_dict['local_embeddings'][query_idx]
+                batch['pos_local_feats'] = database_local_dict['local_embeddings'][nn_idx]
+
             batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
 
             with torch.inference_mode():
@@ -1146,7 +1115,7 @@ def write_eval_stats(
 
 def save_embeddings_to_file(global_embeddings, local_dict, model_name: str,
                             dataset_name: str, location_name: str, set_name: str = "database"):
-    save_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
+    save_dir = os.path.join(os.path.dirname(__file__), "embeddings_v2", dataset_name, location_name, f"model_{model_name}")
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     global_embeddings_file = os.path.join(save_dir, f"{set_name}_global_embeddings.pickle")
@@ -1156,7 +1125,7 @@ def save_embeddings_to_file(global_embeddings, local_dict, model_name: str,
 
 
 def load_embeddings_from_file(model_name: str, dataset_name: str, location_name: str, set_name: str = "database"):
-    load_dir = os.path.join(os.path.dirname(__file__), "embeddings", dataset_name, location_name, f"model_{model_name}")
+    load_dir = os.path.join(os.path.dirname(__file__), "embeddings_v2", dataset_name, location_name, f"model_{model_name}")
     if not os.path.exists(load_dir):
         raise FileNotFoundError("No saved embeddings found for model. Run with --save_embeddings first.")
     else:

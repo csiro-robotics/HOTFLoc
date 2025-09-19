@@ -54,6 +54,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
         rerank_mode: Optional[str] = None,
+        rerank_indices: Tuple[int] = (-1, -2),
+        rerank_feat_embed_dim: Optional[Tuple[int]] = None,
         geometric_consistency_d_thresh: Tuple[float] = (0.6, 0.6),
         rerank_geotransformer_refinement: bool = True,
         rerank_num_correspondences: Tuple[int] = (128, 256),
@@ -61,6 +63,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         rerank_scale_eigvec: bool = True,
         rerank_eigvec_layernorm: bool = False,
         rerank_num_sinkhorn_iterations: int = 100,
+        rerank_output_mlp_ratio: float = 1.0,
         **kwargs,
     ):
         """
@@ -86,6 +89,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
             return_feats_and_attn_maps (bool): Returns intermediate features and attention maps from the backbone.
             rerank_mode (str): Re-ranking method.
+            rerank_indices (tuple): Indices of feature pyramid to use for re-ranking (negative indices accepted).
+            coarse_feat_embed_dim (int): Embedding dim for reranking features (using MLP), set None to disable.
             geometric_consistency_d_thresh (tuple): Distance threshold to use in geometric consistency adjacency matrix, per relay token level
             rerank_geotransformer_refinement (bool): Use geotransformer layer to refine features for re-ranking
             rerank_num_correspondences (tuple): Total number of local correspondences for geometric consistency re-ranking, per coarse level.
@@ -93,6 +98,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             rerank_scale_eigvec (bool): Scale eigenvector to range [0, 1] prior to MLP
             rerank_eigvec_layernorm (bool): Instead apply layernorm to the eigvec priot to the MLP
             rerank_num_sinkhorn_iterations (int): Number of sinkhorn iterations. Set to 0 to disable OT.
+            rerank_output_mlp_ratio (float): MLP ratio for rerank output (for hidden layer)
 
         Returns:
             model_out (dict): Dict containing outputs from local and global stages
@@ -113,29 +119,41 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             return_feats_and_attn_maps=return_feats_and_attn_maps,
             **kwargs,
         )
-        self.rerank_mode=rerank_mode
+        self.rerank_mode = rerank_mode
+        self.rerank_indices = rerank_indices
+        self.rerank_feat_embed_dim = rerank_feat_embed_dim
         self.geometric_consistency_d_thresh = geometric_consistency_d_thresh
-        self.rerank_geotransformer_refinement=rerank_geotransformer_refinement
-        self.rerank_num_correspondences=rerank_num_correspondences
+        self.rerank_geotransformer_refinement = rerank_geotransformer_refinement
+        self.rerank_num_correspondences = rerank_num_correspondences
         self.rerank_sort_eigvec = rerank_sort_eigvec
         self.rerank_scale_eigvec = rerank_scale_eigvec
         self.rerank_eigvec_layernorm = rerank_eigvec_layernorm
         self.rerank_num_sinkhorn_iterations = rerank_num_sinkhorn_iterations
+        self.rerank_output_mlp_ratio = rerank_output_mlp_ratio
         if self.rerank_scale_eigvec and self.rerank_eigvec_layernorm:
             raise ValueError('Redundant choice of parameters, select one or the other')
+        assert (
+            len(self.rerank_indices)
+            == len(self.rerank_feat_embed_dim)
+            == len(self.geometric_consistency_d_thresh)
+            == len(self.rerank_num_correspondences)
+        ), 'Must have an entry for each re-ranking feat index'
+
+        self.compute_rerank_depth_from_idx()
+        self.get_rerank_input_dim()
 
         if self.rerank_mode == 'local_hierarchical_gc':
             if self.rerank_geotransformer_refinement:  # Use same MLP as geotrans
                 self.rerank_coarse_feat_decoder = self.coarse_feat_decoder
             else:  # If not, create new MLP
                 self.rerank_coarse_feat_decoder = nn.ModuleList()
-                for ii, coarse_feat_input_dim in enumerate(self.coarse_feat_input_dim):
+                for ii, rerank_feat_input_dim in enumerate(self.rerank_feat_input_dim):
                     self.rerank_coarse_feat_decoder.append(
                         MLP(
-                            coarse_feat_input_dim,
-                            int(coarse_feat_input_dim * self.mlp_ratio),
-                            self.coarse_feat_embed_dim[ii],
-                        ) if self.coarse_feat_embed_dim is not None else nn.Identity()
+                            rerank_feat_input_dim,
+                            int(rerank_feat_input_dim * self.mlp_ratio),
+                            self.rerank_feat_embed_dim[ii],
+                        ) if self.rerank_feat_embed_dim is not None else nn.Identity()
                     )
 
             self.rerank_optimal_transport = None
@@ -145,7 +163,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 )
 
             self.output_dim = sum(self.rerank_num_correspondences)
-            self.output_mlp = MLP(self.output_dim, self.output_dim, 1)  # TODO: different hidden size?
+            self.output_mlp = MLP(self.output_dim, int(self.output_dim * self.rerank_output_mlp_ratio), 1)  # TODO: different hidden size?
             self.sigmoid = nn.Sigmoid()
             if self.rerank_eigvec_layernorm:
                 self.eigvec_layernorms = nn.ModuleList(
@@ -155,6 +173,39 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             pass
         else:
             raise NotImplementedError
+
+    def compute_rerank_depth_from_idx(self):
+        """
+        Determines the octree depth of reranking features based on the
+        input octree depth and HOTFormerLoc parameters.
+        """
+        num_downsamples = (self.hotformerloc_global.backbone.backbone.stem_down
+                           if self.hotformerloc_global.backbone.backbone.downsample_input_embeddings
+                           else 0)
+        num_stages = self.hotformerloc_global.backbone.backbone.num_stages
+        depth_start = self.octree_depth - num_downsamples
+        self.depth_rerank = []
+        for rerank_idx in self.rerank_indices:
+            if rerank_idx >= 0:
+                depth_rerank = depth_start - rerank_idx
+            else:  # neg idx
+                depth_rerank = depth_start - num_stages - rerank_idx
+            self.depth_rerank.append(depth_rerank)
+
+    def get_rerank_input_dim(self):
+        """
+        Determing reranking feature input dimensions based on HOTFormerLoc
+        parameters.
+        """
+        channels = list(self.hotformerloc_global.backbone.backbone.channels)
+        num_octf_levels = self.hotformerloc_global.backbone.backbone.num_octf_levels
+        num_pyramid_levels = self.hotformerloc_global.backbone.backbone.num_pyramid_levels
+        if len(channels[num_octf_levels:]) == 1:
+            channels[num_octf_levels:] = channels[num_octf_levels:] * num_pyramid_levels
+        self.rerank_feat_input_dim = []
+        for rerank_idx in self.rerank_indices:
+            self.rerank_feat_input_dim.append(channels[rerank_idx])
+
 
     def local_hierarchical_gc_rerank(
         self,
@@ -186,7 +237,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
         # Process each pyramid level
         leading_eigvec_list = []
-        for coarse_ii, depth_j in enumerate(self.depth_coarse):
+        for rerank_ii, depth_j in enumerate(self.depth_rerank):
             # Get local points and features
             local_feats_depth_j = model_out['local'][depth_j]
             local_points_depth_j = get_octant_centroids_from_points(points, depth_j, self.quantizer)
@@ -194,8 +245,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 local_points_depth_j = Normalize.batch_unnormalize_concat(
                     local_points_depth_j, shift_and_scale, octree, depth_j
                 )
-            # Embed coarse feats
-            local_feats_depth_j = self.rerank_coarse_feat_decoder[coarse_ii](local_feats_depth_j)
+            # Embed feats
+            local_feats_depth_j = self.rerank_coarse_feat_decoder[rerank_ii](local_feats_depth_j)
             # Pad batched tensors and compute padding mask
             local_points_depth_j_padded = split_and_pad_data(
                 octree, local_points_depth_j, depth_j, fill_value=self.point_padding,
@@ -246,7 +297,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 tic = time.perf_counter()
                 if self.grad_checkpoint and self.training:
                     anc_feats_depth_j_padded, nn_feats_depth_j_padded = checkpoint(
-                        self.coarse_feat_refiner[coarse_ii],
+                        self.coarse_feat_refiner[rerank_ii],
                         anc_points_depth_j_padded,
                         nn_points_depth_j_padded,
                         anc_feats_depth_j_padded,
@@ -256,7 +307,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                         use_reentrant=False,
                     )
                 else:
-                    anc_feats_depth_j_padded, nn_feats_depth_j_padded = self.coarse_feat_refiner[coarse_ii](
+                    anc_feats_depth_j_padded, nn_feats_depth_j_padded = self.coarse_feat_refiner[rerank_ii](
                         anc_points_depth_j_padded,
                         nn_points_depth_j_padded,
                         anc_feats_depth_j_padded,
@@ -264,7 +315,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                         anc_mask_depth_j_padded,
                         nn_mask_depth_j_padded,
                     )
-                time_dict[f'geotrans forward {coarse_ii}'] = time.perf_counter() - tic
+                time_dict[f'geotrans forward {rerank_ii}'] = time.perf_counter() - tic
 
             # Sinkhorn matching
             tic = time.perf_counter()
@@ -287,7 +338,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                     )
                 # Discard dustbin (and convert back from log-space)
                 matching_scores_depth_j = torch.exp(matching_scores_depth_j[:, :-1, :-1])
-                time_dict[f'optimal transport {coarse_ii}'] = time.perf_counter() - tic
+                time_dict[f'optimal transport {rerank_ii}'] = time.perf_counter() - tic
             else:
                 # Compute NN with cosine similarity
                 anc_feats_depth_j_padded = torch.nn.functional.normalize(anc_feats_depth_j_padded, p=2.0, dim=-1)
@@ -295,10 +346,10 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 matching_scores_depth_j = torch.einsum('bnd,bmd->bnm', anc_feats_depth_j_padded, nn_feats_depth_j_padded)  # (NN, N, N)
                 mask = torch.logical_or(anc_mask_depth_j_padded[..., None], nn_mask_depth_j_padded[..., None, :])
                 matching_scores_depth_j.masked_fill_(mask, -1e10)
-                time_dict[f'coarse matching {coarse_ii}'] = time.perf_counter() - tic
+                time_dict[f'feat matching {rerank_ii}'] = time.perf_counter() - tic
             
             # Consider NN from anc side
-            k_corr = min(N, self.rerank_num_correspondences[coarse_ii])
+            k_corr = min(N, self.rerank_num_correspondences[rerank_ii])
             anc_max_scores_depth_j, anc_max_indices_depth_j = matching_scores_depth_j.max(dim=2)  # (B*NN, N)
             _, nn_corr_indices_depth_j = anc_max_scores_depth_j.topk(
                 k=k_corr, dim=1
@@ -310,8 +361,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             nn_corr_points_depth_j = nn_points_depth_j_padded.gather(dim=1, index=anc_corr_indices_depth_j[..., None].expand(-1, -1, 3))
             
             # Pad if needed
-            if k_corr < self.rerank_num_correspondences[coarse_ii]:
-                k_diff = self.rerank_num_correspondences[coarse_ii] - k_corr
+            if k_corr < self.rerank_num_correspondences[rerank_ii]:
+                k_diff = self.rerank_num_correspondences[rerank_ii] - k_corr
                 anc_corr_points_depth_j = F.pad(anc_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
                 nn_corr_points_depth_j = F.pad(nn_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
             
@@ -341,18 +392,18 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             leading_eigvec, spatial_consistency_score = batched_sgv_parallel(
                 anc_corr_points_depth_j,
                 nn_corr_points_depth_j,
-                d_thresh=self.geometric_consistency_d_thresh[coarse_ii],
+                d_thresh=self.geometric_consistency_d_thresh[rerank_ii],
                 return_spatial_consistency=True,
                 mask=sgv_mask_depth_j,
             )
-            time_dict[f'sgv {coarse_ii}'] = time.perf_counter() - tic
+            time_dict[f'sgv {rerank_ii}'] = time.perf_counter() - tic
             if self.rerank_sort_eigvec:
                 leading_eigvec, sort_indices = torch.sort(leading_eigvec, dim=-1, descending=True)
 
             if self.rerank_scale_eigvec:
                 leading_eigvec = min_max_normalize(leading_eigvec)
             elif self.rerank_eigvec_layernorm:
-                leading_eigvec = self.eigvec_layernorms[coarse_ii](leading_eigvec)
+                leading_eigvec = self.eigvec_layernorms[rerank_ii](leading_eigvec)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
@@ -397,21 +448,21 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
         # Process each pyramid level
         leading_eigvec_list = []
-        for coarse_ii, depth_j in enumerate(self.depth_coarse):
+        for rerank_ii, depth_j in enumerate(self.depth_rerank):
             # Get local points and features
             if isinstance(model_out['local'], dict):  # standard HOTFloc output
                 local_feats_depth_j = model_out['local'][depth_j]
             elif isinstance(model_out['local'], list):  # inference output, nested list of local feats from query and NNs
-                local_feats_depth_j_list = [coarse_feat_list[coarse_ii] for coarse_feat_list in model_out['local']]
-                local_feats_depth_j = torch.concat(local_feats_depth_j_list, dim=0)
+                local_feats_list_depth_j = [feat_dict[depth_j] for feat_dict in model_out['local']]
+                local_feats_depth_j = torch.concat(local_feats_list_depth_j, dim=0)
                 assert local_feats_depth_j.size(0) == octree.batch_nnum_nempty[depth_j].sum(), 'Octree does not match local feats'
             local_points_depth_j = get_octant_centroids_from_points(points, depth_j, self.quantizer)
             if shift_and_scale is not None:
                 local_points_depth_j = Normalize.batch_unnormalize_concat(
                     local_points_depth_j, shift_and_scale, octree, depth_j
                 )
-            # Embed coarse feats
-            local_feats_depth_j = self.rerank_coarse_feat_decoder[coarse_ii](local_feats_depth_j)
+            # Embed feats
+            local_feats_depth_j = self.rerank_coarse_feat_decoder[rerank_ii](local_feats_depth_j)
             # Pad batched tensors and compute padding mask
             local_points_depth_j_padded = split_and_pad_data(
                 octree, local_points_depth_j, depth_j, fill_value=self.point_padding,
@@ -433,11 +484,11 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             if self.rerank_geotransformer_refinement:
                 # NOTE: Memory usage is immense with large triplet BS and if significant padding is needed.
                 #       Culprit seems to be geometric structure embedding layer
-                if self.coarse_feat_refiner[coarse_ii] is not None:
+                if self.coarse_feat_refiner[rerank_ii] is not None:
                     tic = time.perf_counter()
                     if self.grad_checkpoint and self.training:
                         anc_feats_depth_j_padded, nn_feats_depth_j_padded = checkpoint(
-                            self.coarse_feat_refiner[coarse_ii],
+                            self.coarse_feat_refiner[rerank_ii],
                             anc_points_depth_j_padded,
                             nn_points_depth_j_padded,
                             anc_feats_depth_j_padded,
@@ -447,7 +498,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                             use_reentrant=False,
                         )
                     else:
-                        anc_feats_depth_j_padded, nn_feats_depth_j_padded = self.coarse_feat_refiner[coarse_ii](
+                        anc_feats_depth_j_padded, nn_feats_depth_j_padded = self.coarse_feat_refiner[rerank_ii](
                             anc_points_depth_j_padded,
                             nn_points_depth_j_padded,
                             anc_feats_depth_j_padded,
@@ -455,7 +506,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                             anc_mask_depth_j_padded,
                             nn_mask_depth_j_padded,
                         )
-                    time_dict[f'geotrans forward {coarse_ii}'] = time.perf_counter() - tic
+                    time_dict[f'geotrans forward {rerank_ii}'] = time.perf_counter() - tic
 
             # Sinkhorn matching
             if self.rerank_optimal_transport is not None:
@@ -478,7 +529,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                     )
                 # Discard dustbin (and convert back from log-space)
                 matching_scores_depth_j = torch.exp(matching_scores_depth_j[:, :-1, :-1])
-                time_dict[f'optimal transport {coarse_ii}'] = time.perf_counter() - tic
+                time_dict[f'optimal transport {rerank_ii}'] = time.perf_counter() - tic
             else:
                 # Compute NN with cosine similarity
                 anc_feats_depth_j_padded = torch.nn.functional.normalize(anc_feats_depth_j_padded, p=2.0, dim=-1)
@@ -488,7 +539,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 matching_scores_depth_j.masked_fill_(mask, -1e10)
             
             # Consider NN from anc side
-            k_corr = min(N, self.rerank_num_correspondences[coarse_ii])
+            k_corr = min(N, self.rerank_num_correspondences[rerank_ii])
             anc_max_scores_depth_j, anc_max_indices_depth_j = matching_scores_depth_j.max(dim=2)  # (NN, N)
             _, nn_corr_indices_depth_j = anc_max_scores_depth_j.topk(
                 k=k_corr, dim=1
@@ -500,8 +551,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             nn_corr_points_depth_j = nn_points_depth_j_padded.gather(dim=1, index=anc_corr_indices_depth_j[..., None].expand(-1, -1, 3))
             
             # Pad if needed
-            if k_corr < self.rerank_num_correspondences[coarse_ii]:
-                k_diff = self.rerank_num_correspondences[coarse_ii] - k_corr
+            if k_corr < self.rerank_num_correspondences[rerank_ii]:
+                k_diff = self.rerank_num_correspondences[rerank_ii] - k_corr
                 anc_corr_points_depth_j = F.pad(anc_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
                 nn_corr_points_depth_j = F.pad(nn_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
             
@@ -527,18 +578,18 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             leading_eigvec, spatial_consistency_score = batched_sgv_parallel(
                 anc_corr_points_depth_j[None, ...],
                 nn_corr_points_depth_j[None, ...],
-                d_thresh=self.geometric_consistency_d_thresh[coarse_ii],
+                d_thresh=self.geometric_consistency_d_thresh[rerank_ii],
                 return_spatial_consistency=True,
                 mask=sgv_mask_depth_j,
             )
-            time_dict[f'sgv {coarse_ii}'] = time.perf_counter() - tic
+            time_dict[f'sgv {rerank_ii}'] = time.perf_counter() - tic
             if self.rerank_sort_eigvec:
                 leading_eigvec, sort_indices = torch.sort(leading_eigvec, dim=-1, descending=True)
 
             if self.rerank_scale_eigvec:
                 leading_eigvec = min_max_normalize(leading_eigvec)
             elif self.rerank_eigvec_layernorm:
-                leading_eigvec = self.eigvec_layernorms[coarse_ii](leading_eigvec)
+                leading_eigvec = self.eigvec_layernorms[rerank_ii](leading_eigvec)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
