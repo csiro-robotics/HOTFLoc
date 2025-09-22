@@ -434,14 +434,14 @@ class TrainingParams:
         self.hyperparam_search = params.getboolean('hyperparam_search', False)
 
         # Metric localisation and re-ranking parameters
-        self.local = edict({'enable_local': False, 'max_eval_threshold': 20.})
+        self.local = edict({'enable_local': False, 'max_eval_threshold': 1e10})
         if 'LOCAL' in config:
             params = config['LOCAL']
             self.local.enable_local = params.getboolean('enable_local', False)  # whether to optimise metric localisation losses
             self.local.batch_size = params.getint('local_batch_size', 8)
             self.local.aug_mode = params.getint('local_aug_mode', 1)  # Augmentation mode for local batches (1 is default)
             self.local.eval_num_workers = params.getint('eval_num_workers', 0)  # Num dataloader workers for metric loc eval dataloader (ideally higher than standard num_workers)
-            self.local.max_eval_threshold = params.getfloat('max_eval_threshold', 20.)  # max distance to NN to evaluate metric loc (prevents impossible pairs)
+            self.local.max_eval_threshold = params.getfloat('max_eval_threshold', 1e10)  # max distance to NN to evaluate metric loc (prevents impossible pairs)
             self.local.icp_train = params.getboolean('icp_train', False)  # Enable icp during training (unnecessary if done during tuple creation)
             self.local.icp_eval = params.getboolean('icp_eval', False)  # Enable icp during eval
             self.local.icp_use_gicp = params.getboolean('icp_use_gicp', False)
