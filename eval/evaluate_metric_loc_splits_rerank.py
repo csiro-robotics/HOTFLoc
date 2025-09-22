@@ -11,6 +11,7 @@ from sklearn.neighbors import KDTree
 import numpy as np
 import pickle
 import os
+import tempfile
 import argparse
 import logging
 import torch
@@ -144,98 +145,126 @@ def evaluate_dataset(
     # Run evaluation on a single dataset
     global_metrics, local_metrics = {}, {}
 
-    database_embeddings = []
-    database_local_dicts = []
+    database_cache_files = []
+    database_local_cache_files = []
     database_positions = []
-    query_embeddings = []
-    query_local_dicts = []
+    query_cache_files = []
+    query_local_cache_files = []
 
     model.eval()
 
     # TODO: Determine why memory usage peaks at ~200GB when computing/loading Venman from disk (even though Kara is larger)
-    if show_progress:
-        logging.info(f'{"Loading" if load_embeddings else "Computing"} database embeddings')
-    for ii, data_set in enumerate(database_sets):
-        temp_embeddings, temp_local_dict, temp_positions = [None]*3
-        if len(data_set) > 0:
-            # Create array of coordinates of all db elements
-            temp_positions = np.array([(db_details['northing'], db_details['easting']) for db_details in data_set.values()])
-            if load_embeddings:
-                temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
-            else:
-                temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
-            if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'database_{ii}')
-        database_embeddings.append(temp_embeddings)
-        database_local_dicts.append(temp_local_dict)
-        database_positions.append(temp_positions)
+    try:
+        if show_progress:
+            logging.info(f'{"Loading" if load_embeddings else "Computing"} database embeddings')
+        for ii, data_set in enumerate(database_sets):
+            global_tmp_fp, local_tmp_fp, temp_positions = None, None, None
+            if len(data_set) > 0:
+                # Create array of coordinates of all db elements
+                temp_positions = np.array([(db_details['northing'], db_details['easting']) for db_details in data_set.values()])
+                if load_embeddings:
+                    temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'database_{ii}')
+                else:
+                    temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
+                if save_embeddings:
+                    save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'database_{ii}')
+                # Always cache to tmp directory
+                global_tmp_fp, local_tmp_fp = cache_embeddings(temp_embeddings, temp_local_dict)
+            database_positions.append(temp_positions)
+            database_cache_files.append(global_tmp_fp)
+            database_local_cache_files.append(local_tmp_fp)
 
-    if show_progress:
-        logging.info(f'{"Loading" if load_embeddings else "Computing"} query embeddings')
-    for jj, data_set in enumerate(query_sets):
-        temp_embeddings, temp_local_dict = [None]*2
-        if len(data_set) > 0:
-            if load_embeddings:
-                temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
-            else:
-                temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
-            if save_embeddings:
-                save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'query_{jj}')
-        query_embeddings.append(temp_embeddings)
-        query_local_dicts.append(temp_local_dict)
+        if show_progress:
+            logging.info(f'{"Loading" if load_embeddings else "Computing"} query embeddings')
+        for jj, data_set in enumerate(query_sets):
+            global_tmp_fp, local_tmp_fp = None, None
+            if len(data_set) > 0:
+                if load_embeddings:
+                    temp_embeddings, temp_local_dict = load_embeddings_from_file(model_name, params.dataset_name, location_name, f'query_{jj}')
+                else:
+                    temp_embeddings, temp_local_dict = get_latent_vectors(model, data_set, device, params, only_global, reranking, show_progress)
+                if save_embeddings:
+                    save_embeddings_to_file(temp_embeddings, temp_local_dict, model_name, params.dataset_name, location_name, f'query_{jj}')
+                # Always cache to tmp directory
+                global_tmp_fp, local_tmp_fp = cache_embeddings(temp_embeddings, temp_local_dict)
+            query_cache_files.append(global_tmp_fp)
+            query_local_cache_files.append(local_tmp_fp)
 
-    if show_progress:
-        logging.info('Running evaluation')
-    for i in range(len(database_sets)):
-        for j in range(len(query_sets)):
-            if (i == j and params.skip_same_run) or database_embeddings[i] is None or query_embeddings[j] is None:
-                continue
-            if 'CSCampus3D' in params.dataset_name:
-                # For Campus3D, we report on the aerial-only database, which is idx 1
-                if i != 1:
-                    continue
-                split_name = os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0] + f'_idx{i}'
-            elif params.dataset_name == 'WildPlaces':
-                # For WildPlaces, there are multiple databases per query set, so add both to split name
-                split_name = (os.path.split(os.path.split(database_sets[i][0]['query'])[0])[0]
-                              + '-' + query_sets[j][0]['query'].split('/')[1])
-            else:
-                split_name = os.path.split(os.path.split(query_sets[j][0]['query'])[0])[0]
-            temp_global_metrics, temp_local_metrics = get_metrics(
-                m=i,
-                n=j,
-                database_global_embeddings=database_embeddings[i],
-                query_global_embeddings=query_embeddings[j],
-                database_local_dict=database_local_dicts[i],
-                query_local_dict=query_local_dicts[j],
-                database_positions=database_positions[i],
-                database_set=database_sets[i],
-                query_set=query_sets[j],
-                model=model,
-                device=device,
-                params=params,
-                radius=radius,
-                icp_refine=icp_refine,
-                local_max_eval_threshold=local_max_eval_threshold,
-                num_neighbors=num_neighbors,
-                log=log,
-                model_name=model_name,
-                show_progress=show_progress,
-                only_global=only_global,
-                use_ransac=use_ransac,
-                reranking=reranking,
+        del temp_embeddings, temp_local_dict
+
+        if show_progress:
+            logging.info('Running evaluation')
+        for ii in range(len(database_sets)):
+            # Load cached embeddings
+            temp_database_embeddings, temp_database_local_dict = (
+                load_cached_embeddings(database_cache_files[ii], database_local_cache_files[ii])
             )
-            # Report per-split metrics
-            global_metrics[split_name] = temp_global_metrics
-            if not only_global:
-                local_metrics[split_name] = temp_local_metrics
+            for jj in range(len(query_sets)):
+                if (ii == jj and params.skip_same_run) or database_cache_files[ii] is None or query_cache_files[jj] is None:
+                    continue
+                if 'CSCampus3D' in params.dataset_name:
+                    # For Campus3D, we report on the aerial-only database, which is idx 1
+                    if ii != 1:
+                        continue
+                    split_name = os.path.split(os.path.split(database_sets[ii][0]['query'])[0])[0] + f'_idx{ii}'
+                elif params.dataset_name == 'WildPlaces':
+                    # For WildPlaces, there are multiple databases per query set, so add both to split name
+                    split_name = (os.path.split(os.path.split(database_sets[ii][0]['query'])[0])[0]
+                                + '-' + query_sets[jj][0]['query'].split('/')[1])
+                else:
+                    split_name = os.path.split(os.path.split(query_sets[jj][0]['query'])[0])[0]
+                temp_query_embeddings, temp_query_local_dict = (
+                    load_cached_embeddings(query_cache_files[jj], query_local_cache_files[jj])
+                )
+                temp_global_metrics, temp_local_metrics = get_metrics(
+                    m=ii,
+                    n=jj,
+                    database_global_embeddings=temp_database_embeddings,
+                    query_global_embeddings=temp_query_embeddings,
+                    database_local_dict=temp_database_local_dict,
+                    query_local_dict=temp_query_local_dict,
+                    database_positions=database_positions[ii],
+                    database_set=database_sets[ii],
+                    query_set=query_sets[jj],
+                    model=model,
+                    device=device,
+                    params=params,
+                    radius=radius,
+                    icp_refine=icp_refine,
+                    local_max_eval_threshold=local_max_eval_threshold,
+                    num_neighbors=num_neighbors,
+                    log=log,
+                    model_name=model_name,
+                    show_progress=show_progress,
+                    only_global=only_global,
+                    use_ransac=use_ransac,
+                    reranking=reranking,
+                )
+                # Report per-split metrics
+                global_metrics[split_name] = temp_global_metrics
+                if not only_global:
+                    local_metrics[split_name] = temp_local_metrics
+                del temp_query_embeddings, temp_query_local_dict
+            del temp_database_embeddings, temp_database_local_dict
 
-    # Compute average for split
-    global_metrics['average'] = average_nested_dict(global_metrics)
-    if not only_global:
-        local_metrics['average'] = average_nested_dict(local_metrics)
+        # Compute average for split
+        global_metrics['average'] = average_nested_dict(global_metrics)
+        if not only_global:
+            local_metrics['average'] = average_nested_dict(local_metrics)
 
-    del database_embeddings, database_local_dicts, query_embeddings, query_local_dicts
+    finally:
+        # Close all temporary files
+        all_cache_files = [
+            *database_cache_files,
+            *database_local_cache_files,
+            *query_cache_files,
+            *query_local_cache_files,
+        ]
+        for tmp_fp in all_cache_files:
+            if tmp_fp is None:
+                continue
+            tmp_fp.close()
+
     return global_metrics, local_metrics
 
 def average_nested_dict(nested_dict: Dict):
@@ -1112,7 +1141,6 @@ def write_eval_stats(
         msg += "\n------------------------------------------------------------------------\n\n"
         f.write(msg)
 
-
 def save_embeddings_to_file(global_embeddings, local_dict, model_name: str,
                             dataset_name: str, location_name: str, set_name: str = "database"):
     save_dir = os.path.join(os.path.dirname(__file__), "embeddings_v2", dataset_name, location_name, f"model_{model_name}")
@@ -1122,7 +1150,6 @@ def save_embeddings_to_file(global_embeddings, local_dict, model_name: str,
     save_pickle(global_embeddings, global_embeddings_file)
     local_dict_file = os.path.join(save_dir, f"{set_name}_local_dict.pickle")
     save_pickle(local_dict, local_dict_file)
-
 
 def load_embeddings_from_file(model_name: str, dataset_name: str, location_name: str, set_name: str = "database"):
     load_dir = os.path.join(os.path.dirname(__file__), "embeddings_v2", dataset_name, location_name, f"model_{model_name}")
@@ -1137,6 +1164,37 @@ def load_embeddings_from_file(model_name: str, dataset_name: str, location_name:
             "Saved descriptors are corrupted, rerun with `save_descriptors` enabled"
         )
     return global_embeddings, local_dict
+
+def cache_embeddings(global_embeddings, local_embeddings):
+    """
+    Saves embeddings to a tempfile for later use. 
+    Files MUST be closed prior to exiting the program.
+    """
+    global_tmp_fp = tempfile.NamedTemporaryFile()
+    local_tmp_fp = tempfile.NamedTemporaryFile()
+    pickle.dump(global_embeddings, global_tmp_fp, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(local_embeddings, local_tmp_fp, protocol=pickle.HIGHEST_PROTOCOL)
+    global_tmp_fp.seek(0)
+    local_tmp_fp.seek(0)
+    return global_tmp_fp, local_tmp_fp
+
+def load_cached_embeddings(global_tmp_fp, local_tmp_fp):
+    """
+    Load cached embeddings from tempfile.
+    """
+    if global_tmp_fp is None:
+        global_embeddings = None
+    else:
+        global_tmp_fp.seek(0)
+        global_embeddings = pickle.load(global_tmp_fp)
+        global_tmp_fp.seek(0)
+    if local_tmp_fp is None:
+        local_embeddings = None
+    else:
+        local_tmp_fp.seek(0)
+        local_embeddings = pickle.load(local_tmp_fp)
+        local_tmp_fp.seek(0)
+    return global_embeddings, local_embeddings
 
 
 if __name__ == "__main__":
