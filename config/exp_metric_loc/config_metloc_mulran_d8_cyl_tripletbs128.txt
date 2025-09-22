@@ -37,7 +37,7 @@ enable_local = True
 local_batch_size = 10
 local_aug_mode = 1
 eval_num_workers = 10
-max_eval_threshold = 20
+#max_eval_threshold = 20
 # ICP already done in training tuples
 icp_train = False
 icp_eval = True

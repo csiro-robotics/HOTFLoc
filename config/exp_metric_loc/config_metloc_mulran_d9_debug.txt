@@ -16,7 +16,7 @@ lr = 8e-4
 epochs = 100
 scheduler_milestones = 50
 warmup_epochs = 2
-aug_mode = 2
+aug_mode = 3
 set_aug_mode = 2
 random_rot_theta = 180
 normalize_points = True
@@ -37,12 +37,13 @@ validation = True
 [LOCAL]
 enable_local = True
 local_batch_size = 8
-local_aug_mode = 1
+local_aug_mode = 3
 eval_num_workers = 0
-max_eval_threshold = 20
+#max_eval_threshold = 20
 # ICP already done in training tuples
 icp_train = False
 icp_eval = True
+icp_two_stage = True
 weight_coarse_loss = 1.0
 weight_fine_loss = 1.0
 
