@@ -75,6 +75,11 @@ class TrainTransform:
             t.extend([JitterPoints(sigma=0.001, clip=0.002), RemoveRandomPoints(r=(0.0, 0.2)),
                       RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
                       RandomTranslation(max_delta=0.01)])
+        elif self.aug_mode == 5:
+            # EgoNN augmentations (assumes points in metric scale)
+            t.extend([JitterPoints(sigma=0.1, clip=0.2), RemoveRandomPoints(r=(0.0, 0.1)),
+                      RandomRotation(max_theta=random_rot_theta, axis=np.array([0, 0, 1])),
+                      RandomTranslation(max_delta=0.3), RemoveRandomBlock(p=0.4)])
         elif self.aug_mode == 0:    # No augmentations
             pass
         else:
@@ -141,8 +146,6 @@ class Train6DOFTransform:
                                                      unit_sphere_norm=self.unit_sphere_norm,
                                                      zero_mean=self.zero_mean,
                                                      return_shift_and_scale=True)
-        # NOTE: Not using point/block removal for local batches to simplify
-        #       overlap calculation (otherwise needs to be computed on the fly)
         if self.local_aug_mode == 1:
             # Augmentations with random rotation around z-axis 
             # Note that this is in unnormalized coordinates, as opposed to the global branch transforms

@@ -31,6 +31,7 @@ from models.losses.loss_utils import metrics_mean
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
+from models.egonn import MinkGL as EgoNN
 from models.octree import OctreeT, get_octant_centroids_from_points
 from dataset.dataset_utils import make_dataloaders
 from eval.evaluate_metric_loc_splits_rerank import evaluate, print_eval_stats, write_eval_stats
@@ -350,8 +351,6 @@ class NetworkTrainer:
             s += f"coarse loss: {stats['coarse_loss']:.4f}   "
         if 'fine_loss' in stats:
             s += f"fine loss: {stats['fine_loss']:.4f}   "
-        if 'PIR' in stats:
-            s += f"PIR: {stats['PIR']:.4f}   "
         if 'IR' in stats:
             s += f"IR: {stats['IR']:.4f}   "
         if 'RRE' in stats:
@@ -360,6 +359,17 @@ class NetworkTrainer:
             s += f"RTE: {stats['RTE']:.4f}   "
         if 'RR' in stats:
             s += f"RR: {stats['RR']:.4f}   "
+        # EgoNN stats
+        if 'keypoint_loss' in stats:
+            s += f"keypoint_loss: {stats['keypoint_loss']:.4f}   "
+        if 'correspondence_loss' in stats:
+            s += f"correspondence_loss: {stats['correspondence_loss']:.4f}   "
+        if 'loss_p2p' in stats:
+            s += f"loss_p2p: {stats['loss_p2p']:.4f}   "
+        if 'loss_chamfer' in stats:
+            s += f"loss_chamfer: {stats['loss_chamfer']:.4f}   "
+        if 'repeatability' in stats:
+            s += f"repeatability: {stats['repeatability']:.4f}   "
         self.logger.info(s)
 
     def print_stats(self, phase, stats):
@@ -1074,21 +1084,31 @@ class NetworkTrainer:
         local_batch = to_device(local_batch, self.device, non_blocking=True, construct_octree_neigh=True)
 
         with torch.set_grad_enabled('train' in phase):
-            output_dicts = self.model(local_batch)
-            batch_local_loss = []
-            batch_metrics = []
-            # Compute loss for each batch item
-            for ii, output_dict in enumerate(output_dicts):
-                local_batch_ii = {'transform': local_batch['transform'][ii]}  # temp fix since loss func expects a single batch item
-                temp_local_loss, local_metrics = self.local_loss_fn(output_dict, local_batch_ii)
-                batch_local_loss.append(temp_local_loss)
-                local_metrics = self.tensors_to_numbers(local_metrics)
-                batch_metrics.append(local_metrics)
+            if 'egonn' in self.params.model_params.model:
+                y1 = self.model(local_batch['anc_batch'])
+                y2 = self.model(local_batch['pos_batch'])
+                # keypoints and saliency are lists of tensors
+                batch_local_loss, batch_metrics = self.local_loss_fn(
+                    local_batch['anc_batch']['pcd'], y1['keypoints'], y1['sigma'], y1['descriptors'],
+                    local_batch['pos_batch']['pcd'], y2['keypoints'], y2['sigma'], y2['descriptors'],
+                    local_batch['transform'],
+                )
+            else:
+                output_dicts = self.model(local_batch)
+                batch_local_loss = []
+                batch_metrics = []
+                # Compute loss for each batch item
+                for ii, output_dict in enumerate(output_dicts):
+                    local_batch_ii = {'transform': local_batch['transform'][ii]}  # temp fix since loss func expects a single batch item
+                    temp_local_loss, local_metrics = self.local_loss_fn(output_dict, local_batch_ii)
+                    batch_local_loss.append(temp_local_loss)
+                    local_metrics = self.tensors_to_numbers(local_metrics)
+                    batch_metrics.append(local_metrics)
 
-            # Average loss and metrics
-            batch_local_loss = torch.stack(batch_local_loss).mean()
+                # Average loss and metrics
+                batch_local_loss = torch.stack(batch_local_loss).mean()
+                batch_metrics = metrics_mean(batch_metrics)
             self.logger.debug(f'Local loss: {batch_local_loss.item():.4f}')
-            batch_metrics = metrics_mean(batch_metrics)
 
         if 'train' in phase:
             self.grad_scaler.scale(batch_local_loss).backward()
@@ -1219,7 +1239,7 @@ class NetworkTrainer:
                         epoch_embeddings = temp_global_embeddings
 
                 # Log average gradients per stage
-                if 'train' in phase and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc)):
+                if 'train' in phase and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc, EgoNN)):
                     # FIXME: currently broken for HOTFormerLoc
                     epoch_stage_gradient_magnitudes = self.log_stage_gradient_magnitudes(self.params.load_octree)
 
@@ -1276,7 +1296,12 @@ class NetworkTrainer:
                     use_ransac=False,
                     reranking=reranking,
                 )
-                print_eval_stats(global_eval_stats, local_eval_stats, reranking=reranking)
+                print_eval_stats(
+                    global_eval_stats,
+                    local_eval_stats,
+                    reranking=reranking,
+                    rerank_mode=self.params.model_params.rerank_mode,
+                )
                 metrics['test'] = self.log_eval_stats(global_eval_stats, local_eval_stats, reranking=reranking)
                 # store best AR@1 on all test sets
                 radius_best = min(self.params.eval_radius)
@@ -1320,7 +1345,12 @@ class NetworkTrainer:
             use_ransac=True,  # Enable RANSAC for final evaluation (if doing metric loc evaluation)
             reranking=reranking,
         )
-        print_eval_stats(final_global_stats, final_local_stats, reranking=reranking)
+        print_eval_stats(
+            final_global_stats,
+            final_local_stats,
+            reranking=reranking,
+            rerank_mode=self.params.model_params.rerank_mode,
+        )
 
         # Append key experimental metrics to experiment summary file
         if not self.params.debug:
@@ -1334,7 +1364,8 @@ class NetworkTrainer:
                 prefix,
                 final_global_stats,
                 final_local_stats,
-                reranking=reranking
+                reranking=reranking,
+                rerank_mode=self.params.model_params.rerank_mode,
             )
 
             if self.params.wandb and WANDB_OFFLINE:

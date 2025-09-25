@@ -1,0 +1,7 @@
+[MODEL]
+model = egonn
+coordinates = polar
+# Quantization steps for sectors (in degrees), rings (in metres) and z coordinate (in metres)
+quantization_step = 1., 0.3, 0.2
+
+rerank_mode = sgv

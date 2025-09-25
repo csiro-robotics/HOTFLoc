@@ -10,6 +10,7 @@ from pytorch_metric_learning.distances import LpDistance
 from misc.utils import TrainingParams
 from models.losses.truncated_smoothap import TruncatedSmoothAP
 from models.losses.geotransformer_loss import OverallLoss
+from models.losses.egonn_loss import KeypointCorrLoss
 
 
 def make_losses(params: TrainingParams):
@@ -55,7 +56,19 @@ def make_losses(params: TrainingParams):
 
     local_loss_fn = None
     if params.local.enable_local:
-        local_loss_fn = OverallLoss(params)
+        if 'egonn' in params.model_params.model.lower():
+            if params.loss_gammas is not None:
+                gamma_chamfer, gamma_p2p, gamma_c, beta = params.loss_gammas
+            else:
+                gamma_chamfer, gamma_p2p, gamma_c, beta = [1., 1., 1., 2.]
+            local_loss_fn = KeypointCorrLoss(
+                gamma_c=gamma_c,
+                gamma_chamfer=gamma_chamfer,
+                gamma_p2p=gamma_p2p,
+                beta=beta,
+            )
+        else:
+            local_loss_fn = OverallLoss(params)
 
     return global_loss_fn, qkv_loss_fn, rerank_loss_fn, local_loss_fn
 

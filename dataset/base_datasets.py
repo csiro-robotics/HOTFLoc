@@ -16,6 +16,7 @@ from dataset.mulran.utils import relative_pose as mulran_relative_pose
 from dataset.southbay.southbay_raw import SouthbayPointCloudLoader
 from misc.point_clouds import PointCloudLoader, icp, two_stage_icp
 from misc.poses import relative_pose as base_relative_pose
+from misc.poses import height_offset_removal, gravity_align_pc_with_pose, invert_pose
 
 
 class TrainingTuple:
@@ -108,6 +109,8 @@ class TrainingDataset(Dataset):
         coordinates="cartesian",
         is_cross_source_dataset=False,
         prioritise_cross_source=False,
+        remove_height_offset=False,
+        gravity_align=False,
     ):
         # remove_zero_points: remove points with all zero coords
         assert os.path.exists(dataset_path), f'Cannot access dataset path: {dataset_path}'
@@ -125,6 +128,8 @@ class TrainingDataset(Dataset):
             assert is_cross_source_dataset
         self.is_cross_source_dataset = is_cross_source_dataset
         self.prioritise_cross_source = prioritise_cross_source
+        self.remove_height_offset = remove_height_offset
+        self.gravity_align = gravity_align
         self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
 
         # NOTE: Virga env requires 'datasets' module stored as 'dataset' to avoid
@@ -150,12 +155,19 @@ class TrainingDataset(Dataset):
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
         shift_and_scale = None
+        tf_gravity_align = torch.eye(4)
+        tf_height_offset_removal = torch.eye(4)
+        if self.gravity_align:
+            data, tf_gravity_align = gravity_align_pc_with_pose(data, self.queries[ndx].pose)
+        if self.remove_height_offset:
+            data, tf_height_offset_removal = height_offset_removal(data)
         if self.transform is not None:
             data, shift_and_scale = self.transform(data)
+        tf_composed = tf_height_offset_removal @ tf_gravity_align
         if self.load_octree and self.clip_octree_points:
             data = clip_points(data, self.coordinates)
         assert data.size(0) > 0
-        return data, ndx, shift_and_scale
+        return data, ndx, shift_and_scale, tf_composed
 
     def get_positives(self, ndx):
         return self.queries[ndx].positives
@@ -225,7 +237,7 @@ class Training6DOFDataset(TrainingDataset):
         query_shift_and_scale = None
         positive_shift_and_scale = None
         # pose is a global coordinate system pose 3x4 R|T matrix
-        query_pc, _, _ = super().__getitem__(ndx)
+        query_pc, _, _, query_applied_tf = super().__getitem__(ndx)
 
         # get random positive
         positives = self.get_positives(ndx)
@@ -234,7 +246,7 @@ class Training6DOFDataset(TrainingDataset):
             if len(cross_source_positives) > 0:
                 positives = cross_source_positives
         positive_ndx = np.random.choice(positives, 1)[0]
-        positive_pc, _, _ = super().__getitem__(positive_ndx)
+        positive_pc, _, _, positive_applied_tf = super().__getitem__(positive_ndx)
 
         # get relative pose from global poses
         if self.queries[ndx].positives_poses is not None:
@@ -247,6 +259,9 @@ class Training6DOFDataset(TrainingDataset):
                 self.relative_pose(self.queries[ndx].pose, self.queries[positive_ndx].pose),
                 dtype=query_pc.dtype,
             )
+
+        # Correct height offsets and/or gravity alignment in gt relative transform
+        transform = positive_applied_tf @ transform @ invert_pose(query_applied_tf)
 
         # ######################## TEMP FOR DEBUGGING ########################
         # query_pc_orig = query_pc.clone()
@@ -326,6 +341,8 @@ class EvalDataset(Dataset):
         transform=None,
         load_octree=False,
         coordinates="cartesian",
+        remove_height_offset=False,
+        gravity_align=False,
     ):
         assert os.path.exists(dataset_path), 'Cannot access dataset path: {}'.format(dataset_path)
         self.dataset_path = dataset_path
@@ -333,8 +350,10 @@ class EvalDataset(Dataset):
         assert len(data_set_dict) > 0, "Empty dict"
         self.data_set_dict = data_set_dict
         self.transform = transform
-        self.coordinates = coordinates
         self.load_octree = load_octree
+        self.coordinates = coordinates
+        self.remove_height_offset = remove_height_offset
+        self.gravity_align = gravity_align
         self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
 
         self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
@@ -348,12 +367,17 @@ class EvalDataset(Dataset):
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
         shift_and_scale = None
+        tf_gravity_align = torch.eye(4)
+        tf_height_offset_removal = torch.eye(4)
+        if self.gravity_align:
+            data, tf_gravity_align = gravity_align_pc_with_pose(data, self.data_set_dict[ndx]['pose'])
+        if self.remove_height_offset:
+            data, tf_height_offset_removal = height_offset_removal(data)
         if self.transform is not None:
             data, shift_and_scale = self.transform(data)
-        if self.load_octree and self.clip_octree_points:
-            data = clip_points(data, self.coordinates)
+        tf_composed = tf_height_offset_removal @ tf_gravity_align
         assert data.size(0) > 0
-        return data, shift_and_scale
+        return data, shift_and_scale, tf_composed
 
 
 class EvalRerankingDataset(EvalDataset):
@@ -382,11 +406,11 @@ class EvalRerankingDataset(EvalDataset):
         query_ndx, nn_indices = self.query_nn_list[ndx]
         pc_list = []
         shift_and_scale_list = []
-        query_pc, query_shift_and_scale = super().__getitem__(query_ndx)
+        query_pc, query_shift_and_scale, _ = super().__getitem__(query_ndx)
         pc_list.append(query_pc)
         shift_and_scale_list.append(query_shift_and_scale)
         for nn_idx in nn_indices:
-            nn_pc, nn_shift_and_scale = self.database_dataset[nn_idx]
+            nn_pc, nn_shift_and_scale, _ = self.database_dataset[nn_idx]
             pc_list.append(nn_pc)
             shift_and_scale_list.append(nn_shift_and_scale)
 
@@ -442,13 +466,12 @@ class Eval6DOFDataset(EvalDataset):
         return len(self.pairs_list)
 
     def __getitem__(self, ndx):
-        # TODO: Consider adding gravity alignment as a step here
         query_shift_and_scale = None
         positive_shift_and_scale = None
 
         query_ndx, positive_ndx = self.pairs_list[ndx]
-        query_pc, _ = super().__getitem__(query_ndx)
-        positive_pc, _ = self.pos_dataset[positive_ndx]
+        query_pc, _, query_applied_tf = super().__getitem__(query_ndx)
+        positive_pc, _, positive_applied_tf = self.pos_dataset[positive_ndx]
 
         # get relative pose from global poses
         transform = torch.tensor(
@@ -458,6 +481,9 @@ class Eval6DOFDataset(EvalDataset):
             ),
             dtype=query_pc.dtype,
         )
+
+        # Correct height offsets and/or gravity alignment in gt relative transform
+        transform = positive_applied_tf @ transform @ invert_pose(query_applied_tf)
 
         # ######################## TEMP FOR DEBUGGING ########################
         # query_pc_orig = query_pc.clone()

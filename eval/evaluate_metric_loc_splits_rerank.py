@@ -26,8 +26,9 @@ from dataset.dataset_utils import (
 )
 from dataset.augmentation import Normalize
 from eval.utils import get_query_database_splits
-from eval.sgv.sgv_utils import sgv_fn
-from eval.geotransformer_utils import compute_geotransformer_metrics
+from eval.sgv.sgv_utils import sgv_parallel
+from eval.geotransformer_utils import compute_geotransformer_metrics, compute_registration_error
+from eval.egonn_utils import ransac_fn
 from misc.logger import create_logger
 from misc.point_clouds import icp
 from misc.torch_utils import set_seed, to_device, release_cuda
@@ -35,6 +36,7 @@ from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.hotformerloc_metric_loc_legacy import HOTFormerMetricLoc as HOTFormerMetricLocLegacy
+from models.egonn import MinkGL as EgoNN
 
 DISABLE_ICP = False
 EVAL_MODES = ['Initial', 'Re-Ranked']
@@ -306,16 +308,34 @@ def get_latent_vectors(
     if len(data_set) == 0:
         return None, None
 
-    ### NOTE: Disabled so that eval can be tested during training debug mode
+    ### NOTE: Comment out below to test eval during training debug mode
     if params.debug:
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
         local_dict = {'local_embeddings': []}
         if not only_global:
-            raise NotImplementedError
-            for _ in range(len(data_set)):
-                for ii, coarse_idx in enumerate(model.coarse_idx):
-                    local_dict['local_embeddings']['coarse'][ii].append(torch.randn(128, params.model_params.channels[coarse_idx]))
-                local_dict['local_embeddings']['fine'].append(torch.randn(512, params.model_params.channels[model.fine_idx]))
+            if isinstance(model, EgoNN):
+                local_dict['keypoints'] = []
+                for _ in range(len(data_set)):
+                    local_dict['local_embeddings'].append(torch.randn(128, 128))
+                    local_dict['keypoints'].append(torch.randn(128, 3))
+            elif params.load_octree:
+                if reranking:
+                    raise NotImplementedError
+                # Generate random feats for all possible depths
+                start_depth = params.octree_depth - params.model_params.num_input_downsamples
+                end_depth = start_depth - model.hotformerloc_global.backbone.backbone.num_stages
+                channels = list(model.hotformerloc_global.backbone.backbone.channels)
+                num_octf_levels = model.hotformerloc_global.backbone.backbone.num_octf_levels
+                num_pyramid_levels = model.hotformerloc_global.backbone.backbone.num_pyramid_levels
+                if len(channels[num_octf_levels:]) == 1:
+                    channels[num_octf_levels:] = channels[num_octf_levels:] * num_pyramid_levels
+                for _ in range(len(data_set)):
+                    temp_dict = {}
+                    for jj, depth_j in enumerate(range(start_depth, end_depth, -1)):
+                        temp_dict[depth_j] = torch.randn(128, channels[jj])
+                    local_dict['local_embeddings'].append(temp_dict)
+            else:
+                raise NotImplementedError
         return global_embeddings, local_dict
 
     # Create dataloader for data_set
@@ -334,6 +354,10 @@ def get_latent_vectors(
             # Split local embeddings from batch
             if 'local_embedding' in temp_local_dict:
                 local_dict['local_embeddings'].extend(temp_local_dict['local_embedding'])
+            if 'keypoints' in temp_local_dict:
+                if ii == 0:
+                    local_dict['keypoints'] = []
+                local_dict['keypoints'].extend(temp_local_dict['keypoints'])
             pbar.update(len(temp_global_embedding))
     
     return global_embeddings, local_dict
@@ -365,6 +389,16 @@ def compute_embedding(
                 local_dict['local_embedding'] = release_cuda(local_embeddings_list)
             else:
                 local_dict['local_embedding'] = release_cuda(local_embeddings)
+        elif 'keypoints' in y:  # EgoNN
+            # Sort by saliency
+            descriptors, keypoints, sigma = y['descriptors'], y['keypoints'], y['sigma']
+            for ii in range(len(descriptors)):
+                n_kpts = min(len(sigma[ii]), 128)  # 128 keypoints by default
+                _, indices = torch.topk(sigma[ii].squeeze(1), dim=0, k=n_kpts, largest=False)
+                descriptors[ii] = descriptors[ii][indices]
+                keypoints[ii] = keypoints[ii][indices]
+            local_dict['local_embedding'] = release_cuda(descriptors)
+            local_dict['keypoints'] = release_cuda(keypoints)
         torch.cuda.empty_cache()  # Prevent excessive GPU memory consumption by SparseTensors
 
     return global_embedding, local_dict
@@ -708,76 +742,105 @@ def get_metrics(
     # NOTE: Could be faster if done in the PR loop, but requires additional implementation
     #       to pre-compute local point coords (or octrees). Usable for now.
     if reranking and params.model_params.rerank_mode is not None:
-        rerank_dataloader = make_eval_dataloader_reranking(  # Increased num workers to minimise bottleneck (assumes enough threads are available)
-            params, query_set, database_set, global_result_dict['query_nn_list'], num_workers=(params.num_workers * 3)
-        )
+        if isinstance(model, EgoNN):  # Don't need full dataloader for EgoNN
+            rerank_dataloader = range(len(global_result_dict['query_nn_list']))
+        else:
+            rerank_dataloader = make_eval_dataloader_reranking(  # Increased num workers to minimise bottleneck (assumes enough threads are available)
+                params, query_set, database_set, global_result_dict['query_nn_list'], num_workers=(params.num_workers * 3)
+            )
         for idx, rerank_batch_dict in tqdm.tqdm(enumerate(rerank_dataloader),
-                                    total=len(rerank_dataloader),
-                                    desc='Re-ranking',
-                                    disable=(not show_progress)):
-            if params.debug:
-                if idx >= 2:
-                    break
+                                                total=len(rerank_dataloader),
+                                                desc='Re-ranking',
+                                                disable=(not show_progress)):
+            if params.debug and idx >= 2:
+                break
             query_idx = global_result_dict['query_nn_list'][idx][0]
             nn_indices = global_result_dict['query_nn_list'][idx][1]
             euclid_dist = global_result_dict['euclid_dist_list'][idx]
             query_metadata = query_set[query_idx]  # {'query': path, 'northing': , 'easting': , 'pose': }
             query_position = np.array((query_metadata['northing'], query_metadata['easting']))
 
-            # Move to GPU and do forward pass
-            rerank_batch_dict = to_device(rerank_batch_dict, device, non_blocking=True, construct_octree_neigh=True)
-            rerank_batch = rerank_batch_dict['batch']
-            rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
-
-            with torch.inference_mode():
-                if params.model_params.rerank_mode in ('relay_token_gc', 'relay_token_local_gc'):
-                    out_dict = model(rerank_batch, global_only=True)
-                elif params.model_params.rerank_mode in ('local_hierarchical_gc', 'sgv'):
-                    sgv_feat_type = 'fine'  # TODO: make this a configurable param
-                    # Use pre-computed local descriptors
-                    rerank_batch_local_embeddings = [
-                        query_local_dict['local_embeddings'][query_idx],
-                        *[database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices]
-                    ]
-                    out_dict = {'local': rerank_batch_local_embeddings}
-                    out_dict = to_device(out_dict, device)
-                tic_rr = time.perf_counter()
-                if params.model_params.rerank_mode == 'sgv':
-                    rerank_scores = model.sgv_rerank_inference(
-                        model_out=out_dict,
-                        shift_and_scale=rerank_shift_and_scale,
-                        batch=rerank_batch,
-                        feat_type=sgv_feat_type,
-                    )
-                else:
-                    rerank_scores = model.rerank_inference(
-                        model_out=out_dict,
-                        shift_and_scale=rerank_shift_and_scale,
-                        batch=rerank_batch,
-                    )[0, :, 0]
-                intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
-                _, rerank_sort_indices = release_cuda(
-                    torch.sort(rerank_scores, descending=True), to_numpy=True
+            # Separate forward pass for EgoNN+SGV
+            if isinstance(model, EgoNN):
+                assert params.model_params.rerank_mode == 'sgv'
+                query_keypoints = query_local_dict['keypoints'][query_idx][None, ...]
+                candidate_keypoints = torch.stack(
+                    [database_local_dict['keypoints'][nn_idx] for nn_idx in nn_indices],
+                    dim=0,
                 )
-                topk_rerank_indices = nn_indices[rerank_sort_indices]
-                delta_rerank = query_position - database_positions[topk_rerank_indices]
-                euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+                query_features = query_local_dict['local_embeddings'][query_idx][None, ...]
+                candidate_features = torch.stack(
+                    [database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices],
+                    dim=0,
+                )
+                query_keypoints, candidate_keypoints, query_features, candidate_features = to_device(
+                    (query_keypoints, candidate_keypoints, query_features, candidate_features),
+                    device=device,
+                )
+                tic_rr = time.perf_counter()
+                rerank_scores = torch.tensor(sgv_parallel(
+                    src_keypts=query_keypoints,
+                    tgt_keypts=candidate_keypoints,
+                    src_features=query_features,
+                    tgt_features=candidate_features,
+                    d_thresh=0.4,  # threshold used in SGV paper
+                ))
+            # HOTFormerLoc-based re-ranking
+            else:
+                # Move to GPU and do forward pass
+                rerank_batch_dict = to_device(rerank_batch_dict, device, non_blocking=True, construct_octree_neigh=True)
+                rerank_batch = rerank_batch_dict['batch']
+                rerank_shift_and_scale = rerank_batch_dict['shift_and_scale']
+                with torch.inference_mode():
+                    if params.model_params.rerank_mode in ('relay_token_gc', 'relay_token_local_gc'):
+                        out_dict = model(rerank_batch, global_only=True)
+                    elif params.model_params.rerank_mode in ('local_hierarchical_gc', 'sgv'):
+                        sgv_feat_type = 'fine'  # TODO: make this a configurable param
+                        # Use pre-computed local descriptors
+                        rerank_batch_local_embeddings = [
+                            query_local_dict['local_embeddings'][query_idx],
+                            *[database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices]
+                        ]
+                        out_dict = {'local': rerank_batch_local_embeddings}
+                        out_dict = to_device(out_dict, device)
+                    tic_rr = time.perf_counter()
+                    if params.model_params.rerank_mode == 'sgv':
+                        rerank_scores = model.sgv_rerank_inference(
+                            model_out=out_dict,
+                            shift_and_scale=rerank_shift_and_scale,
+                            batch=rerank_batch,
+                            feat_type=sgv_feat_type,
+                        )
+                    else:
+                        rerank_scores = model.rerank_inference(
+                            model_out=out_dict,
+                            shift_and_scale=rerank_shift_and_scale,
+                            batch=rerank_batch,
+                        )[0, :, 0]
 
-                # Log cases where re-ranking is worse (causes PR failure, or is
-                #   significantly worse than the original top-candidate)
-                rr_to_nn_euclid_dist = euclid_dist_rr[0] - euclid_dist[0]
-                if (
-                    euclid_dist[0] <= MAX_NN_EUCLID_DIST
-                    and rr_to_nn_euclid_dist > MAX_RR_TO_NN_EUCLID_DIST
-                ):
-                    # print(f'Fail: {euclid_dist_rr[0]:.2f}m > {euclid_dist[0]:.2f}m', flush=True)
-                    query_name = os.path.basename(query_set[query_idx]['query'])
-                    nn_name = os.path.basename(database_set[nn_indices[0]]['query'])
-                    nn_rerank_name = os.path.basename(database_set[topk_rerank_indices[0]]['query'])
-                    global_metrics['rr_failures'].append(
-                        (query_name, nn_name, nn_rerank_name,
-                         f'{euclid_dist[0]:.2f}', f'{euclid_dist_rr[0]:.2f}')
-                    )
+            intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
+            _, rerank_sort_indices = release_cuda(
+                torch.sort(rerank_scores, descending=True), to_numpy=True
+            )
+            topk_rerank_indices = nn_indices[rerank_sort_indices]
+            delta_rerank = query_position - database_positions[topk_rerank_indices]
+            euclid_dist_rr = np.linalg.norm(delta_rerank, axis=1)
+
+            # Log cases where re-ranking is worse (causes PR failure, or is
+            #   significantly worse than the original top-candidate)
+            rr_to_nn_euclid_dist = euclid_dist_rr[0] - euclid_dist[0]
+            if (
+                euclid_dist[0] <= MAX_NN_EUCLID_DIST
+                and rr_to_nn_euclid_dist > MAX_RR_TO_NN_EUCLID_DIST
+            ):
+                # print(f'Fail: {euclid_dist_rr[0]:.2f}m > {euclid_dist[0]:.2f}m', flush=True)
+                query_name = os.path.basename(query_set[query_idx]['query'])
+                nn_name = os.path.basename(database_set[nn_indices[0]]['query'])
+                nn_rerank_name = os.path.basename(database_set[topk_rerank_indices[0]]['query'])
+                global_metrics['rr_failures'].append(
+                    (query_name, nn_name, nn_rerank_name,
+                        f'{euclid_dist[0]:.2f}', f'{euclid_dist_rr[0]:.2f}')
+                )
 
             intermediate_metrics['tp_rr'] = {r: [intermediate_metrics['tp_rr'][r][nn] + (1 if (euclid_dist_rr[:nn + 1] <= r).any() else 0) for nn in range(num_neighbors)] for r in radius}
             intermediate_metrics['opr_rr'] = {r: intermediate_metrics['opr_rr'][r] + (1 if (euclid_dist_rr[:opr_threshold] <= r).any() else 0) for r in radius}
@@ -796,6 +859,11 @@ def get_metrics(
             metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
             metric_loc_pairs_list['Re-Ranked'].append((query_idx, topk_rerank_indices[0]))
 
+    if isinstance(model, EgoNN):
+        metric_loc_func = metric_loc_egonn
+    else:
+        metric_loc_func = metric_loc_hotformerloc
+
     # Run metric localisation evaluation for initial and re-ranked top-candidate
     for eval_mode in EVAL_MODES:
         if only_global:
@@ -810,115 +878,21 @@ def get_metrics(
                                     total=len(eval_dataloader),
                                     desc=f'Metric Localisation [{eval_mode}]',
                                     disable=(not show_progress)):
-            query_idx, nn_idx = metric_loc_pairs_list[eval_mode][idx]
-            T_gt = batch['transform'][0]
-
-            # Use pre-computed embeddings so we don't re-compute the entire forward pass
-            if params.debug:
-                if idx >= 2:
-                    break
-                batch['anc_local_feats'] = {
-                    'coarse': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
-                    'fine': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
-                }
-                batch['pos_local_feats'] = {
-                    'coarse': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
-                    'fine': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
-                }
-            else:
-                batch['anc_local_feats'] = query_local_dict['local_embeddings'][query_idx]
-                batch['pos_local_feats'] = database_local_dict['local_embeddings'][nn_idx]
-
-            batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
-
-            with torch.inference_mode():
-                tic = time.perf_counter()
-                model_out = model(batch)
-                t_metloc = time.perf_counter() - tic
-                T_estimated = release_cuda(model_out[0]['estimated_transform'], to_numpy=True)
-            
-            # Refine the estimated pose using ICP
-            if icp_refine:
-                # Get point clouds in metric coordinates
-                query_pc_metric = Normalize.unnormalize(batch['anc_batch']['points'].points, batch['anc_shift_and_scale'][0])
-                query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
-                nn_pc_metric = Normalize.unnormalize(batch['pos_batch']['points'].points, batch['pos_shift_and_scale'][0])
-                nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
-
-                tic = time.perf_counter()
-                T_estimated_refined, _, _ = icp(
-                    query_pc_metric,
-                    nn_pc_metric,
-                    T_estimated,
-                    gicp=params.local.icp_use_gicp,
-                    inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
-                    max_iteration=params.local.icp_max_iteration,
-                    voxel_size=params.local.icp_voxel_size,
-                )
-                t_icp = time.perf_counter() - tic
-
-            # TODO: Re-add support for non-geotransformer variants
-
-            # Compute metrics with and without ICP refinement
-            batch_temp = {'transform': batch['transform'][0]}  # temp fix since loss func expects a single batch item
-
-            model_out_np = release_cuda(model_out[0], to_numpy=True)
-            batch_temp_np = release_cuda(batch_temp, to_numpy=True)
-            temp_metrics = compute_geotransformer_metrics(
-                model_out_np, batch_temp_np, params, use_ransac=use_ransac
+            if params.debug and idx >= 2:
+                break
+            local_metrics = metric_loc_func(
+                batch=batch,
+                idx=idx,
+                eval_mode=eval_mode,
+                metric_loc_pairs_list=metric_loc_pairs_list,
+                local_metrics=local_metrics,
+                query_local_dict=query_local_dict,
+                database_local_dict=database_local_dict,
+                params=params,
+                icp_refine=icp_refine,
+                unfair_rre_rte=unfair_rre_rte,
+                use_ransac=use_ransac,
             )
-            local_metrics[eval_mode]['coarse_IR'].append(temp_metrics['PIR'])
-            local_metrics[eval_mode]['fine_IR'].append(temp_metrics['IR'])
-            local_metrics[eval_mode]['fine_overlap'].append(temp_metrics['OV'])
-            local_metrics[eval_mode]['fine_residual'].append(temp_metrics['residual'])
-            local_metrics[eval_mode]['fine_num_corr'].append(temp_metrics['num_corr'])
-            local_metrics[eval_mode]['success'].append(temp_metrics['success_lgr'])
-            if unfair_rre_rte and temp_metrics['success_lgr'] == 1.0:
-                local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
-                local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
-            else:
-                if not unfair_rre_rte:
-                    local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
-                    local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
-            local_metrics[eval_mode]['num_pts_per_patch'].append(temp_metrics['num_pts_per_patch'])
-            local_metrics[eval_mode]['num_corr_patches_lgr'].append(temp_metrics['num_corr_patches_lgr'])
-            local_metrics[eval_mode]['num_corr_pts_per_patch_lgr'].append(temp_metrics['num_corr_pts_per_patch_lgr'])
-            local_metrics[eval_mode]['corr_score_lgr'].append(temp_metrics['corr_score_lgr'])
-            if temp_metrics['success_lgr'] == 0:
-                local_metrics[eval_mode]['failure_query_pos_ndx'].append((query_idx, nn_idx))
-            local_metrics[eval_mode]['t_metloc'].append(t_metloc)  # Metric Loc time
-            if use_ransac:
-                local_metrics[eval_mode]['success_ransac'].append(temp_metrics['success_ransac'])
-                if unfair_rre_rte and temp_metrics['success_ransac'] == 1.0:
-                    local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
-                    local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
-                else:
-                    if not unfair_rre_rte:
-                        local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
-                        local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
-                local_metrics[eval_mode]['t_ransac'].append(temp_metrics['t_ransac'])
-
-            if icp_refine:
-                model_out[0]['estimated_transform'] = torch.tensor(
-                    T_estimated_refined, dtype=T_gt.dtype, device=device
-                )
-                model_out_np = release_cuda(model_out[0], to_numpy=True)
-                temp_metrics_refined = compute_geotransformer_metrics(
-                    model_out_np, batch_temp_np, params, use_ransac=False,  # RANSAC already computed once
-                )
-                local_metrics[eval_mode]['success_refined'].append(temp_metrics_refined['success_lgr'])
-                if unfair_rre_rte and temp_metrics_refined['success_lgr'] == 1.0:
-                    local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
-                    local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
-                else:
-                    if not unfair_rre_rte:
-                        local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
-                        local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
-                if temp_metrics_refined['success_lgr'] == 0:
-                    local_metrics[eval_mode]['failure_query_pos_ndx_refined'].append((query_idx, nn_idx))
-                local_metrics[eval_mode]['t_metloc_refined'].append(t_metloc + t_icp)  # Metric Loc Refined time
-
-            torch.cuda.empty_cache()
 
     # Calculate mean global metrics
     global_metrics['recall'] = {r: [intermediate_metrics['tp'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
@@ -1014,12 +988,226 @@ def get_metrics(
 
     return global_metrics, mean_local_metrics
 
+def metric_loc_egonn(
+    batch: dict,
+    idx: int,
+    eval_mode: str,
+    metric_loc_pairs_list: Dict[str, list],
+    local_metrics: Dict[str, dict],
+    query_local_dict: Dict[str, list],
+    database_local_dict: Dict[str, list],
+    params: TrainingParams,
+    icp_refine: bool,
+    unfair_rre_rte: bool,
+    n_kpts: int = 128,
+    **kwargs,
+):
+    query_idx, nn_idx = metric_loc_pairs_list[eval_mode][idx]
+    T_gt = batch['transform'][0].numpy()
+
+    # Use pre-computed embeddings so we don't re-compute the entire forward pass
+    query_keypoints = query_local_dict['keypoints'][query_idx]
+    candidate_keypoints = database_local_dict['keypoints'][nn_idx]
+    query_features = query_local_dict['local_embeddings'][query_idx]
+    candidate_features = database_local_dict['local_embeddings'][nn_idx]
+
+    tic = time.perf_counter()
+    T_estimated, inliers, fitness = ransac_fn(
+        query_keypoints=query_keypoints,
+        candidate_keypoints=candidate_keypoints,
+        query_features=query_features,
+        candidate_features=candidate_features,
+        n_k=n_kpts,
+    )
+    t_metloc = time.perf_counter() - tic
+    inlier_ratio = inliers / n_kpts
+
+    # Refine the estimated pose using ICP
+    if icp_refine:
+        # Get point clouds in metric coordinates
+        query_pc_metric = batch['anc_batch']['pcd'][0]
+        nn_pc_metric = batch['pos_batch']['pcd'][0]
+        if params.normalize_points:
+            query_pc_metric = Normalize.unnormalize(query_pc_metric, batch['anc_shift_and_scale'][0])
+            nn_pc_metric = Normalize.unnormalize(nn_pc_metric, batch['pos_shift_and_scale'][0])
+        query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
+        nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
+
+        tic = time.perf_counter()
+        T_estimated_refined, _, _ = icp(
+            query_pc_metric,
+            nn_pc_metric,
+            T_estimated,
+            gicp=params.local.icp_use_gicp,
+            inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
+            max_iteration=params.local.icp_max_iteration,
+            voxel_size=params.local.icp_voxel_size,
+        )
+        t_icp = time.perf_counter() - tic
+
+    # Compute metrics with and without ICP refinement
+    rre, rte = compute_registration_error(T_gt, T_estimated)
+    success = float(rre < params.local.rre_threshold and rte < params.local.rte_threshold)
+
+    local_metrics[eval_mode]['coarse_IR'].append(inlier_ratio)
+    local_metrics[eval_mode]['success'].append(success)
+    if unfair_rre_rte and success == 1.0:
+        local_metrics[eval_mode]['rre'].append(rre)
+        local_metrics[eval_mode]['rte'].append(rte)
+    else:
+        if not unfair_rre_rte:
+            local_metrics[eval_mode]['rre'].append(rre)
+            local_metrics[eval_mode]['rte'].append(rte)
+    if success == 0:
+        local_metrics[eval_mode]['failure_query_pos_ndx'].append((query_idx, nn_idx))
+    local_metrics[eval_mode]['t_metloc'].append(t_metloc)  # Metric Loc time
+
+    if icp_refine:
+        rre_refined, rte_refined = compute_registration_error(T_gt, T_estimated_refined)
+        success_refined = float(rre_refined < params.local.rre_threshold and rte_refined < params.local.rte_threshold)
+        local_metrics[eval_mode]['success_refined'].append(success_refined)
+        if unfair_rre_rte and success_refined == 1.0:
+            local_metrics[eval_mode]['rre_refined'].append(rre_refined)
+            local_metrics[eval_mode]['rte_refined'].append(rte_refined)
+        else:
+            if not unfair_rre_rte:
+                local_metrics[eval_mode]['rre_refined'].append(rre_refined)
+                local_metrics[eval_mode]['rte_refined'].append(rte_refined)
+        if success_refined == 0:
+            local_metrics[eval_mode]['failure_query_pos_ndx_refined'].append((query_idx, nn_idx))
+        local_metrics[eval_mode]['t_metloc_refined'].append(t_metloc + t_icp)  # Metric Loc Refined time
+
+    return local_metrics
+
+def metric_loc_hotformerloc(
+    batch: dict,
+    idx: int,
+    eval_mode: str,
+    metric_loc_pairs_list: Dict[str, list],
+    local_metrics: Dict[str, dict],
+    query_local_dict: Dict[str, list],
+    database_local_dict: Dict[str, list],
+    params: TrainingParams,
+    icp_refine: bool,
+    unfair_rre_rte: bool,
+    use_ransac: bool,
+    **kwargs,
+):
+    query_idx, nn_idx = metric_loc_pairs_list[eval_mode][idx]
+    T_gt = batch['transform'][0]
+
+    # Use pre-computed embeddings so we don't re-compute the entire forward pass
+    if params.debug:
+        batch['anc_local_feats'] = {
+            'coarse': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
+            'fine': torch.randn(batch['anc_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
+        }
+        batch['pos_local_feats'] = {
+            'coarse': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_coarse], params.model_params.channels[-1]),
+            'fine': torch.randn(batch['pos_batch']['octree'].batch_nnum_nempty[model.depth_fine], params.model_params.channels[-3]),
+        }
+    else:
+        batch['anc_local_feats'] = query_local_dict['local_embeddings'][query_idx]
+        batch['pos_local_feats'] = database_local_dict['local_embeddings'][nn_idx]
+
+    batch = to_device(batch, device, construct_octree_neigh=False)  # only need neighs for HOTFloc forward pass
+
+    with torch.inference_mode():
+        tic = time.perf_counter()
+        model_out = model(batch)
+        t_metloc = time.perf_counter() - tic
+        T_estimated = release_cuda(model_out[0]['estimated_transform'], to_numpy=True)
+    
+    # Refine the estimated pose using ICP
+    if icp_refine:
+        # Get point clouds in metric coordinates
+        query_pc_metric = Normalize.unnormalize(batch['anc_batch']['points'].points, batch['anc_shift_and_scale'][0])
+        query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)
+        nn_pc_metric = Normalize.unnormalize(batch['pos_batch']['points'].points, batch['pos_shift_and_scale'][0])
+        nn_pc_metric = release_cuda(nn_pc_metric, to_numpy=True)
+
+        tic = time.perf_counter()
+        T_estimated_refined, _, _ = icp(
+            query_pc_metric,
+            nn_pc_metric,
+            T_estimated,
+            gicp=params.local.icp_use_gicp,
+            inlier_dist_threshold=params.local.icp_inlier_dist_threshold,
+            max_iteration=params.local.icp_max_iteration,
+            voxel_size=params.local.icp_voxel_size,
+        )
+        t_icp = time.perf_counter() - tic
+
+    # Compute metrics with and without ICP refinement
+    batch_temp = {'transform': batch['transform'][0]}  # temp fix since loss func expects a single batch item
+
+    model_out_np = release_cuda(model_out[0], to_numpy=True)
+    batch_temp_np = release_cuda(batch_temp, to_numpy=True)
+    temp_metrics = compute_geotransformer_metrics(
+        model_out_np, batch_temp_np, params, use_ransac=use_ransac
+    )
+    local_metrics[eval_mode]['coarse_IR'].append(temp_metrics['PIR'])
+    local_metrics[eval_mode]['fine_IR'].append(temp_metrics['IR'])
+    local_metrics[eval_mode]['fine_overlap'].append(temp_metrics['OV'])
+    local_metrics[eval_mode]['fine_residual'].append(temp_metrics['residual'])
+    local_metrics[eval_mode]['fine_num_corr'].append(temp_metrics['num_corr'])
+    local_metrics[eval_mode]['success'].append(temp_metrics['success_lgr'])
+    if unfair_rre_rte and temp_metrics['success_lgr'] == 1.0:
+        local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
+        local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
+    else:
+        if not unfair_rre_rte:
+            local_metrics[eval_mode]['rre'].append(temp_metrics['rre_lgr'])
+            local_metrics[eval_mode]['rte'].append(temp_metrics['rte_lgr'])
+    local_metrics[eval_mode]['num_pts_per_patch'].append(temp_metrics['num_pts_per_patch'])
+    local_metrics[eval_mode]['num_corr_patches_lgr'].append(temp_metrics['num_corr_patches_lgr'])
+    local_metrics[eval_mode]['num_corr_pts_per_patch_lgr'].append(temp_metrics['num_corr_pts_per_patch_lgr'])
+    local_metrics[eval_mode]['corr_score_lgr'].append(temp_metrics['corr_score_lgr'])
+    if temp_metrics['success_lgr'] == 0:
+        local_metrics[eval_mode]['failure_query_pos_ndx'].append((query_idx, nn_idx))
+    local_metrics[eval_mode]['t_metloc'].append(t_metloc)  # Metric Loc time
+    if use_ransac:
+        local_metrics[eval_mode]['success_ransac'].append(temp_metrics['success_ransac'])
+        if unfair_rre_rte and temp_metrics['success_ransac'] == 1.0:
+            local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
+            local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
+        else:
+            if not unfair_rre_rte:
+                local_metrics[eval_mode]['rre_ransac'].append(temp_metrics['rre_ransac'])
+                local_metrics[eval_mode]['rte_ransac'].append(temp_metrics['rte_ransac'])
+        local_metrics[eval_mode]['t_ransac'].append(temp_metrics['t_ransac'])
+
+    if icp_refine:
+        model_out[0]['estimated_transform'] = torch.tensor(
+            T_estimated_refined, dtype=T_gt.dtype, device=device
+        )
+        model_out_np = release_cuda(model_out[0], to_numpy=True)
+        temp_metrics_refined = compute_geotransformer_metrics(
+            model_out_np, batch_temp_np, params, use_ransac=False,  # RANSAC already computed once
+        )
+        local_metrics[eval_mode]['success_refined'].append(temp_metrics_refined['success_lgr'])
+        if unfair_rre_rte and temp_metrics_refined['success_lgr'] == 1.0:
+            local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
+            local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
+        else:
+            if not unfair_rre_rte:
+                local_metrics[eval_mode]['rre_refined'].append(temp_metrics_refined['rre_lgr'])
+                local_metrics[eval_mode]['rte_refined'].append(temp_metrics_refined['rte_lgr'])
+        if temp_metrics_refined['success_lgr'] == 0:
+            local_metrics[eval_mode]['failure_query_pos_ndx_refined'].append((query_idx, nn_idx))
+        local_metrics[eval_mode]['t_metloc_refined'].append(t_metloc + t_icp)  # Metric Loc Refined time
+
+    torch.cuda.empty_cache()
+
+    return local_metrics
+
 def print_eval_stats(
     global_metrics: Dict,
     local_metrics: Dict,
     icp_refine=False,
     print_false_positives=False,
     reranking=False,
+    rerank_mode: Optional[str] = None,
 ):
     msg = 'Eval Results'
     for database_name in global_metrics.keys():
@@ -1038,7 +1226,7 @@ def print_eval_stats(
                 msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
             if reranking:
-                msg += '\n    Re-Ranking:'
+                msg += f'\n    Re-Ranking ({rerank_mode}):'
                 recall_rr = global_metrics[database_name][split]['recall_rr']
                 for radius_rr in recall_rr.keys():
                     msg += f"\n      Radius: {radius_rr} [m]:\n        Recall@N: "
@@ -1083,6 +1271,7 @@ def write_eval_stats(
     icp_refine=False,
     log_false_positives=False,
     reranking=False,
+    rerank_mode: Optional[str] = None,
 ):
     # Save results on the final model
     msg = prefix
@@ -1103,7 +1292,7 @@ def write_eval_stats(
                     msg += '\n        MRR: {:0.3f}'.format(global_metrics[database_name][split]['MRR'][radius])
 
                 if reranking:
-                    msg += '\n    Re-Ranking:'
+                    msg += f'\n    Re-Ranking ({rerank_mode}):'
                     recall_rr = global_metrics[database_name][split]['recall_rr']
                     for radius_rr in recall_rr.keys():
                         msg += f"\n      Radius: {radius_rr} [m]:\n        Recall@N: "
@@ -1303,9 +1492,8 @@ if __name__ == "__main__":
     if not args.disable_reranking:
         if params.model_params.rerank_mode is not None or args.use_sgv:
             reranking = True
-        if args.use_sgv:
-            reranking = True
-            params.model_params.rerank_mode = 'sgv'
+            if args.use_sgv:
+                params.model_params.rerank_mode = 'sgv'
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]
@@ -1335,6 +1523,7 @@ if __name__ == "__main__":
         icp_refine=args.icp_refine,
         print_false_positives=args.print_false_positives,
         reranking=reranking,
+        rerank_mode=params.model_params.rerank_mode,
     )
 
     write_eval_stats(
@@ -1345,4 +1534,5 @@ if __name__ == "__main__":
         icp_refine=args.icp_refine,
         log_false_positives=args.print_false_positives,
         reranking=reranking,
+        rerank_mode=params.model_params.rerank_mode,
     )

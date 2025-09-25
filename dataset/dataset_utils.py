@@ -50,6 +50,8 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
         coordinates=params.model_params.coordinates,
         is_cross_source_dataset=params.is_cross_source_dataset,
         prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+        remove_height_offset=params.remove_height_offset,
+        gravity_align=params.gravity_align,
     )
     if validation:
         val_transform = ValTransform(
@@ -62,6 +64,8 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
             full_depth=params.full_depth, coordinates=params.model_params.coordinates,
             is_cross_source_dataset=params.is_cross_source_dataset,
             prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+            remove_height_offset=params.remove_height_offset,
+            gravity_align=params.gravity_align,
         )
     if params.secondary_dataset_name is not None:
         datasets['secondary_train'] = TrainingDataset(
@@ -72,6 +76,8 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
             coordinates=params.model_params.coordinates,
             is_cross_source_dataset=params.is_cross_source_dataset,
             prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+            remove_height_offset=params.remove_height_offset,
+            gravity_align=params.gravity_align,
         )
 
     if local:
@@ -94,6 +100,8 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
             full_depth=params.full_depth, coordinates=params.model_params.coordinates,
             is_cross_source_dataset=params.is_cross_source_dataset,
             prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+            remove_height_offset=params.remove_height_offset,
+            gravity_align=params.gravity_align,
         )
         if validation:
             local_val_transform = Val6DOFTransform(
@@ -114,6 +122,8 @@ def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[
                 full_depth=params.full_depth, coordinates=params.model_params.coordinates,
                 is_cross_source_dataset=params.is_cross_source_dataset,
                 prioritise_cross_source=(params.prioritise_cross_source or params.only_ground_aerial),
+                remove_height_offset=params.remove_height_offset,
+                gravity_align=params.gravity_align,
             )
 
     return datasets
@@ -155,7 +165,8 @@ def create_batch(clouds: Sequence[torch.Tensor], quantizer, params: TrainingPara
         coords = ME.utils.batched_coordinates(coords)
         # Assign a dummy feature equal to 1 to each point
         feats = torch.ones((coords.shape[0], 1), dtype=torch.float32)
-        batch = {'coords': coords, 'features': feats}
+        # Also return list containing each point cloud for EgoNN losses
+        batch = {'coords': coords, 'features': feats, 'pcd': clouds}
     return batch
 
 def make_collate_fn(dataset: TrainingDataset, quantizer, params: TrainingParams):
@@ -359,7 +370,9 @@ def make_eval_dataset(params: TrainingParams, data_set: Dict) -> Dataset:
     dataset = EvalDataset(
         params.dataset_folder, params.dataset_name, data_set,
         transform=val_transform, load_octree=params.load_octree,
-        coordinates=params.model_params.coordinates
+        coordinates=params.model_params.coordinates,
+        remove_height_offset=params.remove_height_offset,
+        gravity_align=params.gravity_align,
     )
 
     return dataset
@@ -380,6 +393,8 @@ def make_eval_dataset_reranking(
         params.dataset_folder, params.dataset_name, query_set, database_set,
         query_nn_list, transform=val_transform,
         load_octree=params.load_octree, coordinates=params.model_params.coordinates,
+        remove_height_offset=params.remove_height_offset,
+        gravity_align=params.gravity_align,
     )
     return dataset
 
@@ -407,6 +422,8 @@ def make_eval_dataset_6DOF(
         icp_two_stage_max_iteration=params.local.icp_two_stage_max_iteration,
         icp_two_stage_voxel_size=params.local.icp_two_stage_voxel_size,
         load_octree=params.load_octree, coordinates=params.model_params.coordinates,
+        remove_height_offset=params.remove_height_offset,
+        gravity_align=params.gravity_align,
     )
     return dataset
 

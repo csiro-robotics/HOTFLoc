@@ -20,6 +20,7 @@ from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
 from models.layers.eca_block import ECABasicBlock
 from models.minkfpn import MinkFPN
 from models.layers.pooling_wrapper import PoolingWrapper
+from models.egonn import create_egonn_model
 
 def get_in_channels(input_features: str) -> int:
     in_channels = 0
@@ -61,6 +62,8 @@ def model_factory(params: TrainingParams, legacy: bool = False):
             normalize_embeddings=model_params.normalize_embeddings,
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
+    elif 'egonn' in model_params.model.lower():
+        model = create_egonn_model(model_params)
     elif any(model in model_params.model.lower() for model in ('hotformerloc', 'hotformermetricloc')):
         in_channels = get_in_channels(model_params.input_features)
         backbone = HOTFormer(

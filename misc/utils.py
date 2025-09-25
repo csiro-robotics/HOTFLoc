@@ -68,9 +68,11 @@ class ModelParams:
 
         # Metric loc params
         if local:
-            self.coarse_idx = tuple([int(e) for e in params['coarse_idx'].split(',')])
-            self.fine_idx = params.getint('fine_idx')
-            assert self.coarse_idx is not None and self.fine_idx is not None
+            if 'coarse_idx' in params:
+                self.coarse_idx = tuple([int(e) for e in params['coarse_idx'].split(',')])
+            else:
+                self.coarse_idx = None
+            self.fine_idx = params.getint('fine_idx', None)
             if 'coarse_feat_embed_dim' in params:  # Dimension to project coarse features with MLP before metric localisation and/or re-ranking (None to disable)
                 self.coarse_feat_embed_dim = tuple([int(e) for e in params['coarse_feat_embed_dim'].split(',')])
             else:
@@ -79,6 +81,13 @@ class ModelParams:
                 assert len(self.coarse_feat_embed_dim) == len(self.coarse_idx), 'Expected same length for coarse idx and embed dim'
             self.fine_feat_embed_dim = params.getint('fine_feat_embed_dim', None)  # Dimension to project fine features with MLP before metric localisation (None to disable)
             self.metloc_mlp_ratio = params.getfloat('metloc_mlp_ratio', 2.0)  # Hidden dim ratio of MLP used for coarse and/or fine features
+
+        # Re-ranking
+        self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
+        if self.rerank_mode is not None:
+            self.rerank_mode = self.rerank_mode.lower()
+            if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc', 'sgv'):
+                raise ValueError('Invalid re-ranking mode')
 
         if 'minkloc' in self.model.lower():
         #######################################################################
@@ -149,12 +158,6 @@ class ModelParams:
                 self.num_pyramid_levels = params.getint('num_pyramid_levels', 3)  # number of octree levels to consider for hierarchical attention.
                 self.num_octf_levels = params.getint('num_octf_levels', 1)  # number of octformer levels to process local features before hierarchical attention
                 self.disable_rt = params.getboolean('disable_rt', False)  # Disable all relay token components, and process HOTFormerLoc with solely local attention (with dilation re-enabled).
-                # Re-ranking
-                self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
-                if self.rerank_mode is not None:
-                    self.rerank_mode = self.rerank_mode.lower()
-                    if self.rerank_mode not in ('relay_token_gc', 'relay_token_local_gc', 'local_hierarchical_gc', 'sgv'):
-                        raise ValueError('Invalid re-ranking mode')
                 if 'rerank_indices' in params:  # Indices (relative to feature pyramid) of relay token stages to use for re-ranking. Negative indices allowed.
                     self.rerank_indices = tuple([int(e) for e in params['rerank_indices'].split(',')])
                 else:
@@ -332,6 +335,9 @@ class TrainingParams:
         #   (but still considers intra-source positives/negatives within the batch)
         self.only_ground_aerial = params.getboolean('only_ground_aerial', False)
 
+        self.remove_height_offset = params.getboolean('remove_height_offset', False)  # shift submaps to min z val of 0
+        self.gravity_align = params.getboolean('gravity_align', False)  # gravity align submaps before passing through model
+
         self.lr = params.getfloat('lr', 1e-3)
         self.epochs = params.getint('epochs', 20)
         self.warmup_epochs = params.getint('warmup_epochs', None)
@@ -365,6 +371,11 @@ class TrainingParams:
             # Temperatures (annealing parameter) and numbers of nearest neighbours to consider
             self.tau1 = params.getfloat('tau1', 0.01)
             self.margin = params.getfloat('margin', None)    # Margin used in loss function
+
+        # EgoNN loss gammas
+        self.loss_gammas = params.get('l_gammas', None)
+        if self.loss_gammas is not None:
+            self.loss_gammas = [float(e) for e in self.loss_gammas.split(',')]
 
         # QKV standard deviation loss (set coeffs > 0 to enable)
         self.local_qkv_std_coeff = params.getfloat('local_qkv_std_coeff', 0)
