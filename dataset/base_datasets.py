@@ -355,6 +355,7 @@ class EvalDataset(Dataset):
         self.remove_height_offset = remove_height_offset
         self.gravity_align = gravity_align
         self.clip_octree_points = True  # clip point coordinates to [-1, 1] range (if load_octree is True)
+        self.max_points_egonn = 120000
 
         self.pc_loader: PointCloudLoader = get_pointcloud_loader(self.dataset_type)
 
@@ -366,6 +367,11 @@ class EvalDataset(Dataset):
         file_pathname = os.path.join(self.dataset_path, self.data_set_dict[ndx]['query'])
         query_pc = self.pc_loader(file_pathname)
         data = torch.tensor(query_pc, dtype=torch.float)
+        # NOTE: EgoNN seems to raise CUDA errors for batches with very large point clouds
+        #       (even without raising OOM), so limiting them here as a temp workaround
+        if not self.load_octree:
+            indices = torch.randperm(len(data))[:self.max_points_egonn]
+            data = data[indices]
         shift_and_scale = None
         tf_gravity_align = torch.eye(4)
         tf_height_offset_removal = torch.eye(4)
