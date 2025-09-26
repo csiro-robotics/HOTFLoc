@@ -188,6 +188,8 @@ class ModelParams:
                 self.rerank_scale_eigvec = params.getboolean('rerank_scale_eigvec', True)
                 self.rerank_eigvec_layernorm = params.getboolean('rerank_eigvec_layernorm', False)
                 self.rerank_output_mlp_ratio = params.getfloat('rerank_output_mlp_ratio', 1.0)
+                self.rerank_mutual_corr = params.getboolean('rerank_mutual_corr', False)  # only use mutual correspondences for re-ranking
+                self.rerank_use_sc_score = params.getboolean('rerank_use_sc_score', False)  # append spatial consistency score as an additional feature for the re-ranking MLP
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params

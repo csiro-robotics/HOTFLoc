@@ -28,7 +28,7 @@ from models.octree import (
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.layers.octformer_layers import MLP
-from models.reranking_utils import batched_sgv_parallel
+from models.reranking_utils import batched_sgv_parallel, mutual_topk_correspondences
 from misc.utils import ModelParams
 from misc.torch_utils import release_cuda, min_max_normalize
 from geotransformer.modules.sinkhorn import LearnableLogOptimalTransport
@@ -64,6 +64,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         rerank_eigvec_layernorm: bool = False,
         rerank_num_sinkhorn_iterations: int = 100,
         rerank_output_mlp_ratio: float = 1.0,
+        rerank_mutual_corr: bool = False,
+        rerank_use_sc_score: bool = False,
         **kwargs,
     ):
         """
@@ -99,6 +101,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             rerank_eigvec_layernorm (bool): Instead apply layernorm to the eigvec priot to the MLP
             rerank_num_sinkhorn_iterations (int): Number of sinkhorn iterations. Set to 0 to disable OT.
             rerank_output_mlp_ratio (float): MLP ratio for rerank output (for hidden layer)
+            rerank_mutual_corr (bool): Mutual correspondence filtering
+            rerank_use_sc_score (bool): Add spatial consistency score as an additional feature to the MLP
 
         Returns:
             model_out (dict): Dict containing outputs from local and global stages
@@ -130,6 +134,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         self.rerank_eigvec_layernorm = rerank_eigvec_layernorm
         self.rerank_num_sinkhorn_iterations = rerank_num_sinkhorn_iterations
         self.rerank_output_mlp_ratio = rerank_output_mlp_ratio
+        self.rerank_mutual_corr = rerank_mutual_corr
+        self.rerank_use_sc_score = rerank_use_sc_score
         if self.rerank_scale_eigvec and self.rerank_eigvec_layernorm:
             raise ValueError('Redundant choice of parameters, select one or the other')
         assert (
@@ -162,8 +168,9 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                     self.rerank_num_sinkhorn_iterations
                 )
 
-            self.output_dim = sum(self.rerank_num_correspondences)
-            self.output_mlp = MLP(self.output_dim, int(self.output_dim * self.rerank_output_mlp_ratio), 1)  # TODO: different hidden size?
+            self.output_dim = (sum(self.rerank_num_correspondences)
+                               + int(self.rerank_use_sc_score) * len(self.rerank_indices))
+            self.output_mlp = MLP(self.output_dim, int(self.output_dim * self.rerank_output_mlp_ratio), 1)
             self.sigmoid = nn.Sigmoid()
             if self.rerank_eigvec_layernorm:
                 self.eigvec_layernorms = nn.ModuleList(
@@ -205,7 +212,6 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         self.rerank_feat_input_dim = []
         for rerank_idx in self.rerank_indices:
             self.rerank_feat_input_dim.append(channels[rerank_idx])
-
 
     def local_hierarchical_gc_rerank(
         self,
@@ -348,8 +354,16 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 matching_scores_depth_j.masked_fill_(mask, -1e10)
                 time_dict[f'feat matching {rerank_ii}'] = time.perf_counter() - tic
             
-            # Consider NN from anc side
             k_corr = min(N, self.rerank_num_correspondences[rerank_ii])
+            if self.rerank_mutual_corr:
+                # Only consider mutual correspondences
+                tic = time.perf_counter()
+                k_mutual = 3
+                matching_scores_depth_j = mutual_topk_correspondences(
+                    matching_scores_depth_j, k_mutual, k_corr
+                )
+                time_dict[f'mutual nn {rerank_ii}'] = time.perf_counter() - tic
+            # Consider NN from anc side
             anc_max_scores_depth_j, anc_max_indices_depth_j = matching_scores_depth_j.max(dim=2)  # (B*NN, N)
             _, nn_corr_indices_depth_j = anc_max_scores_depth_j.topk(
                 k=k_corr, dim=1
@@ -404,6 +418,9 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 leading_eigvec = min_max_normalize(leading_eigvec)
             elif self.rerank_eigvec_layernorm:
                 leading_eigvec = self.eigvec_layernorms[rerank_ii](leading_eigvec)
+            if self.rerank_use_sc_score:
+                # Append spatial consistency score as an additional feature
+                leading_eigvec = torch.concat((leading_eigvec, spatial_consistency_score), dim=-1)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
@@ -538,8 +555,16 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 mask = torch.logical_or(anc_mask_depth_j_padded[..., None], nn_mask_depth_j_padded[..., None, :])
                 matching_scores_depth_j.masked_fill_(mask, -1e10)
             
-            # Consider NN from anc side
             k_corr = min(N, self.rerank_num_correspondences[rerank_ii])
+            if self.rerank_mutual_corr:
+                # Only consider mutual correspondences
+                tic = time.perf_counter()
+                k_mutual = 3
+                matching_scores_depth_j = mutual_topk_correspondences(
+                    matching_scores_depth_j, k_mutual, k_corr
+                )
+                time_dict[f'mutual nn {rerank_ii}'] = time.perf_counter() - tic
+            # Consider NN from anc side
             anc_max_scores_depth_j, anc_max_indices_depth_j = matching_scores_depth_j.max(dim=2)  # (NN, N)
             _, nn_corr_indices_depth_j = anc_max_scores_depth_j.topk(
                 k=k_corr, dim=1
@@ -590,6 +615,9 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 leading_eigvec = min_max_normalize(leading_eigvec)
             elif self.rerank_eigvec_layernorm:
                 leading_eigvec = self.eigvec_layernorms[rerank_ii](leading_eigvec)
+            if self.rerank_use_sc_score:
+                # Append spatial consistency score as an additional feature
+                leading_eigvec = torch.concat((leading_eigvec, spatial_consistency_score), dim=-1)
             leading_eigvec_list.append(leading_eigvec)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores

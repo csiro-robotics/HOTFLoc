@@ -242,7 +242,7 @@ def batched_sgv_parallel(
         return lead_eigvec
 
     sc_score_list = batched_cal_spatial_consistency(adj_mat, lead_eigvec)
-    sc_score_list = np.squeeze(sc_score_list.cpu().detach().numpy())
+    # sc_score_list = np.squeeze(sc_score_list.cpu().detach().numpy())
     return lead_eigvec, sc_score_list
 
 
@@ -272,3 +272,70 @@ def plot_eigvec(eigvec: Tensor, batch_idx=0, nn_idx=0):
     ax = fig.add_subplot()
     ax.set_xticks([])
     ax.imshow(eigvec)
+
+def mutual_topk_correspondences(matching_scores: torch.Tensor, k_mutual: int, k_corr: int):
+    """
+    matching_scores: (B, N, N) affinity matrix
+    k_mutual: number of top correspondences to consider per feature
+    k_corr: number of global correspondences to return per batch
+
+    NOTE: Modifies matching_scores in-place.
+
+    Returns:
+        idx_x: (B, k_corr) indices in X
+        idx_y: (B, k_corr) indices in Y
+        vals:  (B, k_corr) affinity scores
+    """
+    B, N, _ = matching_scores.shape
+    assert N == _
+    device = matching_scores.device
+    min_score = -1  # min valid value for cosine similarity
+
+    batch_indices = torch.arange(B, device=device)
+    point_indices = torch.arange(N, device=device)
+
+    # correspondences from query side
+    query_topk_scores, query_topk_indices = matching_scores.topk(k=k_mutual, dim=2)  # (B, N, K)
+    query_batch_indices = batch_indices.view(B, 1, 1).expand(-1, N, k_mutual)  # (B, N, K)
+    query_indices = point_indices.view(1, N, 1).expand(B, -1, k_mutual)  # (B, N, K)
+    query_corr_mat = torch.zeros_like(matching_scores, dtype=bool)
+    query_corr_mat[query_batch_indices, query_indices, query_topk_indices] = query_topk_scores >= min_score
+
+    # correspondences from nn side
+    nn_topk_scores, nn_topk_indices = matching_scores.topk(k=k_mutual, dim=1)  # (B, K, N)
+    nn_batch_indices = batch_indices.view(B, 1, 1).expand(-1, k_mutual, N)  # (B, K, N)
+    nn_indices = point_indices.view(1, 1, N).expand(B, k_mutual, -1)  # (B, K, N)
+    nn_corr_mat = torch.zeros_like(matching_scores, dtype=bool)
+    nn_corr_mat[nn_batch_indices, nn_topk_indices, nn_indices] = nn_topk_scores >= min_score
+
+    # merge results from two sides (enforces mutual condition)
+    matching_scores.masked_fill_(~torch.logical_and(query_corr_mat, nn_corr_mat), 0)
+    return matching_scores
+
+
+
+    ### OLD WORKING CODE -- LESS MEMORY EFFICIENT ###
+    # batch_indices = torch.arange(B, device=device)
+    # point_indices = torch.arange(N, device=device)
+
+    # # correspondences from query side
+    # query_topk_scores, query_topk_indices = matching_scores.topk(k=k_mutual, dim=2)  # (B, N, K)
+    # query_batch_indices = batch_indices.view(B, 1, 1).expand(-1, N, k_mutual)  # (B, N, K)
+    # query_indices = point_indices.view(1, N, 1).expand(B, -1, k_mutual)  # (B, N, K)
+
+    # # correspondences from nn side
+    # nn_topk_scores, nn_topk_indices = matching_scores.topk(k=k_mutual, dim=1)  # (B, K, N)
+    # nn_batch_indices = batch_indices.view(B, 1, 1).expand(-1, k_mutual, N)  # (B, K, N)
+    # nn_indices = point_indices.view(1, 1, N).expand(B, k_mutual, -1)  # (B, K, N)
+
+    # query_score_mat = torch.zeros_like(matching_scores)
+    # query_score_mat[query_batch_indices, query_indices, query_topk_indices] = query_topk_scores
+    # query_corr_mat = torch.gt(query_score_mat, 0)
+    # nn_score_mat = torch.zeros_like(matching_scores)
+    # nn_score_mat[nn_batch_indices, nn_topk_indices, nn_indices] = nn_topk_scores
+    # nn_corr_mat = torch.gt(nn_score_mat, 0)
+
+    # # merge results from two sides (enforces mutual condition)
+    # corr_mat = torch.logical_and(query_corr_mat, nn_corr_mat)
+    # matching_scores *= corr_mat.float()
+    # return matching_scores

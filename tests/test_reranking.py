@@ -37,7 +37,7 @@ def test_batched_sgv():
     )
     
     assert torch.all(torch.isclose(leading_eigvecs, leading_eigvecs_batched, atol=ATOL))
-    assert np.all(np.isclose(scores, scores_batched, atol=ATOL))
+    assert np.all(np.isclose(scores, scores_batched.detach().cpu().numpy(), atol=ATOL))
 
 if __name__ == '__main__':
     test_batched_sgv()

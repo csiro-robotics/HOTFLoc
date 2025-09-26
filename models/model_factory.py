@@ -207,6 +207,8 @@ def model_factory(params: TrainingParams, legacy: bool = False):
                 rerank_eigvec_layernorm=model_params.rerank_eigvec_layernorm,
                 rerank_num_sinkhorn_iterations=model_params.rerank_num_sinkhorn_iterations,
                 rerank_output_mlp_ratio=model_params.rerank_output_mlp_ratio,
+                rerank_mutual_corr=model_params.rerank_mutual_corr,
+                rerank_use_sc_score=model_params.rerank_use_sc_score,
             )
     elif any(model in model_params.model.lower() for model in ('octformer', 'hotformer')):
         in_channels = get_in_channels(model_params.input_features)
