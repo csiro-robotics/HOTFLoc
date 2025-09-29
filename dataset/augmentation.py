@@ -480,7 +480,7 @@ class Normalize:
                  return_shift_and_scale: bool = False):
         assert not all([arg is not None for arg in [norm_range, scale_factor]]),\
             "Must specify one of norm_range or scale_factor, not both"
-        self.norm_range = 1.0
+        self.norm_range = 0.999  # slightly under 1.0 to prevent floating point errors
         self.scale_factor = None
         self.unit_sphere_norm = unit_sphere_norm
         self.zero_mean = zero_mean
