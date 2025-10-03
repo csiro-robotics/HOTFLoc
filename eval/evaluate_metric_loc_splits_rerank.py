@@ -374,8 +374,11 @@ def compute_embedding(
         y = model(batch, global_only=True)
         global_embedding = release_cuda(y['global'], to_numpy=True)
         local_dict = {}
+        if (not reranking) and only_global:
+            # Don't need local embeddings if not reranking or doing metric loc
+            pass
         # Get local descriptors for each pyramid level
-        if 'local' in y:
+        elif 'local' in y:
             local_embeddings = y['local']  # keep as tensors for future forward pass
             if isinstance(model, (HOTFormerMetricLoc, HOTFormerMetricLocLegacy)):
                 octree = y['octree']
@@ -805,18 +808,20 @@ def get_metrics(
                         out_dict = to_device(out_dict, device)
                     tic_rr = time.perf_counter()
                     if params.model_params.rerank_mode == 'sgv':
-                        rerank_scores = model.sgv_rerank_inference(
+                        rerank_dict = model.sgv_rerank_inference(
                             model_out=out_dict,
                             shift_and_scale=rerank_shift_and_scale,
                             batch=rerank_batch,
                             feat_type=sgv_feat_type,
                         )
+                        rerank_scores = rerank_dict['scores']
                     else:
-                        rerank_scores = model.rerank_inference(
+                        rerank_dict = model.rerank_inference(
                             model_out=out_dict,
                             shift_and_scale=rerank_shift_and_scale,
                             batch=rerank_batch,
-                        )[0, :, 0]
+                        )
+                        rerank_scores = rerank_dict['scores'][0, :, 0]
 
             intermediate_metrics['t_rr'].append(time.perf_counter() - tic_rr)
             _, rerank_sort_indices = release_cuda(
@@ -835,8 +840,11 @@ def get_metrics(
             ):
                 # print(f'Fail: {euclid_dist_rr[0]:.2f}m > {euclid_dist[0]:.2f}m', flush=True)
                 query_name = os.path.basename(query_set[query_idx]['query'])
+                query_name += f' ({query_idx})'
                 nn_name = os.path.basename(database_set[nn_indices[0]]['query'])
+                nn_name += f' ({nn_indices[0]})'
                 nn_rerank_name = os.path.basename(database_set[topk_rerank_indices[0]]['query'])
+                nn_rerank_name += f' ({topk_rerank_indices[0]})'
                 global_metrics['rr_failures'].append(
                     (query_name, nn_name, nn_rerank_name,
                         f'{euclid_dist[0]:.2f}', f'{euclid_dist_rr[0]:.2f}')
@@ -1032,6 +1040,8 @@ def metric_loc_egonn(
         query_pc_metric = batch['anc_batch']['pcd'][0]
         nn_pc_metric = batch['pos_batch']['pcd'][0]
         if params.normalize_points:
+            # TODO: Need to unnormalize EgoNN keypoints too
+            raise NotImplementedError
             query_pc_metric = Normalize.unnormalize(query_pc_metric, batch['anc_shift_and_scale'][0])
             nn_pc_metric = Normalize.unnormalize(nn_pc_metric, batch['pos_shift_and_scale'][0])
         query_pc_metric = release_cuda(query_pc_metric, to_numpy=True)

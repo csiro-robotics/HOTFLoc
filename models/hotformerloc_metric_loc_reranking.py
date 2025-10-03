@@ -232,7 +232,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             batch (dict): Batch containing `octree` and `points` objects
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
             targets (Tensor)
         """
         tic_start = time.perf_counter()
@@ -243,6 +243,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
         # Process each pyramid level
         leading_eigvec_list = []
+        sc_scores_list = []
         for rerank_ii, depth_j in enumerate(self.depth_rerank):
             # Get local points and features
             local_feats_depth_j = model_out['local'][depth_j]
@@ -422,6 +423,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 # Append spatial consistency score as an additional feature
                 leading_eigvec = torch.concat((leading_eigvec, spatial_consistency_score), dim=-1)
             leading_eigvec_list.append(leading_eigvec)
+            sc_scores_list.append(spatial_consistency_score)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
         rerank_features = torch.concat(leading_eigvec_list, dim=-1)
@@ -435,7 +437,11 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         toc = time.perf_counter()
         time_dict['TOTAL'] = toc - tic_start
         self.log_time_dict(time_dict, initial_str='Re-ranking:  ')
-        return rerank_scores, targets
+        out_dict = {
+            'scores': rerank_scores, 'eigvec_list': rerank_features,
+            'sc_scores': sc_scores_list
+        }
+        return out_dict, targets
 
     def local_hierarchical_gc_rerank_inference(
         self,
@@ -454,7 +460,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             batch (dict): Batch containing `octree` and `points` objects
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
         """
         tic_start = time.perf_counter()
         time_dict = {}
@@ -465,6 +471,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
 
         # Process each pyramid level
         leading_eigvec_list = []
+        sc_scores_list = []
         for rerank_ii, depth_j in enumerate(self.depth_rerank):
             # Get local points and features
             if isinstance(model_out['local'], dict):  # standard HOTFloc output
@@ -619,6 +626,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 # Append spatial consistency score as an additional feature
                 leading_eigvec = torch.concat((leading_eigvec, spatial_consistency_score), dim=-1)
             leading_eigvec_list.append(leading_eigvec)
+            sc_scores_list.append(spatial_consistency_score)
 
         # Concat eigvecs and pass through MLP + sigmoid to get scores
         rerank_features = torch.concat(leading_eigvec_list, dim=-1)
@@ -628,7 +636,8 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         toc = time.perf_counter()
         time_dict['TOTAL'] = toc - tic_start
         self.log_time_dict(time_dict, initial_str='Re-ranking:  ')
-        return rerank_scores
+        return {'scores': rerank_scores, 'eigvec_list': rerank_features,
+                'sc_scores': sc_scores_list}
 
     def rerank(self, *args, **kwargs):
         if self.rerank_mode is None:

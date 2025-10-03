@@ -627,7 +627,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             batch (dict): Batch containing `octree` and `points` objects
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
         """
         assert feat_type in ('coarse', 'fine')
         tic_start = time.perf_counter()
@@ -666,6 +666,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             
         # Process SGV on each query/nn pair individually
         tic = time.perf_counter()
+        leading_eigvec_list = []
         fitness_list = []
         for nn_idx in range(NN):
             # Collect points & feats for pair, and trim num points to the smallest one
@@ -682,7 +683,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             nn_feats = nn_feats[:min_num_feat]
             
             # Compute spectral geometric consistency
-            _, spatial_consistency_score = sgv_parallel(
+            leading_eigvec, spatial_consistency_score = sgv_parallel(
                 anc_points[None, ...],
                 nn_points[None, ...],
                 anc_feats[None, ...],
@@ -690,13 +691,15 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 d_thresh=sgv_d_thresh,
                 return_spatial_consistency=True,
             )
+            leading_eigvec_list.append(leading_eigvec[0])
             fitness_list.append(spatial_consistency_score.item())
         time_dict[f'sgv {coarse_feat_ii}'] = time.perf_counter() - tic
 
         toc = time.perf_counter()
         time_dict['TOTAL'] = toc - tic_start
         self.log_time_dict(time_dict, initial_str='Re-ranking:  ')
-        return torch.tensor(fitness_list)
+        return {'scores': torch.tensor(fitness_list),
+                'eigvec_list': leading_eigvec_list}
 
     @torch.jit.ignore
     def no_weight_decay(self) -> Set[str]:

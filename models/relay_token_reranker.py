@@ -71,7 +71,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
             shift_and_scale (Tensor): (B, 4) tensor containing normalization parameters
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
             targets (Tensor)
         """
         tic = time.perf_counter()
@@ -200,7 +200,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         toc = time.perf_counter()
         log_str = f'Re-ranking time: {toc-tic:.4f}s'
         logging.debug(log_str)
-        return rerank_scores, targets
+        return {'scores': rerank_scores}, targets
 
     def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, **kwargs):
         """
@@ -212,7 +212,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
             shift_and_scale (Tensor): (B, 4) tensor containing normalization parameters
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
         """
         tic = time.perf_counter()
         # Collect batch relay tokens
@@ -318,7 +318,7 @@ class RelayTokenGeometricConsistencyReranker(torch.nn.Module):
         toc = time.perf_counter()
         log_str = f'Re-ranking time: {toc-tic:.4f}s'
         logging.debug(log_str)
-        return rerank_scores
+        return {'scores': rerank_scores}
 
 
 class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
@@ -402,7 +402,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
             points (Points): Points object containing original point cloud
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
             targets (Tensor)
         """
         tic = time.perf_counter()
@@ -674,7 +674,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         toc = time.perf_counter()
         log_str = f'Re-ranking time: {toc-tic:.4f}s'
         logging.debug(log_str)
-        return rerank_scores, targets
+        return {'scores': rerank_scores}, targets
 
     def rerank_inference(self, model_out: dict, shift_and_scale: Tensor, points: Points, **kwargs):
         """
@@ -686,7 +686,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
             shift_and_scale (Tensor): (B, 4) tensor containing normalization parameters
 
         Returns:
-            rerank_scores (Tensor)
+            rerank_dict (dict)
         """
         raise NotImplementedError
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -794,7 +794,7 @@ class RelayTokenLocalGeometricConsistencyReranker(torch.nn.Module):
         toc = time.perf_counter()
         log_str = f'Re-ranking time: {toc-tic:.4f}s'
         logging.debug(log_str)
-        return rerank_scores
+        return {'scores': rerank_scores}
 
 def compute_rt_sgv_mask(
     relay_tokens: Tensor,
