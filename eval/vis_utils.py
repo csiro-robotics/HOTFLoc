@@ -20,6 +20,7 @@ from scipy.spatial.transform import Rotation as R
 
 from models.octree import OctreeT
 from misc.point_clouds import make_open3d_point_cloud
+from geotransformer.modules.ops import point_to_node_partition
 
 def submap_distance(q1, q2) -> float:
     """
@@ -292,7 +293,7 @@ def set_initial_rotation(
 def custom_draw_geometry_with_z_rotation(
     vis_list: List[o3d.geometry.Geometry],
     rot_step=1.0,
-    width=1600,
+    width=1200,
     height=900,
     fov_step=-90,
     zoom=0.55,
@@ -355,7 +356,7 @@ def custom_draw_geometry_with_rotation(vis_list: List[o3d.geometry.Geometry]):
 
 def custom_draw_geometry_load_option(
     vis_list: List[o3d.geometry.Geometry],
-    width=1600,
+    width=1200,
     height=900,
     fov_step=-90,
     zoom=0.55,
@@ -476,10 +477,12 @@ def visualise_coarse_correspondences(
     translate=[0, 0, 40],
     zoom=0.55,
     plot_coarse=False,
+    show_unused=True,
     coarse_colourmode: str = 'patch',
     save_dir: Optional[str] = None,
     disable_animation=False,
     non_interactive=False,
+    voxel_size: Optional[float] = None
 ):
     """
     Helper function for visualising keypoint correspondences.
@@ -498,6 +501,7 @@ def visualise_coarse_correspondences(
         pos_feats_coarse: Target feats (nodes)
         translate: Translation applied to target for correspondence visualisation
         plot_coarse: Plot coarse points (patch centroids)
+        show_unused: Show unused keypoints in grey
         coarse_colourmode: Mode for colourising patches ('height', 'patch', 'tsne', 'umap')
         save_dir: Directory to save plots
         disable_animation: Disables animation
@@ -510,8 +514,8 @@ def visualise_coarse_correspondences(
         assert anc_feats_coarse is not None and pos_feats_coarse is not None
     # PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     # PC_TARGET_COLOUR = [0, 0.629, 0.9]
-    PC_SOURCE_COLOURMAP = 'viridis'
-    PC_TARGET_COLOURMAP = 'gray'
+    PC_SOURCE_COLOURMAP = 'copper'
+    PC_TARGET_COLOURMAP = 'viridis'
     
     KP_UNUSED_COLOUR = [0.3, 0.3, 0.3]
     KP_INLIER_COLOUR = [0.0, 1.0, 0.0]
@@ -521,8 +525,6 @@ def visualise_coarse_correspondences(
     OUTLIER_CORRESPONDENCE_COLOUR = [0.9, 0.1, 0]
 
     KP_RADIUS = 1.0
-
-    # VOXEL_SIZE = 0.6
 
     anc_points_fine_o3d = make_open3d_point_cloud(anc_points_fine)
     pos_points_fine_o3d = make_open3d_point_cloud(pos_points_fine)
@@ -537,9 +539,10 @@ def visualise_coarse_correspondences(
     pos_points_fine_o3d.translate(translate)
     pos_points_coarse_o3d.translate(translate)
 
-    # # Downsample point clouds for ease of visualisation
-    # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
-    # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
+    # Downsample point clouds for ease of visualisation
+    if voxel_size is not None:
+        anc_points_fine_o3d = anc_points_fine_o3d.voxel_down_sample(voxel_size)
+        pos_points_fine_o3d = pos_points_fine_o3d.voxel_down_sample(voxel_size)
 
     # Filter inlier correspondences
     inlier_mask = isin_rowwise(node_corr_indices, gt_node_corr_indices)
@@ -581,12 +584,13 @@ def visualise_coarse_correspondences(
         pos_points_coarse_outliers_spheres_o3d = create_spheres(
             pos_points_coarse_outliers, color=KP_OUTLIER_COLOUR, radius=KP_RADIUS,
         )
-        anc_points_coarse_unused_spheres_o3d = create_spheres(
-            anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-        )
-        pos_points_coarse_unused_spheres_o3d = create_spheres(
-            pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
-        )
+        if show_unused:
+            anc_points_coarse_unused_spheres_o3d = create_spheres(
+                anc_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+            )
+            pos_points_coarse_unused_spheres_o3d = create_spheres(
+                pos_points_coarse_unused, color=KP_UNUSED_COLOUR, radius=KP_RADIUS,
+            )
 
     # Set colours
     ## pc_source_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
@@ -603,6 +607,14 @@ def visualise_coarse_correspondences(
         anc_node_colours = random_non_red_colors(anc_points_coarse.shape[0])
         pos_node_colours = random_non_red_colors(pos_points_coarse.shape[0])
     if coarse_colourmode != 'height':
+        if anc_point_to_node is None:
+            # Compute manually
+            # NOTE: Currently broken
+            anc_point_to_node, _, _, _ = point_to_node_partition(anc_points_fine.cuda(), anc_points_coarse.cuda(), 128)
+            anc_point_to_node = anc_point_to_node.cpu().numpy()
+        if pos_point_to_node is None:
+            pos_point_to_node, _, _, _ = point_to_node_partition(pos_points_fine.cuda(), pos_points_coarse.cuda(), 128)
+            pos_point_to_node = pos_point_to_node.cpu().numpy()
         anc_points_colours = anc_node_colours[anc_point_to_node]
         pos_points_colours = pos_node_colours[pos_point_to_node]
     else:
@@ -620,8 +632,11 @@ def visualise_coarse_correspondences(
                 inlier_node_corr_lineset, outlier_node_corr_lineset,]
                 # anc_axes, pos_axes]
     if plot_coarse:
+        if show_unused:
+            vis_list.extend([
+                *anc_points_coarse_unused_spheres_o3d, *pos_points_coarse_unused_spheres_o3d,
+            ])
         vis_list.extend([
-            *anc_points_coarse_unused_spheres_o3d, *pos_points_coarse_unused_spheres_o3d,
             *anc_points_coarse_outliers_spheres_o3d, *pos_points_coarse_outliers_spheres_o3d,
             *anc_points_coarse_inliers_spheres_o3d, *pos_points_coarse_inliers_spheres_o3d,
           ])
@@ -686,8 +701,8 @@ def visualise_fine_correspondences(
     if colourmode in ('tsne', 'umap'):
         assert anc_feats_fine is not None and pos_feats_fine is not None
 
-    PC_SOURCE_COLOURMAP = 'viridis'
-    PC_TARGET_COLOURMAP = 'gray'
+    PC_SOURCE_COLOURMAP = 'copper'
+    PC_TARGET_COLOURMAP = 'viridis'
     PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     PC_TARGET_COLOUR = [0, 0.629, 0.9]
     # CORRESPONDENCE_COLOURMAP = 'coolwarm'
@@ -731,7 +746,7 @@ def visualise_fine_correspondences(
 
     # Colourise correspondences by scores
     corr_points_lineset.colors = o3d.utility.Vector3dVector(
-        colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=False)
+        colourise_points(corr_scores, colourmap_name=CORRESPONDENCE_COLOURMAP, normalise=True)
     )
 
     # Colourise point clouds
@@ -856,6 +871,61 @@ def visualise_similarity(
             zoom=zoom
         )  # with rotation
 
+def visualise_points(
+    points: Union[Tensor, ndarray],
+    transform: ndarray,
+    zoom=0.55,
+    angle=-380,
+    save_dir: Optional[str] = None,
+    filename: str = 'points',
+    disable_animation=False,
+    non_interactive=False,
+    voxel_size: Optional[float] = None
+):
+    """
+    Helper function for visualising registration.
+
+    Args:
+        points: points
+        transform: SE(3) transform from source to target
+        save_dir: Directory to save plots
+        disable_animation: Disables animation
+    """
+    # PC_SOURCE_COLOUR = [1, 0.7, 0.05]
+    # PC_TARGET_COLOUR = [0, 0.629, 0.9]
+
+    points_o3d = make_open3d_point_cloud(points)
+
+    # Align point clouds with gt transform
+    points_o3d.transform(transform)
+    
+    # Downsample point clouds for ease of visualisation
+    if voxel_size is not None:
+        points_o3d = points_o3d.voxel_down_sample(voxel_size)
+
+    # # Set colours
+    # points_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
+
+    # Draw all with Open3D
+    vis_list = [points_o3d,]
+    if disable_animation:
+        custom_draw_geometry_load_option(
+            vis_list,
+            save_dir=save_dir,
+            filename=filename,
+            non_interactive=non_interactive,
+            zoom=zoom,
+            angle=angle,
+        )
+    else:
+        if save_dir is not None:
+            save_dir = os.path.join(save_dir, f'{filename}_frames')
+        custom_draw_geometry_with_z_rotation(
+            vis_list,
+            save_dir=save_dir,
+            zoom=zoom,
+            angle=angle,
+        )  # with rotation
 
 def visualise_registration(
     anc_points_fine: Union[Tensor, ndarray],
@@ -866,6 +936,7 @@ def visualise_registration(
     filename: str = 'registration',
     disable_animation=False,
     non_interactive=False,
+    voxel_size: Optional[float] = None
 ):
     """
     Helper function for visualising registration.
@@ -888,9 +959,10 @@ def visualise_registration(
     # Align point clouds with gt transform
     anc_points_fine_o3d.transform(transform)
     
-    # # Downsample point clouds for ease of visualisation
-    # pc_source_o3d = pc_source_o3d.voxel_down_sample(VOXEL_SIZE)
-    # pc_target_o3d = pc_target_o3d.voxel_down_sample(VOXEL_SIZE)
+    # Downsample point clouds for ease of visualisation
+    if voxel_size is not None:
+        anc_points_fine_o3d = anc_points_fine_o3d.voxel_down_sample(voxel_size)
+        pos_points_fine_o3d = pos_points_fine_o3d.voxel_down_sample(voxel_size)
 
     # Set colours
     ## pc_source_o3d.paint_uniform_color(PC_SOURCE_COLOUR)
