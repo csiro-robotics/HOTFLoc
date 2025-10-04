@@ -28,7 +28,7 @@ from eval.utils import get_query_database_splits
 from models.egonn import MinkGL as EgoNN
 from models.model_factory import model_factory
 from models.losses.geotransformer_loss import Evaluator
-from misc.torch_utils import set_seed, release_cuda, to_device
+from misc.torch_utils import set_seed, release_cuda, to_device, min_max_normalize
 from misc.poses import gravity_align_pc_with_pose
 from misc.utils import TrainingParams
 from misc.logger import create_logger
@@ -293,9 +293,56 @@ def get_eval_pairs_dataloader(
             # Also store eigvec for later
             if eigvec_list is not None:
                 rerank_eigvec_dict[query_idx] = {
-                    'Initial': release_cuda(eigvec_list[nn_indices[0]]),
-                    'Re-Ranked': release_cuda(eigvec_list[rerank_sort_indices[0]])
+                    'Initial': {'eigvec': release_cuda(eigvec_list[0]),
+                                'score': rerank_scores[0]},
+                    'Re-Ranked': {'eigvec': release_cuda(eigvec_list[rerank_sort_indices[0]]),
+                                  'score': rerank_scores[rerank_sort_indices[0]]},
                 }
+
+            # TEMP CODE FOR SAVING INDIVIDUAL EIGVECS
+            """
+            # if query_idx == 244:
+            # if query_idx == 19:
+            if query_idx == 328:
+                save_path = os.path.join(
+                    args.save_dir,
+                    # '244-reranked-local_hierarchical_gc-dist22.9m-success',
+                    # 'eigvec_sgv_candidate.png'
+                    # '244-reranked-sgv-dist171.2m-fail',
+                    # 'eigvec_learnable_candidate.png'
+                    # '19-reranked-local_hierarchical_gc-dist0.7m-success',
+                    # 'eigvec_sgv_candidate.png'
+                    # '19-reranked-sgv-dist31.5m-success',
+                    # 'eigvec_learnable_candidate.png'
+                    # '328-reranked-local_hierarchical_gc-dist5.7m-success',
+                    # 'eigvec_sgv_candidate.png'
+                    '328-reranked-sgv-dist91.1m-fail',
+                    'eigvec_learnable_candidate.png'
+                )
+                # cand_idx = 195 # 244 sgv top cand
+                # cand_idx = 60 # 244 learnable top cand
+                # cand_idx = 174 # 19 sgv top cand
+                # cand_idx = 157 # 19 learnable top cand
+                # cand_idx = 234 # 328 sgv top cand
+                cand_idx = 182 # 328 learnable top cand (actual is 183 -- this is the nearest within top-20)
+                if cand_idx not in nn_indices:
+                    raise ValueError
+                rel_idx = np.nonzero(nn_indices == cand_idx)[0].item()
+                eigvec = eigvec_list[rel_idx].squeeze(0).cpu()
+                score = rerank_scores[rel_idx].item()
+                if params.model_params.rerank_mode == 'sgv':
+                    eigvec, _ = torch.sort(eigvec, dim=-1, descending=True)
+                    eigvec = min_max_normalize(eigvec)
+
+                fig, ax = plt.subplots(figsize=(2,5))
+                eigvec_plot = ax.imshow(eigvec[:, None].expand(-1, len(eigvec)//10), cmap='RdYlGn')
+                ax.set_xticks([])
+                ax.set_ylabel('Corr idx')
+                ax.set_title(f'Score: {score:.4f}')
+                fig.colorbar(eigvec_plot, ax=ax, ticks=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
+                fig.tight_layout()
+                fig.savefig(save_path)
+            # """
 
     # Calculate mean global metrics
     global_metrics['recall'] = {r: [intermediate_metrics['tp'][r][nn] / num_evaluated for nn in range(num_neighbors)] for r in radius}
@@ -587,11 +634,33 @@ def main():
         )
         # Plot eigenvectors from re-ranking
         if reranking:
-            eigvec = rerank_eigvec_dict[query_idx]['Re-Ranked']
+            eigvec = rerank_eigvec_dict[query_idx]['Initial']['eigvec']
+            rerank_score = rerank_eigvec_dict[query_idx]['Initial']['score']
+            if params.model_params.rerank_mode == 'sgv':
+                eigvec, _ = torch.sort(eigvec, dim=-1, descending=True)
+                eigvec = min_max_normalize(eigvec)
             fig, ax = plt.subplots(figsize=(2,5))
-            ax.imshow(eigvec[:, None].expand(-1, len(eigvec)//10), cmap='RdYlGn')
+            eigvec_plot = ax.imshow(eigvec[:, None].expand(-1, len(eigvec)//10), cmap='RdYlGn')
             ax.set_xticks([])
-            fig.savefig(os.path.join(save_dir_ii, 'eigvec.png'))
+            ax.set_ylabel('Corr idx')
+            ax.set_title(f'Score: {rerank_score:.4f}')
+            fig.colorbar(eigvec_plot, ax=ax, ticks=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
+            fig.tight_layout()
+            fig.savefig(os.path.join(save_dir_ii, 'eigvec_initial.png'))
+
+            eigvec = rerank_eigvec_dict[query_idx]['Re-Ranked']['eigvec']
+            rerank_score = rerank_eigvec_dict[query_idx]['Re-Ranked']['score']
+            if params.model_params.rerank_mode == 'sgv':
+                eigvec, _ = torch.sort(eigvec, dim=-1, descending=True)
+                eigvec = min_max_normalize(eigvec)
+            fig, ax = plt.subplots(figsize=(2,5))
+            eigvec_plot = ax.imshow(eigvec[:, None].expand(-1, len(eigvec)//10), cmap='RdYlGn')
+            ax.set_xticks([])
+            ax.set_ylabel('Corr idx')
+            ax.set_title(f'Score: {rerank_score:.4f}')
+            fig.colorbar(eigvec_plot, ax=ax, ticks=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
+            fig.tight_layout()
+            fig.savefig(os.path.join(save_dir_ii, 'eigvec_rr.png'))
 
         # Ground truth TF (with ICP, if enabled in params)
         visualise_registration(
