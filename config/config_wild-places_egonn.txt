@@ -11,7 +11,7 @@ batch_expansion_th = 0.7
 val_batch_size = 128
 save_freq = 10
 eval_freq = 10
-eval_radius = 3
+eval_radius = 3, 20
 rerank_enable_eval = True
 
 lr = 1e-3
