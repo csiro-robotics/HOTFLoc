@@ -378,6 +378,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             # Pad if needed
             if k_corr < self.rerank_num_correspondences[rerank_ii]:
                 k_diff = self.rerank_num_correspondences[rerank_ii] - k_corr
+                k_corr = self.rerank_num_correspondences[rerank_ii]
                 anc_corr_points_depth_j = F.pad(anc_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
                 nn_corr_points_depth_j = F.pad(nn_corr_points_depth_j, (0, 0, 0, k_diff), value=self.point_padding)
             
