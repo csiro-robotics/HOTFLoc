@@ -139,9 +139,9 @@ def two_stage_icp(
     inlier_dist_threshold: float = 1.2,
     max_iteration: int = 200,
     voxel_size: Optional[float] = 0.1,
-    two_stage_inlier_dist_threshold: float = 8.0,
+    two_stage_inlier_dist_threshold: float = 5.5,
     two_stage_max_iteration: int = 50,
-    two_stage_voxel_size: Optional[float] = 0.8,
+    two_stage_voxel_size: Optional[float] = 0.5,
 ):
     """
     Compute a two-stage ICP refinement, from coarse-to-fine. Used to fix drift

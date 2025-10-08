@@ -210,9 +210,9 @@ class Training6DOFDataset(TrainingDataset):
         icp_max_iteration: int = 100,
         icp_voxel_size: Optional[float] = None,
         icp_two_stage: bool = False,
-        icp_two_stage_inlier_dist_threshold: float = 8.0,
+        icp_two_stage_inlier_dist_threshold: float = 5.5,
         icp_two_stage_max_iteration: int = 50,
-        icp_two_stage_voxel_size: Optional[float] = 0.8,
+        icp_two_stage_voxel_size: Optional[float] = 0.5,
         **kwargs,
     ):
         super().__init__(dataset_path, dataset_type, query_filename, **kwargs)
@@ -363,6 +363,7 @@ class EvalDataset(Dataset):
         return len(self.data_set_dict)
 
     def __getitem__(self, ndx):
+        # TODO: ADD RANDOM OCCLUSION OPTION, AND PASS ndx AS SEED TO TRANSFORM
         # Load point cloud and apply transform
         file_pathname = os.path.join(self.dataset_path, self.data_set_dict[ndx]['query'])
         query_pc = self.pc_loader(file_pathname)
