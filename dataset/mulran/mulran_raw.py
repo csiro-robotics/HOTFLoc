@@ -91,6 +91,7 @@ class MulranSequence(Dataset):
         for ndx, position in enumerate(positions):
             if prev_position is None:
                 mask.append(ndx)
+                prev_position = position
             else:
                 displacement = np.linalg.norm(prev_position - position)
                 if displacement > self.min_displacement:
