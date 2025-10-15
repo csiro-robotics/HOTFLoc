@@ -615,6 +615,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         shift_and_scale: Tensor,
         batch: dict,
         feat_type: str = 'coarse',
+        d_thresh: float = 0.4,
         **kwargs,
     ):
         """
@@ -641,10 +642,10 @@ class HOTFormerMetricLoc(torch.nn.Module):
         if feat_type == 'coarse':
             # Use just the coarsest level of feats for SGV
             depth_j = self.depth_coarse[coarse_feat_ii]
-            sgv_d_thresh = 0.4
+            # d_thresh = 0.4
         elif feat_type == 'fine':
             depth_j = self.depth_fine
-            sgv_d_thresh = 0.4  # SGV dist threshold used in the paper
+            # d_thresh = 0.4  # SGV dist threshold used in the paper
         # print(f'sgv_d_thresh={sgv_d_thresh}')
 
         # Get local points and features
@@ -688,7 +689,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
                 nn_points[None, ...],
                 anc_feats[None, ...],
                 nn_feats[None, ...],
-                d_thresh=sgv_d_thresh,
+                d_thresh=d_thresh,
                 return_spatial_consistency=True,
             )
             leading_eigvec_list.append(leading_eigvec[0])

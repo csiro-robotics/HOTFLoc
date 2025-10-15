@@ -785,7 +785,7 @@ def get_metrics(
                     tgt_keypts=candidate_keypoints,
                     src_features=query_features,
                     tgt_features=candidate_features,
-                    d_thresh=0.4,  # threshold used in SGV paper
+                    d_thresh=params.sgv_d_thresh,
                 ))
             # HOTFormerLoc-based re-ranking
             else:
@@ -812,6 +812,7 @@ def get_metrics(
                             shift_and_scale=rerank_shift_and_scale,
                             batch=rerank_batch,
                             feat_type=sgv_feat_type,
+                            d_thresh=params.sgv_d_thresh,
                         )
                         rerank_scores = rerank_dict['scores']
                     else:
@@ -1420,6 +1421,7 @@ if __name__ == "__main__":
     parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
     parser.add_argument('--use_ransac', action='store_true', help='Compare LGR with RANSAC in metric loc evaluation')
     parser.add_argument('--use_sgv', action='store_true', help='Use SGV for re-ranking')
+    parser.add_argument('--sgv_d_thresh', type=float, default=0.4, help='Distance threshold used in SGV re-ranking')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
@@ -1437,6 +1439,7 @@ if __name__ == "__main__":
     print(f'Num neighbors: {args.num_neighbors}')
     print(f'Use RANSAC: {args.use_ransac}')
     print(f'Use SGV: {args.use_sgv}')
+    print(f'SGV d thresh: {args.sgv_d_thresh}')
     if args.weights is None:
         if args.save_embeddings or args.load_embeddings:
             raise ValueError('Cannot save or load embeddings for random weights')
@@ -1510,6 +1513,9 @@ if __name__ == "__main__":
             reranking = True
             if args.use_sgv:
                 params.model_params.rerank_mode = 'sgv'
+
+    # Override SGV d thresh
+    params.sgv_d_thresh = args.sgv_d_thresh
     
     # Save results to the text file
     model_params_name = os.path.split(params.model_params.model_params_path)[1]

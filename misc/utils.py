@@ -404,6 +404,7 @@ class TrainingParams:
         assert self.similarity in ['cosine', 'euclidean']
 
         # Re-ranking
+        self.sgv_d_thresh = params.getfloat('sgv_d_thresh', 0.4)  # distance threshold for SGV geometric consistency matrix
         self.rerank_loss_fn = params.get('rerank_loss_fn', None)
         if self.rerank_loss_fn is not None:
             self.rerank_loss_fn = self.rerank_loss_fn.lower()

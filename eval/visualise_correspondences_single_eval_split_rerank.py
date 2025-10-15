@@ -229,7 +229,7 @@ def get_eval_pairs_dataloader(
                     tgt_keypts=candidate_keypoints,
                     src_features=query_features,
                     tgt_features=candidate_features,
-                    d_thresh=0.4,  # threshold used in SGV paper
+                    d_thresh=args.sgv_d_thresh,  # threshold used in SGV paper
                 ))
             # HOTFormerLoc-based re-ranking
             else:
@@ -255,6 +255,7 @@ def get_eval_pairs_dataloader(
                             shift_and_scale=rerank_shift_and_scale,
                             batch=rerank_batch,
                             feat_type=sgv_feat_type,
+                            d_thresh=args.sgv_d_thresh,
                         )
                         rerank_scores = rerank_dict['scores']
                         eigvec_list = rerank_dict['eigvec_list']
@@ -709,6 +710,7 @@ if __name__ == "__main__":
     parser.add_argument('--disable_animation', action='store_true', help='Disables animations')
     parser.add_argument('--non_interactive', action='store_true', help='Saves visualisations instantly, then closes viewer.')
     parser.add_argument('--use_sgv', action='store_true', help='Use SGV for re-ranking')
+    parser.add_argument('--sgv_d_thresh', type=float, default=0.4, help='Distance threshold used in SGV re-ranking')
     parser.add_argument('--disable_reranking', action='store_true', help='Disable re-ranking evaluation to save time')
     parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
@@ -724,6 +726,7 @@ if __name__ == "__main__":
     print(f'Database split idx: {args.database_split_idx}')
     print(f'Query split idx: {args.query_split_idx}')
     print(f'Use SGV: {args.use_sgv}')
+    print(f'SGV d thresh: {args.sgv_d_thresh}')
     print(f'Disable re-ranking: {args.disable_reranking}')
     if args.weights is None:
         w = 'RANDOM WEIGHTS'
