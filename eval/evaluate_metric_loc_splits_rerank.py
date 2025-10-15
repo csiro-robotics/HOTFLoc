@@ -734,7 +734,6 @@ def get_metrics(
         # LOCAL DESCRIPTOR EVALUATION
         # Do the evaluation only if the nn pose is within distance threshold
         # Otherwise the overlap is too small to get reasonable results
-        # (evaluation continues if standard OR re-ranked nn pose is within thresh meters)
         if euclid_dist[0] > local_max_eval_threshold:
             continue
 
@@ -859,8 +858,9 @@ def get_metrics(
             # LOCAL DESCRIPTOR EVALUATION
             # Do the evaluation only if the nn pose is within distance threshold
             # Otherwise the overlap is too small to get reasonable results
-            # (evaluation continues if standard OR re-ranked nn pose is within thresh meters)
-            if euclid_dist[0] > local_max_eval_threshold and euclid_dist_rr[0] > local_max_eval_threshold:
+            # (evaluation continues only if standard AND re-ranked nn pose is within thresh meters,
+            #  to ensure both are evaluated on the same set of queries)
+            if euclid_dist[0] > local_max_eval_threshold or euclid_dist_rr[0] > local_max_eval_threshold:
                 continue
 
             # Cache query and nn idx for metric loc eval

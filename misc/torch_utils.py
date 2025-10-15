@@ -6,6 +6,7 @@ from typing import Union
 
 import numpy as np
 import torch
+import open3d as o3d
 
 from ocnn.octree import Octree, Points
 
@@ -63,6 +64,7 @@ def set_seed(seed: int = 42):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
     random.seed(seed)
+    o3d.utility.random.seed(seed)
 
 
 def debug_time_func(func, num_repetitions: int = 1000, inputs = (None,)):
