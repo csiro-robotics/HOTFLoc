@@ -17,7 +17,8 @@ def ransac_fn(query_keypoints, candidate_keypoints, query_features, candidate_fe
     )
     return ransac_result.transformation, len(ransac_result.correspondence_set), ransac_result.fitness
 
-def get_ransac_result(feat1, feat2, kp1, kp2, ransac_dist_th=0.5, ransac_max_it=10000):
+def get_ransac_result(feat1, feat2, kp1, kp2, ransac_dist_th=0.5, ransac_max_it=10000, random_seed=42):
+    o3d.utility.random.seed(random_seed)
     feature_dim = feat1.shape[1]
     pcd_feat1 = make_open3d_feature(feat1, feature_dim, feat1.shape[0])
     pcd_feat2 = make_open3d_feature(feat2, feature_dim, feat2.shape[0])
