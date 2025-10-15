@@ -40,7 +40,7 @@ from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diago
         create_heatmap
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
-WANDB_OFFLINE = False  # Use wandb in offline mode with sync hooks running on login node
+WANDB_OFFLINE = True  # Use wandb in offline mode with sync hooks running on login node
 wandb_osh.set_log_level("ERROR")
 
 class NetworkTrainer:
@@ -1344,7 +1344,7 @@ class NetworkTrainer:
             local_max_eval_threshold=self.params.local.max_eval_threshold,
             show_progress=self.params.verbose,
             only_global=(not self.params.local.enable_local),
-            use_ransac=True,  # Enable RANSAC for final evaluation (if doing metric loc evaluation)
+            # use_ransac=True,  # Enable RANSAC for final evaluation (if doing metric loc evaluation)
             reranking=reranking,
         )
         print_eval_stats(
