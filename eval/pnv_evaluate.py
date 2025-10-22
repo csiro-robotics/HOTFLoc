@@ -44,7 +44,7 @@ def evaluate(model, device, params: TrainingParams, log: bool = False,
         else:
             location_name = database_file.split('_')[0]
             temp = query_file.split('_')[0]
-            if "5m-pickles/" in database_file:  # wild-places
+            if "pickles/" in database_file:  # wild-places
                 location_name = location_name.split('/')[-1]
                 temp = temp.split('/')[-1]
         assert location_name == temp, 'Database location: {} does not match query location: {}'.format(database_file,
@@ -279,7 +279,7 @@ def print_eval_stats(stats):
             stats[database_name]["ave_one_percent_recall"],
             stats[database_name]["ave_mrr"],
         )
-        msg += (stats[database_name]['ave_recall'])
+        msg += str(stats[database_name]['ave_recall'])
     logging.info(msg)
 
 
