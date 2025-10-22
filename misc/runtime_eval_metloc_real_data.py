@@ -88,15 +88,9 @@ def main():
                     continue
                 
                 # Pre-compute global descriptors
-                local_batch['anc_local_feats'] = {
-                    'coarse': anc_model_out['local'][model.depth_coarse],
-                    'fine': anc_model_out['local'][model.depth_fine],
-                }
+                local_batch['anc_local_feats'] = anc_model_out['local']
                 pos_model_out = model(local_batch['pos_batch'], global_only=True)
-                local_batch['pos_local_feats'] = {
-                    'coarse': pos_model_out['local'][model.depth_coarse],
-                    'fine': pos_model_out['local'][model.depth_fine],
-                }
+                local_batch['pos_local_feats'] = pos_model_out['local']
 
             # Discard first measurement after cuDNN runs benchmarks
             _ = model(local_batch)
