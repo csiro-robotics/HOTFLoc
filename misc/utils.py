@@ -67,21 +67,22 @@ class ModelParams:
         self.freeze_hotformerloc = params.getboolean('freeze_hotformerloc', False)  # Freeze HOTFloc layers, only train metric loc
 
         # Metric loc params
-        if local:
-            if 'coarse_idx' in params:
-                self.coarse_idx = tuple([int(e) for e in params['coarse_idx'].split(',')])
-            else:
-                self.coarse_idx = None
-            self.fine_idx = params.getint('fine_idx', None)
-            if 'coarse_feat_embed_dim' in params:  # Dimension to project coarse features with MLP before metric localisation and/or re-ranking (None to disable)
-                self.coarse_feat_embed_dim = tuple([int(e) for e in params['coarse_feat_embed_dim'].split(',')])
-            else:
-                self.coarse_feat_embed_dim = None
-            if self.coarse_feat_embed_dim is not None:
-                assert len(self.coarse_feat_embed_dim) == len(self.coarse_idx), 'Expected same length for coarse idx and embed dim'
-            self.fine_feat_embed_dim = params.getint('fine_feat_embed_dim', None)  # Dimension to project fine features with MLP before metric localisation (None to disable)
-            self.metloc_mlp_ratio = params.getfloat('metloc_mlp_ratio', 2.0)  # Hidden dim ratio of MLP used for coarse and/or fine features
-
+        # if local: ### <-- COMMENTED OUT TO ALLOW TRAINING HOTFLOC++ WITHOUT METRIC LOC LOSS ENABLED
+        if 'coarse_idx' in params:
+            self.coarse_idx = tuple([int(e) for e in params['coarse_idx'].split(',')])
+        else:
+            self.coarse_idx = None
+        self.fine_idx = params.getint('fine_idx', None)
+        if 'coarse_feat_embed_dim' in params:  # Dimension to project coarse features with MLP before metric localisation and/or re-ranking (None to disable)
+            self.coarse_feat_embed_dim = tuple([int(e) for e in params['coarse_feat_embed_dim'].split(',')])
+        else:
+            self.coarse_feat_embed_dim = None
+        if self.coarse_feat_embed_dim is not None:
+            assert len(self.coarse_feat_embed_dim) == len(self.coarse_idx), 'Expected same length for coarse idx and embed dim'
+        self.fine_feat_embed_dim = params.getint('fine_feat_embed_dim', None)  # Dimension to project fine features with MLP before metric localisation (None to disable)
+        self.metloc_mlp_ratio = params.getfloat('metloc_mlp_ratio', 2.0)  # Hidden dim ratio of MLP used for coarse and/or fine features
+        ### <--- END OF PREVIOUS INDENT
+        
         # Re-ranking
         self.rerank_mode = params.get('rerank_mode', None)  # Type of re-ranking to do
         if self.rerank_mode is not None:
