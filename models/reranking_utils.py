@@ -174,6 +174,7 @@ def batched_sgv_parallel(
     mask: Optional[Tensor] = None,
     # mask_zeros=False,
     return_spatial_consistency=False,
+    adj_mat_dist: str = 'squared',
 ):
     """
     Batched version of SGV.
@@ -185,10 +186,12 @@ def batched_sgv_parallel(
         - d_thresh: Distance threshold for adjacency matrix
         # - mask_zeros: Ignore feats filled with all zeros (assumes they are masked) 
         - mask: Mask of keypts to ignore of shape [B, nn, num_pts, num_pts] (True to keep, False to ignore)
+        - adj_mat_dist: Distance measure used in the adjacency matrix. Valid values include ['absolute', 'squared'].
     Output:
         - lead_eigvec:    [B, nn, num_pts], leading eigenvector of spatial consistency adj mat
         - sc_score_list:   [B, nn, 1], spatial consistency score for each candidate
     """
+    assert adj_mat_dist in ['absolute', 'squared']
     if src_keypts.ndim == 3:
         src_keypts = src_keypts.unsqueeze(1)
     assert src_keypts.ndim == 4
@@ -218,7 +221,13 @@ def batched_sgv_parallel(
     src_dist = torch.norm((src_keypts_corr[..., None, :] - src_keypts_corr[..., None, :, :]), dim=-1)
     target_dist = torch.norm((tgt_keypts_corr[..., None, :] - tgt_keypts_corr[..., None, :, :]), dim=-1)
     cross_dist = torch.abs(src_dist - target_dist)
-    adj_mat = torch.clamp(1.0 - cross_dist ** 2 / d_thresh ** 2, min=0)
+    match adj_mat_dist:
+        case 'squared':
+            adj_mat = torch.clamp(1.0 - cross_dist ** 2 / d_thresh ** 2, min=0)
+        case 'absolute':
+            adj_mat = torch.clamp(1.0 - cross_dist / d_thresh, min=0)
+        case _:
+            raise ValueError
 
     # Mask out padded keypts
     if mask is not None:

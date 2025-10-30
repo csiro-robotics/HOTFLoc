@@ -191,6 +191,7 @@ class ModelParams:
                 self.rerank_output_mlp_ratio = params.getfloat('rerank_output_mlp_ratio', 1.0)
                 self.rerank_mutual_corr = params.getboolean('rerank_mutual_corr', False)  # only use mutual correspondences for re-ranking
                 self.rerank_use_sc_score = params.getboolean('rerank_use_sc_score', False)  # append spatial consistency score as an additional feature for the re-ranking MLP
+                self.rerank_adj_mat_dist = params.get('rerank_adj_mat_dist', 'squared')  # Distance type to use for adjacency matrix ('squared' or 'absolute')
                 if any(model in self.model.lower() for model in ('hotformermetricloc')):
                     #######################################################################
                     # HOTFormerMetricLoc-specific params

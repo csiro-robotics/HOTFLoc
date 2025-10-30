@@ -66,6 +66,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         rerank_output_mlp_ratio: float = 1.0,
         rerank_mutual_corr: bool = False,
         rerank_use_sc_score: bool = False,
+        rerank_adj_mat_dist: str = 'squared',
         **kwargs,
     ):
         """
@@ -103,6 +104,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             rerank_output_mlp_ratio (float): MLP ratio for rerank output (for hidden layer)
             rerank_mutual_corr (bool): Mutual correspondence filtering
             rerank_use_sc_score (bool): Add spatial consistency score as an additional feature to the MLP
+            rerank_adj_mat_dist (str): Distance type to use for adjacency matrix ('squared' or 'absolute')
 
         Returns:
             model_out (dict): Dict containing outputs from local and global stages
@@ -136,6 +138,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         self.rerank_output_mlp_ratio = rerank_output_mlp_ratio
         self.rerank_mutual_corr = rerank_mutual_corr
         self.rerank_use_sc_score = rerank_use_sc_score
+        self.rerank_adj_mat_dist = rerank_adj_mat_dist
         if self.rerank_scale_eigvec and self.rerank_eigvec_layernorm:
             raise ValueError('Redundant choice of parameters, select one or the other')
         assert (
@@ -411,6 +414,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 d_thresh=self.geometric_consistency_d_thresh[rerank_ii],
                 return_spatial_consistency=True,
                 mask=sgv_mask_depth_j,
+                adj_mat_dist=self.rerank_adj_mat_dist,
             )
             time_dict[f'sgv {rerank_ii}'] = time.perf_counter() - tic
             if self.rerank_sort_eigvec:
@@ -614,6 +618,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
                 d_thresh=self.geometric_consistency_d_thresh[rerank_ii],
                 return_spatial_consistency=True,
                 mask=sgv_mask_depth_j,
+                adj_mat_dist=self.rerank_adj_mat_dist,
             )
             time_dict[f'sgv {rerank_ii}'] = time.perf_counter() - tic
             if self.rerank_sort_eigvec:
