@@ -434,6 +434,8 @@ class TrainingParams:
         self.mesa = params.getfloat('mesa', 0.0)  # MESA - memory efficient sharpness optimization, enabled if > 0.0
         self.mesa_start_ratio = params.getfloat('mesa_start_ratio', 0.25)  # when to start MESA, ratio to total training time
 
+        self.random_occlusion_angle = params.getfloat('random_occlusion_angle', 0)  # fixed random occlusion angle -- only used for occlusion experiments
+
         self.train_file = params.get('train_file')
         self.val_file = params.get('val_file', None)
         self.validation = params.getboolean('validation', True)
