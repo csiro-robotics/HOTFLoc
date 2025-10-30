@@ -91,7 +91,9 @@ class MulranSequence(Dataset):
         for ndx, position in enumerate(positions):
             if prev_position is None:
                 mask.append(ndx)
-                prev_position = position
+                # yes this line makes self.min_displacement redundant, but it's necessary to reproduce the eval set used in EgoNN and SGV
+                if 'Sejong' not in self.sequence_name:
+                    prev_position = position
             else:
                 displacement = np.linalg.norm(prev_position - position)
                 if displacement > self.min_displacement:

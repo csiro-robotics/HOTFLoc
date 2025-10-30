@@ -1,4 +1,5 @@
 # Test sets for Mulran dataset.
+# Combines sequences into a single pickle -- so that averaging over a split works correct in our evaluation script
 # Adapted from https://github.com/csiro-robotics/SpectralGV/blob/main/datasets/mulran/generate_evaluation_sets.py
 
 import argparse
@@ -100,8 +101,6 @@ if __name__ == '__main__':
     print(f'Dataset root: {args.dataset_root}')
     print(f'Save dir: {args.save_dir}')
     print(f'Sequence: {args.sequence}')
-    print(f'Minimum displacement between consecutive anchors: {args.min_displacement}')
-    print(f'Ignore query elements without a corresponding map element within a threshold [m]: {args.dist_threshold}')
 
     # Sequences is a list of (map sequence, query sequence)
     if args.sequence == 'Sejong':
@@ -115,7 +114,7 @@ if __name__ == '__main__':
         args.min_displacement = 10.0
         args.dist_threshold = 5
     elif args.sequence == 'Riverside':
-        sequences = [('Riverside_01', 'Riverside_02'), ('Riverside_01', 'Riverside_03')]
+        sequences = [('Riverside_01', 'Riverside_02')]
         args.min_displacement = 10.0
         args.dist_threshold = 5
     else:
@@ -123,7 +122,12 @@ if __name__ == '__main__':
     if DEBUG:
         sequences = [('ParkingLot', 'ParkingLot')]
 
-    for map_sequence, query_sequence in sequences:
+    print(f'Minimum displacement between consecutive anchors: {args.min_displacement}')
+    print(f'Ignore query elements without a corresponding map element within a threshold [m]: {args.dist_threshold}')
+
+    query_set, map_set = [], []
+    used_map_sequences = []
+    for ii, (map_sequence, query_sequence) in enumerate(sequences):
         print(f'Map sequence: {map_sequence}')
         print(f'Query sequence: {query_sequence}')
 
@@ -139,23 +143,29 @@ if __name__ == '__main__':
         # test_set.save(file_path_name)
 
         # NOTE: Using the old eval set format for now, until the entire pipeline is upgraded (requires changing format for Oxford and CS-Campus3D, or keeping eval scripts separate)
-        query_set, map_set = generate_evaluation_set(
+        query_set_temp, map_set_temp = generate_evaluation_set(
             args.dataset_root,
             map_sequence,
             query_sequence,
             min_displacement=args.min_displacement,
             dist_threshold=args.dist_threshold,
         )
+        # append query sequence
+        query_set.append(query_set_temp[0])
+        # add map sequence IF it is different to previous sequences
+        if map_sequence not in used_map_sequences:
+            map_set.append(map_set_temp[0])
+            used_map_sequences.append(map_sequence)
 
-        query_pickle_name = f'test_{query_sequence}_{args.min_displacement}_{args.dist_threshold}_query.pickle'
-        map_pickle_name = f'test_{map_sequence}_{args.min_displacement}_{args.dist_threshold}_database.pickle'
-        if args.save_dir is not None:
-            os.makedirs(args.save_dir, exist_ok=True)
-            query_file_path = os.path.join(args.save_dir, query_pickle_name)
-            map_file_path = os.path.join(args.save_dir, map_pickle_name)
-        else:
-            query_file_path = os.path.join(args.dataset_root, query_pickle_name)
-            map_file_path = os.path.join(args.dataset_root, map_pickle_name)
-        
-        output_to_file(query_set, query_file_path)
-        output_to_file(map_set, map_file_path)
+    query_pickle_name = f'{args.sequence}_{args.min_displacement}_{args.dist_threshold}_query.pickle'
+    map_pickle_name = f'{args.sequence}_{args.min_displacement}_{args.dist_threshold}_database.pickle'
+    if args.save_dir is not None:
+        os.makedirs(args.save_dir, exist_ok=True)
+        query_file_path = os.path.join(args.save_dir, query_pickle_name)
+        map_file_path = os.path.join(args.save_dir, map_pickle_name)
+    else:
+        query_file_path = os.path.join(args.dataset_root, query_pickle_name)
+        map_file_path = os.path.join(args.dataset_root, map_pickle_name)
+    
+    output_to_file(query_set, query_file_path)
+    output_to_file(map_set, map_file_path)

@@ -5,8 +5,18 @@ def get_query_database_splits(params):
         eval_query_files = ['oxford_evaluation_query.pickle', 'university_evaluation_query.pickle',
                             'residential_evaluation_query.pickle', 'business_evaluation_query.pickle']
     elif params.dataset_name.lower() == 'mulran':
-        eval_database_files = ['DCC_database.pickle', 'Sejong_database.pickle']
-        eval_query_files = ['DCC_query.pickle', 'Sejong_query.pickle']
+        eval_database_files = [
+            'DCC_10.0_5_database.pickle',
+            'Sejong_0.2_20_database.pickle',
+            'KAIST_10.0_5_database.pickle',
+            'Riverside_10.0_5_database.pickle',
+        ]
+        eval_query_files = [
+            'DCC_10.0_5_query.pickle',
+            'Sejong_0.2_20_query.pickle',
+            'KAIST_10.0_5_query.pickle',
+            'Riverside_10.0_5_query.pickle',
+        ]
     elif params.dataset_name.lower() == 'southbay':  # NOTE: Eval won't run on Southbay if its the secondary train dataset
         eval_database_files = ['SunnyvaleBigloop_1.0_5_database.pickle']
         eval_query_files = ['SunnyvaleBigloop_1.0_5_query.pickle']
