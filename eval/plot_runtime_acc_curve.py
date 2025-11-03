@@ -69,7 +69,7 @@ plt.rcParams.update({
     "font.size": 9,
     "font.family": "serif",
     # "figure.figsize": (3.5, 2.8),  # single-column width for IEEE
-    "figure.figsize": (3.5, 3.7),  # single-column width for IEEE
+    "figure.figsize": (3.5, 3.6),  # single-column width for IEEE
     "axes.labelsize": 10,
     "legend.fontsize": 7.5,
     "xtick.labelsize": 9,
@@ -94,6 +94,9 @@ for (label, (rt, acc)), m, c in zip(pr_results_init.items(), markers_init, color
 for (label, (rt, acc)), m, c in zip(pr_results_rr.items(), markers_rr, colors_rr):
     # axs[0].scatter(rt, acc, marker=m, label=label, s=40, linewidths=0.8, facecolors=c, edgecolors=c)
     axs[0].scatter(rt, acc, marker=m, s=40, linewidths=0.8, facecolors=c, edgecolors=c)
+    if 'HOTFLoc++' in label:
+        # axs[0].text(rt, acc, 'Ours', ha='left', va='bottom', fontweight='bold')
+        axs[0].annotate('Ours', (rt, acc), textcoords='offset points', xytext=(6,-4), fontweight='bold')
 
 ## MetLoc
 # Initial values
@@ -103,6 +106,9 @@ for (label, (rt, succ)), m, c in zip(metloc_results_init.items(), markers_rr, co
 for (label, (rt, succ)), m, c in zip(metloc_results_rr.items(), markers_rr, colors_rr):
     # axs[1].scatter(rt, succ, marker=m, label=label, s=40, linewidths=0.8, facecolors=c, edgecolors=c)
     axs[1].scatter(rt, succ, marker=m, s=40, linewidths=0.8, facecolors=c, edgecolors=c)
+    if 'HOTFLoc++' in label:
+        # axs[1].text(rt, succ, 'Ours', ha='left', va='bottom', fontweight='bold')
+        axs[1].annotate('Ours', (rt, succ), textcoords='offset points', xytext=(6,-4), fontweight='bold')
 
 
 # # Pareto front curve
@@ -128,6 +134,7 @@ for init_idx, rr_idx in rr_improve_indices:
 axs[0].set_xscale('log')
 # axs[0].set_xlabel("Runtime (s)")
 axs[0].set_ylabel("Recall@1 (%) - 30m")
+axs[0].set_xticks([0.01, 0.1, 1, 10])
 axs[0].set_yticks([20,40,60,80,100])
 axs[0].grid(True, which='both', linestyle=':', linewidth=0.5)
 axs[0].legend(loc="upper right")
@@ -135,6 +142,7 @@ axs[0].legend(loc="upper right")
 axs[1].set_xscale('log')
 axs[1].set_xlabel("Runtime (s)")
 axs[1].set_ylabel("Success Rate (%)")
+axs[0].set_xticks([0.01, 0.1, 1, 10])
 axs[1].set_yticks([40,60,80,100])
 axs[1].grid(True, which='both', linestyle=':', linewidth=0.5)
 # axs[0].legend(loc="upper right")
