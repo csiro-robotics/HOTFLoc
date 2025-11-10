@@ -68,6 +68,10 @@ metloc_results_rr = {
 plt.rcParams.update({
     "font.size": 9,
     "font.family": "serif",
+    'pdf.fonttype': 42,   # TrueType
+    'ps.fonttype': 42,
+    # "font.sans-serif": ['Helvetica'],
+    "font.serif": ['Times', 'DejaVu Serif'],
     # "figure.figsize": (3.5, 2.8),  # single-column width for IEEE
     "figure.figsize": (3.5, 3.6),  # single-column width for IEEE
     "axes.labelsize": 10,
