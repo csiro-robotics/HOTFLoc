@@ -476,10 +476,12 @@ def visualise_coarse_correspondences(
     pos_feats_coarse: Optional[ndarray] = None,
     translate=[0, 0, 40],
     zoom=0.55,
+    window_width=1200,
     plot_coarse=False,
     show_unused=True,
     coarse_colourmode: str = 'patch',
     save_dir: Optional[str] = None,
+    filename_base: str = f'coarse_corr',
     disable_animation=False,
     non_interactive=False,
     voxel_size: Optional[float] = None
@@ -512,6 +514,7 @@ def visualise_coarse_correspondences(
         assert pos_point_to_node is not None and anc_point_to_node is not None
     if coarse_colourmode in ('tsne', 'umap'):
         assert anc_feats_coarse is not None and pos_feats_coarse is not None
+    filename = filename_base + f'_{coarse_colourmode}'
     # PC_SOURCE_COLOUR = [1, 0.7, 0.05]
     # PC_TARGET_COLOUR = [0, 0.629, 0.9]
     PC_SOURCE_COLOURMAP = 'copper'
@@ -646,17 +649,19 @@ def visualise_coarse_correspondences(
         custom_draw_geometry_load_option(  # static
             vis_list,
             save_dir=save_dir,
-            filename=f'coarse_corr_{coarse_colourmode}',
+            filename=filename,
             non_interactive=non_interactive,
             zoom=zoom,
+            width=window_width,
         )
     else:
         if save_dir is not None:
-            save_dir = os.path.join(save_dir, f'coarse_corr_{coarse_colourmode}_frames')
+            save_dir = os.path.join(save_dir, f'{filename}_frames')
         custom_draw_geometry_with_z_rotation(
             vis_list,
             save_dir=save_dir,
             zoom=zoom,
+            width=window_width,
         )  # with rotation
 
 
@@ -932,6 +937,7 @@ def visualise_registration(
     pos_points_fine: Union[Tensor, ndarray],
     transform: ndarray,
     zoom=0.55,
+    window_width=1200,
     save_dir: Optional[str] = None,
     filename: str = 'registration',
     disable_animation=False,
@@ -986,6 +992,7 @@ def visualise_registration(
             filename=filename,
             non_interactive=non_interactive,
             zoom=zoom,
+            width=window_width,
         )
     else:
         if save_dir is not None:
@@ -994,6 +1001,7 @@ def visualise_registration(
             vis_list,
             save_dir=save_dir,
             zoom=zoom,
+            width=window_width,
         )  # with rotation
 
 def visualise_LGR_initial_registration(

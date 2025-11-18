@@ -35,6 +35,20 @@ def get_query_database_splits(params):
             'above-under_Samford_evaluation_query.pickle',
             'above-under_Robson_evaluation_query.pickle', 
         ]
+    # WARNING: CS-WILD-PLACES_ENTIRE_FOREST IS BROKEN -- SAVE SEQUENCE NAMES INCORRECTLY
+    elif 'CSWildPlaces_entire_forest' in params.dataset_name:
+        eval_database_files = [
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Karawatha_evaluation_database.pickle',
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Venman_evaluation_database.pickle',
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_QCAT_evaluation_database.pickle', 
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Samford_evaluation_database.pickle',
+        ]
+        eval_query_files = [
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Karawatha_evaluation_query.pickle',
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Venman_evaluation_query.pickle',
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_QCAT_evaluation_query.pickle', 
+            '/scratch3/gri317/repos/HOT-Net/dataset/CSWildPlaces/tuples_pos15m_neg50m_eval30m_exclKaraLoop_ENTIRE_FOREST_EVAL/CSWildPlaces_Samford_evaluation_query.pickle',
+        ]
     elif 'CSWildPlaces' in params.dataset_name:
         eval_database_files = [
             'CSWildPlaces_Karawatha_evaluation_database.pickle',
