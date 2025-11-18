@@ -2,7 +2,7 @@
 
 import time
 import logging
-from typing import List, Sequence, Dict, Iterable, Union
+from typing import List, Sequence, Dict, Iterable, Union, Optional
 from itertools import repeat
 
 import numpy as np
@@ -365,7 +365,8 @@ def make_eval_dataset(params: TrainingParams, data_set: Dict) -> Dataset:
     """
     val_transform = ValTransform(
         normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean,
+        random_occlusion_angle=params.random_occlusion_angle,
     )
     dataset = EvalDataset(
         params.dataset_folder, params.dataset_name, data_set,
@@ -388,6 +389,7 @@ def make_eval_dataset_reranking(
     val_transform = ValTransform(
         normalize_points=params.normalize_points, scale_factor=params.scale_factor,
         unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean,
+        random_occlusion_angle=params.random_occlusion_angle,
     )
     dataset = EvalRerankingDataset(
         params.dataset_folder, params.dataset_name, query_set, database_set,
@@ -408,7 +410,8 @@ def make_eval_dataset_6DOF(
     """
     val_transform = Val6DOFTransform(
         normalize_points=params.normalize_points, scale_factor=params.scale_factor,
-        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean
+        unit_sphere_norm=params.unit_sphere_norm, zero_mean=params.zero_mean,
+        random_occlusion_angle=params.random_occlusion_angle,
     )
     dataset = Eval6DOFDataset(
         params.dataset_folder, params.dataset_name, query_set, database_set,
@@ -492,7 +495,7 @@ def make_eval_dataloader_reranking(
     query_set: Dict,
     database_set: Dict,
     query_nn_list: List,
-    num_workers: int = None,
+    num_workers: Optional[int] = None,
 ) -> DataLoader:
     """
     Creates dataloader suitable for creating reranking batches.
@@ -512,11 +515,14 @@ def make_eval_dataloader_reranking(
 
 
 def make_eval_dataloader_6DOF(
-    params: TrainingParams, query_set: Dict, database_set: Dict, pairs_list: List
+    params: TrainingParams, query_set: Dict, database_set: Dict, pairs_list: List,
+    num_workers: Optional[int] = None,
 ) -> DataLoader:
     """
     Creates dataloader suitable for evaluate_metric_loc script.
     """
+    if num_workers is None:
+        num_workers = params.local.eval_num_workers
     quantizer = params.model_params.quantizer
     eval_dataset = make_eval_dataset_6DOF(
         params, query_set, database_set, pairs_list
@@ -524,7 +530,7 @@ def make_eval_dataloader_6DOF(
     eval_collate_fn = make_collate_fn_6DOF(quantizer, params)
     eval_dataloader = DataLoader(eval_dataset, batch_size=1,
                                  shuffle=False, pin_memory=False,  # no pinned mem as it seems to be faster without here
-                                 num_workers=params.local.eval_num_workers,  # double workers to keep pace with BS 1
+                                 num_workers=num_workers,  # double workers to keep pace with BS 1
                                  collate_fn=eval_collate_fn)
     return eval_dataloader
 

@@ -363,7 +363,6 @@ class EvalDataset(Dataset):
         return len(self.data_set_dict)
 
     def __getitem__(self, ndx):
-        # TODO: ADD RANDOM OCCLUSION OPTION, AND PASS ndx AS SEED TO TRANSFORM
         # Load point cloud and apply transform
         file_pathname = os.path.join(self.dataset_path, self.data_set_dict[ndx]['query'])
         query_pc = self.pc_loader(file_pathname)
@@ -381,7 +380,7 @@ class EvalDataset(Dataset):
         if self.remove_height_offset:
             data, tf_height_offset_removal = height_offset_removal(data)
         if self.transform is not None:
-            data, shift_and_scale = self.transform(data)
+            data, shift_and_scale = self.transform(data, random_seed=ndx)
         tf_composed = tf_height_offset_removal @ tf_gravity_align
         assert data.size(0) > 0
         return data, shift_and_scale, tf_composed
@@ -530,8 +529,8 @@ class Eval6DOFDataset(EvalDataset):
         
         if self.local_transform is not None:
             # Apply normalization 
-            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True)
-            positive_pc, positive_shift_and_scale, _ = self.local_transform(positive_pc, ignore_rot_and_trans=True)
+            query_pc, query_shift_and_scale, _ = self.local_transform(query_pc, ignore_rot_and_trans=True, random_seed=ndx)
+            positive_pc, positive_shift_and_scale, _ = self.local_transform(positive_pc, ignore_rot_and_trans=True, random_seed=positive_ndx)
 
         ########################################################################
         # VISUALISATIONS FOR DEBUGGING

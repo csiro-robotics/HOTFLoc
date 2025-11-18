@@ -88,7 +88,7 @@ class TrainTransform:
             return None
         self.transform = transforms.Compose(t)
 
-    def __call__(self, e):
+    def __call__(self, e, **kwargs):
         shift_and_scale = None
         if self.occlusion_transform is not None:  # occlusion before normalisation
             e = self.occlusion_transform(e)
@@ -101,14 +101,19 @@ class TrainTransform:
 
 class ValTransform:
     def __init__(self, normalize_points=False, scale_factor=None,
-                 unit_sphere_norm=False, zero_mean=True):
+                 unit_sphere_norm=False, zero_mean=True,
+                 random_occlusion_angle: float = 0,):
         self.normalize_points = normalize_points
         self.scale_factor = None
         self.unit_sphere_norm = unit_sphere_norm
         self.zero_mean = zero_mean
+        self.random_occlusion_angle = random_occlusion_angle
         if scale_factor is not None:
             self.normalize_points = True
             self.scale_factor = scale_factor
+        self.occlusion_transform = None
+        if self.random_occlusion_angle > 0:
+            self.occlusion_transform = RandomOcclusion(p=1.0, theta_range=self.random_occlusion_angle)
         self.normalization_transform = None
         if self.normalize_points:
             self.normalization_transform = Normalize(scale_factor=self.scale_factor,
@@ -116,8 +121,10 @@ class ValTransform:
                                                      zero_mean=self.zero_mean,
                                                      return_shift_and_scale=True)
 
-    def __call__(self, e):
+    def __call__(self, e, random_seed: Optional[int] = None, **kwargs):
         shift_and_scale = None
+        if self.occlusion_transform is not None:  # occlusion before normalisation
+            e = self.occlusion_transform(e, random_seed=random_seed)
         if self.normalization_transform is not None:
             e, shift_and_scale = self.normalization_transform(e)
         return e, shift_and_scale
@@ -201,7 +208,7 @@ class Train6DOFTransform:
             return None
         self.transform = transforms.Compose(t)
 
-    def __call__(self, e, ignore_rot_and_trans=False):
+    def __call__(self, e, ignore_rot_and_trans=False, **kwargs):
         shift_and_scale = None
         aug_tf = torch.eye(4)
         if self.transform is not None:
@@ -220,14 +227,19 @@ class Train6DOFTransform:
 
 class Val6DOFTransform:
     def __init__(self, normalize_points=False, scale_factor=None,
-                 unit_sphere_norm=False, zero_mean=True):
+                 unit_sphere_norm=False, zero_mean=True,
+                 random_occlusion_angle: float = 0,):
         self.normalize_points = normalize_points
         self.scale_factor = None
         self.unit_sphere_norm = unit_sphere_norm
         self.zero_mean = zero_mean
+        self.random_occlusion_angle = random_occlusion_angle
         if scale_factor is not None:
             self.normalize_points = True
             self.scale_factor = scale_factor
+        self.occlusion_transform = None
+        if self.random_occlusion_angle > 0:
+            self.occlusion_transform = RandomOcclusion(p=1.0, theta_range=self.random_occlusion_angle)
         self.normalization_transform = None
         if self.normalize_points:
             self.normalization_transform = Normalize(scale_factor=self.scale_factor,
@@ -235,9 +247,11 @@ class Val6DOFTransform:
                                                      zero_mean=self.zero_mean,
                                                      return_shift_and_scale=True)
 
-    def __call__(self, e, ignore_rot_and_trans=False):
+    def __call__(self, e, ignore_rot_and_trans=False, random_seed: Optional[int] = None, **kwargs):
         shift_and_scale = None
         aug_tf = torch.eye(4)
+        if self.occlusion_transform is not None:  # occlusion before normalisation
+            e = self.occlusion_transform(e, random_seed=random_seed)
         if self.normalization_transform is not None:
             e, shift_and_scale = self.normalization_transform(e)
         return e, shift_and_scale, aug_tf
@@ -442,7 +456,11 @@ class RandomOcclusion:
             self.theta_max = float(theta_range)
         self.true_remove = true_remove
 
-    def __call__(self, coords: torch.Tensor):
+    def __call__(self, coords: torch.Tensor, random_seed: Optional[int] = None):
+        if random_seed is not None:
+            random_seed = int(random_seed)
+            random.seed(random_seed)
+            np.random.seed(random_seed)
         if self.theta_min is None:
             angle = self.theta_max
         else:
