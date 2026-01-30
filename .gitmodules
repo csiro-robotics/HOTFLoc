@@ -1,4 +1,4 @@
 [submodule "libs/geotransformer"]
 	path = libs/geotransformer
-	url = git@github.com:csiro-internal/geotransformer-metric-loc.git
-    branch = feature/hotformerloc-integration
+	url = git@github.com:qinzheng93/GeoTransformer.git
+    branch = main
