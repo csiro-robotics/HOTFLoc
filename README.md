@@ -1,4 +1,7 @@
-# HOTFormerLoc: Hierarchical Octree Transformer for Versatile Lidar Place Recognition Across Ground and Aerial Views
+# HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests
+
+## NOTE:
+THIS REPOSITORY IS A WIP, GETTING THE CAMERA-READY VERSION COMPLETED. CURRENTLY THE README CONTAINS INFO RELEVANT TO HOTFormerLoc.
 
 ### What's new ###
 * [2025-03-26] Training and evaluation code released. CS-Wild-Places dataset released.
@@ -44,23 +47,28 @@ pages     = {todo} -->
 ## Environment and Dependencies
 Code was tested using Python 3.11 with PyTorch 2.1.1 and CUDA 12.1 on a Linux system. We use conda to manage dependencies (although we recommend [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) for a much faster install).
 
-### Installation
+### Installation (current for HOTFLoc++)
+Firstly, ensure you have initialised submodules:
+```bash
+git submodule update --init --recursive
 ```
+
+```bash
 # Note: replace 'mamba' with 'conda' if using a vanilla conda install
-mamba create -n hotformerloc python=3.11 -c conda-forge
-mamba activate hotformerloc
-mamba install 'numpy<2.0' -c conda-forge
-mamba install pytorch==2.1.1 torchvision==0.16.1 pytorch-cuda=12.1 -c pytorch -c nvidia -c conda-forge
+mamba create -n hotfloc++ python=3.11 -c conda-forge -y
+mamba activate hotfloc++
+mamba install 'numpy<2.0' -c conda-forge -y
+mamba install pytorch==2.1.1 torchvision==0.16.1 pytorch-cuda=12.1 -c pytorch -c nvidia -c conda-forge -y
 pip install -r requirements.txt
-pip install libs/dwconv
+pip install --no-build-isolation libs/dwconv
 
 # For metric loc:
-pip install -e libs/geotransformer
+pip install --no-build-isolation -e libs/geotransformer/
 ```
 
 Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
 ```export PYTHONPATH
-export PYTHONPATH=$PYTHONPATH:<path/to/HOTFormerLoc>
+export PYTHONPATH=$PYTHONPATH:<path/to/HOTFLoc++>
 ```
 
 ## Datasets
