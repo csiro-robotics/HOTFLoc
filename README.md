@@ -143,9 +143,9 @@ python generate_train_test_tuples_6dof.py \
 Note that training and evaluation pickles are saved to the directory specified in `--root` by default. 
 
 ### MulRan
-We train on the MulRan dataset introduced in *CrossLoc3D: Aerial-Ground Cross-Source 3D Place Recognition* ([link](https://arxiv.org/pdf/2303.17778)).
+We train on the MulRan dataset introduced in *MulRan: Multimodal Range Dataset for Urban Place Recognition* ([link](https://ieeexplore.ieee.org/document/9197298)).
 
-Download the dataset [here](https://drive.google.com/file/d/1yxVicykRMg_HAfZG2EQUl1R3_wxpxStd/view?usp=sharing), and place or symlink the data in `data/MulRan`. Note we only use DCC 01/02, Sejong 01/02, and Riverside 01/02 in our experiments.
+Download the dataset [here](https://sites.google.com/view/mulran-pr/download), and place or symlink the data in `data/MulRan`. Note we only use DCC 01/02, Sejong 01/02, and Riverside 01/02 in our experiments.
 
 Run the below commands to create the MulRan training and evaluation pickles:
 
