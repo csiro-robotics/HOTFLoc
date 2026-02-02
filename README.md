@@ -64,6 +64,9 @@ pip install --no-build-isolation libs/dwconv
 
 # For metric loc:
 pip install --no-build-isolation -e libs/geotransformer/
+
+# NOTE: MinkowskiEngine can be optionally installed, but is only required for
+# evaluating Minkowski-based models (EgoNN, MinkLoc3Dv2).
 ```
 
 Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
