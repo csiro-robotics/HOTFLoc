@@ -172,31 +172,31 @@ We use a two-stage training protocol, where stage 1 initialises the place recogn
 cd training
 
 # CS-Wild-Places
-python train.py --config ../config/config_hotfloc++_cs-wild-places_stage1.txt --model_config ../models/hotfloc++_cs-wild-places_stage1_cfg.txt
+python train.py --config ../config/config_hotfloc++_cs-wild-places_stage1.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage1_cfg.txt
 
 # Wild-Places
-python train.py --config ../config/config_hotfloc++_wild-places_stage1.txt --model_config ../models/hotfloc++_wild-places_stage1_cfg.txt
+python train.py --config ../config/config_hotfloc++_wild-places_stage1.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage1_cfg.txt
 
 # MulRan
-python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_config ../models/hotfloc++_mulran_stage1_cfg.txt
+python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage1_cfg.txt
 
 # For the 4-stage version of HOTFLoc++:
-python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_config ../models/hotfloc++_4lvl_mulran_stage1_cfg.txt
+python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage1_cfg.txt
 ```
 
 To subsequently train stage 2, run:
 ```bash
 # CS-Wild-Places
-python train.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/hotfloc++_cs-wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
+python train.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
 # Wild-Places
-python train.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/hotfloc++_wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
+python train.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
 # MulRan
-python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/hotfloc++_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
+python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
 # For the 4-stage version of HOTFLoc++:
-python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/hotfloc++_4lvl_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
+python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 ```
 **Note** that for most models, we initialise stage 2 training with checkpoints from **epoch 60** of stage 1 training, but you can use the latest weights if desired. We also provide pre-trained weights for both stage 1 and stage 2, which can be downloaded in the following section.
 
@@ -215,24 +215,24 @@ Pre-trained weights for HOTFormerLoc and other experiments can be downloaded and
 | CrossLoc3D   | CS-Wild-Places  | [crossloc3d_cs-wild-places.pth](https://www.dropbox.com/scl/fi/5ikt1jvr2fabiaw8mhqbb/crossloc3d_cs-wild-places.pth?rlkey=lb4gp2n814im3twy4zy5d67bd&st=znup5ewi&dl=0)     |
 | LoGG3D-Net   | CS-Wild-Places  | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=n5ytpnzc&dl=0)       |
 
-## Evaluation (todo)
+## Evaluation
 
 To evaluate the pretrained models run the following commands:
 
 ```bash
 cd eval
 
-# To evaluate HOTFormerLoc trained on CS-Wild-Places
-python pnv_evaluate.py --config ../config/config_cs-wild-places.txt --model_config ../models/hotformerloc_cs-wild-places_cfg.txt --weights ../weights/hotformerloc_cs-wild-places.pth
+# CS-Wild-Places
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 30
 
-# To evaluate HOTFormerLoc trained on Wild-Places
-python pnv_evaluate.py --config ../config/config_wild-places.txt --model_config ../models/hotformerloc_wild-places_cfg.txt --weights ../weights/hotformerloc_wild-places.pth
+# Wild-Places
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 30
 
-# To evaluate HOTFormerLoc trained on CS-Campus3D
-python pnv_evaluate.py --config ../config/config_cs-campus3d.txt --model_config ../models/hotformerloc_cs-campus3d_cfg.txt --weights ../weights/hotformerloc_cs-campus3d.pth
+# MulRan
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 20
 
-# To evaluate HOTFormerLoc trained on Oxford RobotCar
-python pnv_evaluate.py --config ../config/config_oxford.txt --model_config ../models/hotformerloc_oxford_cfg.txt --weights ../weights/hotformerloc_oxford.pth
+# For the 4-stage version of HOTFLoc++:
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 20
 ```
 
 Below are the results for all evaluated models on CS-Wild-Places:
