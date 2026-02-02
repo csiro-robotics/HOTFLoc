@@ -104,13 +104,13 @@ if __name__ == '__main__':
 
     # Sequences is a list of (map sequence, query sequence)
     if args.sequence == 'Sejong':
-        sequences = [('Sejong_01', 'Sejong_02'), ('Sejong_01', 'Sejong_03')]
+        sequences = [('Sejong_01', 'Sejong_02')]
     elif args.sequence == 'DCC':
-        sequences = [('DCC_01', 'DCC_02'), ('DCC_01', 'DCC_03')]
+        sequences = [('DCC_01', 'DCC_02')]
         args.min_displacement = 10.0
         args.dist_threshold = 5
     elif args.sequence == 'KAIST':
-        sequences = [('KAIST_01', 'KAIST_02'), ('KAIST_01', 'KAIST_03')]
+        sequences = [('KAIST_01', 'KAIST_02')]
         args.min_displacement = 10.0
         args.dist_threshold = 5
     elif args.sequence == 'Riverside':
@@ -130,17 +130,6 @@ if __name__ == '__main__':
     for ii, (map_sequence, query_sequence) in enumerate(sequences):
         print(f'Map sequence: {map_sequence}')
         print(f'Query sequence: {query_sequence}')
-
-        # test_set = generate_evaluation_set(args.dataset_root, map_sequence, query_sequence,
-        #                                    min_displacement=args.min_displacement, dist_threshold=args.dist_threshold)
-
-        # pickle_name = f'test_{map_sequence}_{query_sequence}_{args.min_displacement}_{args.dist_threshold}.pickle'
-        # if args.save_dir is not None:
-        #     os.makedirs(args.save_dir, exist_ok=True)
-        #     file_path_name = os.path.join(args.save_dir, pickle_name)
-        # else:
-        #     file_path_name = os.path.join(args.dataset_root, pickle_name)
-        # test_set.save(file_path_name)
 
         # NOTE: Using the old eval set format for now, until the entire pipeline is upgraded (requires changing format for Oxford and CS-Campus3D, or keeping eval scripts separate)
         query_set_temp, map_set_temp = generate_evaluation_set(

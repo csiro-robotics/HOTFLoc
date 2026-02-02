@@ -8,13 +8,13 @@ def get_query_database_splits(params):
         eval_database_files = [
             'DCC_10.0_5_database.pickle',
             'Sejong_0.2_20_database.pickle',
-            'KAIST_10.0_5_database.pickle',
+            # 'KAIST_10.0_5_database.pickle',  # No longer using KAIST
             'Riverside_10.0_5_database.pickle',
         ]
         eval_query_files = [
             'DCC_10.0_5_query.pickle',
             'Sejong_0.2_20_query.pickle',
-            'KAIST_10.0_5_query.pickle',
+            # 'KAIST_10.0_5_query.pickle',  # No longer using KAIST
             'Riverside_10.0_5_query.pickle',
         ]
     elif params.dataset_name.lower() == 'southbay':  # NOTE: Eval won't run on Southbay if its the secondary train dataset
@@ -22,14 +22,12 @@ def get_query_database_splits(params):
         eval_query_files = ['SunnyvaleBigloop_1.0_5_query.pickle']
     elif 'AboveUnder' in params.dataset_name:
         eval_database_files = [
-            # 'above-under_Beetaloo_evaluation_database.pickle',
             'above-under_Karawatha_evaluation_database.pickle',
             'above-under_QCAT_evaluation_database.pickle', 
             'above-under_Samford_evaluation_database.pickle',
             'above-under_Robson_evaluation_database.pickle', 
         ]
         eval_query_files = [
-            # 'above-under_Beetaloo_evaluation_query.pickle',
             'above-under_Karawatha_evaluation_query.pickle',
             'above-under_QCAT_evaluation_query.pickle', 
             'above-under_Samford_evaluation_query.pickle',
