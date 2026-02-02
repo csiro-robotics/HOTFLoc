@@ -1,7 +1,0 @@
-# Gridsearch params
-lr: [0.0003, 0.001]
-octree_depth: [6, 7]
-model_params:
-    patch_size: [32, 48]
-    num_pyramid_levels: [2]
-    k_pooled_tokens: [16, 32, 128]
