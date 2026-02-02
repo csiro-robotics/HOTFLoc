@@ -1,12 +1,12 @@
 # HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests
 
 ## NOTE:
-THIS REPOSITORY IS A WIP, GETTING THE CAMERA-READY VERSION COMPLETED. CURRENTLY THE README CONTAINS INFO RELEVANT TO HOTFormerLoc.
+THIS REPOSITORY IS A WIP, GETTING THE CAMERA-READY VERSION COMPLETED. SOME INFORMATION STILL RELATES TO HOTFormerLoc.
 
 ### What's new ###
 * [2025-03-26] Training and evaluation code released. CS-Wild-Places dataset released.
 
-## Description
+## Description (todo)
 This is the official repository for the paper:
 
 **HOTFormerLoc: Hierarchical Octree Transformer for Versatile Lidar Place Recognition Across Ground and Aerial Views**, CVPR 2025 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*\
@@ -30,7 +30,7 @@ Our results demonstrate that HOTFormerLoc achieves a top-1 average recall improv
 <!-- ![Hero Figure](media/radar_plot.svg) -->
 <img src="media/radar_plot.svg" alt="Hero Figure" width="50%" height="auto" style="display: block; margin: auto;">
 
-### Citation
+### Citation (todo)
 If you find this work useful, please consider citing:
 ```
 @InProceedings{HOTFormerLoc,
@@ -47,7 +47,7 @@ pages     = {todo} -->
 ## Environment and Dependencies
 Code was tested using Python 3.11 with PyTorch 2.1.1 and CUDA 12.1 on a Linux system. We use conda to manage dependencies (although we recommend [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) for a much faster install).
 
-### Installation (current for HOTFLoc++)
+### Installation
 Firstly, ensure you have initialised submodules:
 ```bash
 git submodule update --init --recursive
@@ -108,7 +108,6 @@ python generate_test_sets.py \
 ```
 
 ### CS-Wild-Places
-#### TODO: ADD 0.40m SUBMAPS TO CSIRO DAP
 We train on our novel CS-Wild-Places dataset, introduced in further detail in our [paper](https://arxiv.org/abs/2503.08140). CS-Wild-Places is built upon the ground traversals introduced by Wild-Places, so it is required to download the Wild-Places dataset alongside our data following the instructions in the above section (generating train/test pickles for Wild-Places is not required for CS-Wild-Places, so this step can be skipped). Note that the full Wild-Places dataset must be downloaded as our post-processing utilises the full resolution submaps.
 
 Download our dataset from [CSIRO's data access portal](https://data.csiro.au/collection/csiro:64896), and place or symlink the data in `data/CS-Wild-Places` (this should point to the top-level directory, with the `data/` and `metadata/` subdirectories). Note that our experiments only require the post-processed submaps (folder `postproc_voxel_0.40m_rmground`), so you can ignore the raw submaps if space is an issue. Check the [README](./media/CS_Wild_Places_README.pdf) for further information and installation instructions for CS-Wild-Places.
@@ -165,17 +164,20 @@ python generate_evaluation_sets_combined_seqs.py --dataset_root '../../data/MulR
 To train **HOTFLoc++**, download the datasets and generate training pickles as described above for any dataset you wish to train on. 
 The configuration files for each dataset can be found in `config/`. 
 Set the `dataset_folder` parameter to the dataset root folder (only necessary if you have issues with the default relative path).
-If running out of GPU memory, decrease `batch_split_size` and `val_batch_size` parameter value. If running out of RAM, you may need to decrease the `batch_size` parameter or try reducing `num_workers` to 1, but note that a smaller batch size may slightly reduce performance. We use wandb for logging by default, but this can be disabled in the config.
+If running out of GPU memory, decrease `batch_split_size` and `val_batch_size` parameter value (and possibly `local_batch_size` for stage 2 training). If running out of RAM, you may need to decrease the `batch_size` parameter or try reducing `num_workers` to 1, but note that a smaller batch size may slightly reduce performance. We use wandb for logging by default, but this can be disabled in the config.
 
 We use a two-stage training protocol, where stage 1 initialises the place recognition backbone, and stage 2 fine-tunes the metric localisation and learnable re-ranking heads. To train stage 1, run:
 
 ```bash
 cd training
 
+# CS-Wild-Places
 python train.py --config ../config/config_hotfloc++_cs-wild-places_stage1.txt --model_config ../models/hotfloc++_cs-wild-places_stage1_cfg.txt
 
+# Wild-Places
 python train.py --config ../config/config_hotfloc++_wild-places_stage1.txt --model_config ../models/hotfloc++_wild-places_stage1_cfg.txt
 
+# MulRan
 python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_config ../models/hotfloc++_mulran_stage1_cfg.txt
 
 # For the 4-stage version of HOTFLoc++:
@@ -184,22 +186,23 @@ python train.py --config ../config/config_hotfloc++_mulran_stage1.txt --model_co
 
 To subsequently train stage 2, run:
 ```bash
-cd training
-
+# CS-Wild-Places
 python train.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/hotfloc++_cs-wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
+# Wild-Places
 python train.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/hotfloc++_wild-places_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
+# MulRan
 python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/hotfloc++_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 
 # For the 4-stage version of HOTFLoc++:
 python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/hotfloc++_4lvl_mulran_stage2_cfg.txt --finetune_from ../weights/<path-to-stage1-ckpt>
 ```
-Note that for most models, we initialise stage 2 training with checkpoints from epoch 60 of stage 1 training, but you can use the latest weights if desired. We also provide pre-trained weights for both stage 1 and stage 2, which can be downloaded in the following section.
+**Note** that for most models, we initialise stage 2 training with checkpoints from **epoch 60** of stage 1 training, but you can use the latest weights if desired. We also provide pre-trained weights for both stage 1 and stage 2, which can be downloaded in the following section.
 
 If training on a SLURM cluster, we provide the `submitit_train_job_single_node.py` script to automate training job submission, with support for automatic checkpointing and resubmission on job timeout. Make sure to set job parameters appropriately for your cluster.
 
-### Pre-trained Weights (TODO)
+### Pre-trained Weights (todo)
 
 Pre-trained weights for HOTFormerLoc and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below, or download and extract all from [this link](https://www.dropbox.com/scl/fi/qjyh966styqlye38a4c37/pretrained_weights.tar.gz?rlkey=qkuhupf3og7mfkfid8dts7xej&st=wx8q2v68&dl=0).
 | Model        | Dataset         | Weights Download                                                                                                                                                         |
@@ -212,7 +215,7 @@ Pre-trained weights for HOTFormerLoc and other experiments can be downloaded and
 | CrossLoc3D   | CS-Wild-Places  | [crossloc3d_cs-wild-places.pth](https://www.dropbox.com/scl/fi/5ikt1jvr2fabiaw8mhqbb/crossloc3d_cs-wild-places.pth?rlkey=lb4gp2n814im3twy4zy5d67bd&st=znup5ewi&dl=0)     |
 | LoGG3D-Net   | CS-Wild-Places  | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=n5ytpnzc&dl=0)       |
 
-## Evaluation (TODO)
+## Evaluation (todo)
 
 To evaluate the pretrained models run the following commands:
 
@@ -244,4 +247,4 @@ See the paper for full results and comparison with SOTA on all datasets.
 
 ## Acknowledgements
 
-Special thanks to the authors of [MinkLoc3Dv2](https://github.com/jac99/MinkLoc3Dv2) and [OctFormer](https://github.com/octree-nn/octformer) for their excellent code, which formed the foundation of this codebase. We would also like to thank the authors of [Wild-Places](https://csiro-robotics.github.io/Wild-Places/) for their fantastic dataset which serves as the base that CS-Wild-Places is built upon.
+Special thanks to the authors of [MinkLoc3Dv2](https://github.com/jac99/MinkLoc3Dv2), [OctFormer](https://github.com/octree-nn/octformer), and [SpectralGV](https://github.com/csiro-robotics/SpectralGV) for their excellent code, which formed the foundation of this codebase. We would also like to thank the authors of [Wild-Places](https://csiro-robotics.github.io/Wild-Places/) for their fantastic dataset which serves as the base that CS-Wild-Places is built upon.
