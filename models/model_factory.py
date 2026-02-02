@@ -2,7 +2,6 @@
 
 import torch.nn as nn
 
-from models.minkloc import MinkLoc
 from models.octformerloc import OctFormerLoc
 from models.octformer_backbone import OctFormer
 from models.hotformerloc import HOTFormerLoc
@@ -14,13 +13,9 @@ from models.relay_token_reranker import (
     RelayTokenGeometricConsistencyReranker,
     RelayTokenLocalGeometricConsistencyReranker,
 )
+from models.layers.pooling_wrapper import PoolingWrapper
 from geotransformer.modules.geotransformer import GeometricTransformer
 from misc.utils import TrainingParams
-from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
-from models.layers.eca_block import ECABasicBlock
-from models.minkfpn import MinkFPN
-from models.layers.pooling_wrapper import PoolingWrapper
-from models.egonn import create_egonn_model
 
 def get_in_channels(input_features: str) -> int:
     in_channels = 0
@@ -39,6 +34,9 @@ def model_factory(params: TrainingParams, legacy: bool = False):
     in_channels = 1
 
     if 'minkloc' in model_params.model.lower():
+        # Only import Minkowski deps if model is requested
+        from models.minkloc import MinkLoc
+        from models.minkfpn import MinkFPN
         block_module = create_resnet_block(model_params.block)
         backbone = MinkFPN(
             in_channels=in_channels,
@@ -63,6 +61,8 @@ def model_factory(params: TrainingParams, legacy: bool = False):
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'egonn' in model_params.model.lower():
+        # Only import Minkowski deps if model is requested
+        from models.egonn import create_egonn_model
         model = create_egonn_model(model_params, global_normalize=model_params.normalize_embeddings)
     elif any(model in model_params.model.lower() for model in ('hotformerloc', 'hotformermetricloc')):
         in_channels = get_in_channels(model_params.input_features)
@@ -259,6 +259,9 @@ def model_factory(params: TrainingParams, legacy: bool = False):
 
 
 def create_resnet_block(block_name: str) -> nn.Module:
+    # Only import Minkowski deps if model is requested
+    from MinkowskiEngine.modules.resnet_block import BasicBlock, Bottleneck
+    from models.layers.eca_block import ECABasicBlock
     if block_name == 'BasicBlock':
         block_module = BasicBlock
     elif block_name == 'Bottleneck':

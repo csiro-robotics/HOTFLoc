@@ -20,7 +20,7 @@ class ModelParams:
         params = config['MODEL']
 
         self.model_params_path = model_params_path
-        self.model = params.get('model')
+        self.model = params.get('model', '')
         self.output_dim = params.getint('output_dim', 256)      # Size of the final descriptor
 
         #######################################################################

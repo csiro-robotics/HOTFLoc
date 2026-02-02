@@ -36,7 +36,6 @@ from misc.utils import TrainingParams, load_pickle, save_pickle
 from models.model_factory import model_factory
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
 from models.hotformerloc_metric_loc_legacy import HOTFormerMetricLoc as HOTFormerMetricLocLegacy
-from models.egonn import MinkGL as EgoNN
 
 DISABLE_ICP = False
 EVAL_MODES = ['Initial', 'Re-Ranked']
@@ -284,7 +283,7 @@ def get_latent_vectors(
         global_embeddings = np.random.randn(len(data_set), params.model_params.output_dim)
         local_dict = {'local_embeddings': []}
         if not only_global:
-            if isinstance(model, EgoNN):
+            if 'egonn' in params.model_params.model.lower():
                 local_dict['keypoints'] = []
                 for _ in range(len(data_set)):
                     local_dict['local_embeddings'].append(torch.randn(128, 128))
@@ -715,7 +714,7 @@ def get_metrics(
     # NOTE: Could be faster if done in the PR loop, but requires additional implementation
     #       to pre-compute local point coords (or octrees). Usable for now.
     if reranking and params.model_params.rerank_mode is not None:
-        if isinstance(model, EgoNN):  # Don't need full dataloader for EgoNN
+        if 'egonn' in params.model_params.model.lower():  # Don't need full dataloader for EgoNN
             rerank_dataloader = range(len(global_result_dict['query_nn_list']))
         else:
             rerank_dataloader = make_eval_dataloader_reranking(  # Increased num workers to minimise bottleneck (assumes enough threads are available)
@@ -734,7 +733,7 @@ def get_metrics(
             query_position = np.array((query_metadata['northing'], query_metadata['easting']))
 
             # Separate forward pass for EgoNN+SGV
-            if isinstance(model, EgoNN):
+            if 'egonn' in params.model_params.model.lower():
                 assert params.model_params.rerank_mode == 'sgv'
                 query_keypoints = query_local_dict['keypoints'][query_idx][None, ...]
                 query_features = query_local_dict['local_embeddings'][query_idx][None, ...]
@@ -859,7 +858,7 @@ def get_metrics(
             metric_loc_pairs_list['Initial'].append((query_idx, nn_indices[0]))
             metric_loc_pairs_list['Re-Ranked'].append((query_idx, topk_rerank_indices[0]))
 
-    if isinstance(model, EgoNN):
+    if 'egonn' in params.model_params.model.lower():
         metric_loc_func = metric_loc_egonn
     else:
         metric_loc_func = metric_loc_hotformerloc

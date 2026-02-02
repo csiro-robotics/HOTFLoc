@@ -3,7 +3,7 @@ torchvision==0.16.1
 pytorch-metric-learning==1.1.2
 numpy
 pandas
-scipy
+scipy==1.11.4
 ocnn==2.2.7
 tqdm
 laspy[lazrs]
@@ -15,6 +15,7 @@ pyyaml
 matplotlib
 wandb
 open3d
+seaborn
 shapely
 cloth-simulation-filter
 numba==0.59.1

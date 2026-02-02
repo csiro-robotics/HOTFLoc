@@ -4,7 +4,10 @@ import torch
 import numpy as np
 from misc.utils import TrainingParams
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
-import MinkowskiEngine as ME
+from misc.optional_deps import lazy
+
+# Lazy-load MinkowskiEngine - will return real module or helpful stub
+ME = lazy("MinkowskiEngine", feature="sparse convolutions")
 
 def query_to_timestamp(query):
     base = os.path.basename(query)

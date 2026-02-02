@@ -22,7 +22,6 @@ from eval.vis_utils import (
 from eval.evaluate_metric_loc_splits_rerank import load_embeddings_from_file, save_embeddings_to_file, get_latent_vectors
 from eval.sgv.sgv_utils import sgv_parallel
 from eval.utils import get_query_database_splits
-from models.egonn import MinkGL as EgoNN
 from models.model_factory import model_factory
 from models.losses.geotransformer_loss import Evaluator
 from misc.torch_utils import set_seed, release_cuda, to_device, min_max_normalize
@@ -185,7 +184,7 @@ def get_eval_pairs_dataloader(
     # NOTE: Could be faster if done in the PR loop, but requires additional implementation
     #       to pre-compute local point coords (or octrees). Usable for now.
     if reranking and params.model_params.rerank_mode is not None:
-        if isinstance(model, EgoNN):  # Don't need full dataloader for EgoNN
+        if 'egonn' in params.model_params.model.lower():  # Don't need full dataloader for EgoNN
             rerank_dataloader = range(len(global_result_dict['query_nn_list']))
         else:
             rerank_dataloader = make_eval_dataloader_reranking(  # Increased num workers to minimise bottleneck (assumes enough threads are available)
@@ -202,7 +201,7 @@ def get_eval_pairs_dataloader(
 
             # Separate forward pass for EgoNN+SGV
             eigvec_list = None
-            if isinstance(model, EgoNN):
+            if 'egonn' in params.model_params.model.lower():
                 assert params.model_params.rerank_mode == 'sgv'
                 query_keypoints = query_local_dict['keypoints'][query_idx][None, ...]
                 candidate_keypoints = torch.stack(

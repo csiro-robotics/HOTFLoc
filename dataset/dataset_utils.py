@@ -8,7 +8,6 @@ from itertools import repeat
 import numpy as np
 import torch
 import ocnn
-import MinkowskiEngine as ME
 from torch.utils.data import Dataset, DataLoader
 from sklearn.neighbors import KDTree
 from ocnn.octree import Octree, Points
@@ -31,6 +30,10 @@ from dataset.augmentation import (
 )
 from dataset.samplers import BatchSampler, BatchSampler6DOF
 from misc.utils import TrainingParams
+from misc.optional_deps import lazy
+
+# Lazy-load MinkowskiEngine - will return real module or helpful stub
+ME = lazy("MinkowskiEngine", feature="sparse convolutions")
 
 
 def make_datasets(params: TrainingParams, local=False, validation=True) -> Dict[str, Dataset]:

@@ -6,15 +6,19 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import ocnn
-import MinkowskiEngine as ME
 from ocnn.octree import Octree
 from models.octree import OctreeT, pad_sequence
+from misc.optional_deps import lazy
 
 from models.layers.netvlad import NetVLADLoupe, GatingContext
 from models.layers.pyramid_netvlad import PyramidNetVLAD
 from models.layers.salsa import AdaptivePooling, Mixer
 from models.layers.octformer_layers import MLP
 from models.relay_token_utils import concat_and_pad_rt
+
+# Lazy-load MinkowskiEngine - will return real module or helpful stub
+ME = lazy("MinkowskiEngine", feature="sparse convolutions")
+
 
 class MAC(nn.Module):
     def __init__(self, input_dim):
@@ -24,7 +28,7 @@ class MAC(nn.Module):
         self.output_dim = self.input_dim
         self.f = ME.MinkowskiGlobalMaxPooling()
 
-    def forward(self, x: ME.SparseTensor):
+    def forward(self, x):
         x = self.f(x)
         return x.F      # Return (batch_size, n_features) tensor
 
@@ -37,7 +41,7 @@ class SPoC(nn.Module):
         self.output_dim = self.input_dim
         self.f = ME.MinkowskiGlobalAvgPooling()
 
-    def forward(self, x: ME.SparseTensor):
+    def forward(self, x):
         x = self.f(x)
         return x.F      # Return (batch_size, n_features) tensor
 
@@ -52,7 +56,7 @@ class GeM(nn.Module):
         self.eps = eps
         self.f = ME.MinkowskiGlobalAvgPooling()
 
-    def forward(self, x: ME.SparseTensor):
+    def forward(self, x):
         # This implicitly applies ReLU on x (clamps negative values)
         #temp = ME.SparseTensor(x.F.clamp(min=self.eps).pow(self.p), coordinates=x.C)
         temp = ME.SparseTensor(x.F.clamp(min=self.eps).pow(self.p),
@@ -109,7 +113,7 @@ class NetVLADWrapper(nn.Module):
         self.net_vlad = NetVLADLoupe(feature_size=feature_size, cluster_size=64, output_dim=output_dim, gating=gating,
                                      add_batch_norm=True)
 
-    def forward(self, x: ME.SparseTensor):
+    def forward(self, x):
         # x is (batch_size, C, H, W)
         assert x.F.shape[1] == self.feature_size
         features = x.decomposed_features
@@ -387,7 +391,7 @@ class AttnPoolWrapper(nn.Module):
         else:
             raise NotImplementedError(f'No valid aggregator: {aggregator}')
 
-    def forward(self, tokens: Union[ME.SparseTensor, Dict[int, Tensor]],
+    def forward(self, tokens: Union[Dict[int, Tensor]],
                 octree: Optional[OctreeT] = None, depth: Optional[int] = None):
         padded_tokens, attn_mask = None, None
         if octree is not None:
@@ -416,7 +420,7 @@ class AttnPoolWrapper(nn.Module):
         attn_mask = attn_mask.repeat(1, self.k_pooled_tokens, 1)
         return attn_mask
 
-    def calc_mink_attn_mask(self, local_features: ME.SparseTensor,
+    def calc_mink_attn_mask(self, local_features,
                             invalid_mask_value=-1e3):
         """
         Computes attention mask for tokens contained in Minkowski Sparse Tensor.

@@ -2,8 +2,10 @@ import numpy as np
 from typing import List
 from abc import ABC, abstractmethod
 import torch
-import MinkowskiEngine as ME
+from misc.optional_deps import lazy
 
+# Lazy-load MinkowskiEngine - will return real module or helpful stub
+ME = lazy("MinkowskiEngine", feature="sparse convolutions")
 
 class Quantizer(ABC):
     @abstractmethod

@@ -16,12 +16,9 @@ import typing as tp
 import wandb
 import submitit
 import matplotlib.pyplot as plt
-import seaborn as sns
 from ocnn.octree import Points
 from timm.utils import ModelEmaV3
 from timm.optim.lamb import Lamb
-import wandb_osh
-from wandb_osh.hooks import TriggerWandbSyncHook
 
 from misc.utils import TrainingParams, get_datetime, update_params_from_dict
 from misc.torch_utils import release_cuda, set_seed, to_device
@@ -31,7 +28,6 @@ from models.losses.loss_utils import metrics_mean
 from models.model_factory import model_factory
 from models.hotformerloc import HOTFormerLoc
 from models.hotformerloc_metric_loc import HOTFormerMetricLoc
-from models.egonn import MinkGL as EgoNN
 from models.octree import OctreeT, get_octant_centroids_from_points
 from dataset.dataset_utils import make_dataloaders
 from eval.evaluate_metric_loc_splits_rerank import evaluate, print_eval_stats, write_eval_stats
@@ -40,8 +36,6 @@ from eval.vis_utils import remove_rt_attn_padding, rowwise_cosine_sim, off_diago
         create_heatmap
 
 os.environ["WANDB__SERVICE_WAIT"] = "300"  # prevent crash if wandb is slow
-WANDB_OFFLINE = True  # Use wandb in offline mode with sync hooks running on login node
-wandb_osh.set_log_level("ERROR")
 
 class NetworkTrainer:
     """
@@ -203,8 +197,6 @@ class NetworkTrainer:
         out. Dumps the current model state to disk and returns a
         DelayedSubmission to resubmit the job.
         """
-        if WANDB_OFFLINE:
-            self.trigger_sync()
         checkpoint_path = self.model_pathname + self.checkpoint_extension
         print(f'Training interupted at epoch {self.curr_epoch}. '
               f'Saving ckpt to {checkpoint_path} and resubmitting.')
@@ -1152,8 +1144,6 @@ class NetworkTrainer:
         n_params = sum([param.nelement() for param in self.model.parameters()])
         params_dict['num_params'] = n_params
         if self.params.wandb and not self.params.debug:
-            if WANDB_OFFLINE:
-                self.trigger_sync = TriggerWandbSyncHook()  # callback to sync offline wandb dirs
             wandb.init(project='HOTFormerLoc', config=params_dict, id=self.wandb_id, resume="allow")
             self.wandb_id = wandb.run.id
             if self.params.log_grads:
@@ -1241,7 +1231,7 @@ class NetworkTrainer:
                         epoch_embeddings = temp_global_embeddings
 
                 # Log average gradients per stage
-                if 'train' in phase and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc, EgoNN)):
+                if 'train' in phase and not isinstance(self.model, (HOTFormerLoc, HOTFormerMetricLoc)):
                     # FIXME: currently broken for HOTFormerLoc
                     epoch_stage_gradient_magnitudes = self.log_stage_gradient_magnitudes(self.params.load_octree)
 
@@ -1324,8 +1314,6 @@ class NetworkTrainer:
 
             if self.params.wandb and not self.params.debug:
                 wandb.log(metrics)
-                if WANDB_OFFLINE:
-                    self.trigger_sync()
 
         # Save final model weights
         if not self.params.debug:
@@ -1369,9 +1357,6 @@ class NetworkTrainer:
                 reranking=reranking,
                 rerank_mode=self.params.model_params.rerank_mode,
             )
-
-            if self.params.wandb and WANDB_OFFLINE:
-                self.trigger_sync()
 
         # Return optimization value (to minimize)
         return (1 - self.best_avg_AR_1/100.0)

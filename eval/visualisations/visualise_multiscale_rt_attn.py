@@ -11,7 +11,6 @@ import argparse
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-import MinkowskiEngine as ME
 import random
 from tqdm import tqdm
 import ocnn

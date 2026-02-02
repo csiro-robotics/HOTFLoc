@@ -8,7 +8,6 @@ import pickle
 import os
 import argparse
 import torch
-import MinkowskiEngine as ME
 import random
 from tqdm import tqdm
 import ocnn
@@ -21,12 +20,15 @@ import matplotlib.colors as cm
 from models.model_factory import model_factory
 from misc.utils import TrainingParams
 from misc.torch_utils import set_seed
+from misc.optional_deps import lazy
 from dataset.pointnetvlad.pnv_raw import PNVPointCloudLoader
 from dataset.AboveUnder.AboveUnder_raw import AboveUnderPointCloudLoader
 from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CylindricalCoordinates
 from eval.utils import get_query_database_splits
 
+# Lazy-load MinkowskiEngine - will return real module or helpful stub
+ME = lazy("MinkowskiEngine", feature="sparse convolutions")
 
 def query_distance(query, query_list: list[dict]) -> float:
     """

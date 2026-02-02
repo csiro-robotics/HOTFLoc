@@ -2,7 +2,6 @@ from typing import Union, Dict, Optional, List
 
 from torch import Tensor
 import torch.nn as nn
-import MinkowskiEngine as ME
 
 from models.layers.pooling import (
     MAC, SPoC, GeM, OctGeM, NetVLADWrapper, AttnPoolWrapper,
@@ -92,7 +91,8 @@ class PoolingWrapper(nn.Module):
         else:
             raise NotImplementedError('Unknown pooling method: {}'.format(pool_method))
 
-    def forward(self, x: Union[ME.SparseTensor, Tensor, Dict], octree=None, depth=None):
+    # def forward(self, x: Union[ME.SparseTensor, Tensor, Dict], octree=None, depth=None):
+    def forward(self, x: Union[Tensor, Dict], octree=None, depth=None):
         if octree is None:
             return self.pooling(x)
         else:
