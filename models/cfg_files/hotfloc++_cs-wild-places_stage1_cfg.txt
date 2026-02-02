@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerLoc-ch192-pyrmd-2lvls
+model = HOTFormerLoc-ch192-pyrmd-3lvls
 channels = 96,192,96
 num_blocks = 4,10
 num_heads = 6,12,6

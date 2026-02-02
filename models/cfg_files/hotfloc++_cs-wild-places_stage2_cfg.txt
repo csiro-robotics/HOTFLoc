@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-cart-ch192-pyrmd-2lvls-featemb128-rad1.6-3stage-metloc-RR-gc5.0-5.0-5.0-noOT
+model = HOTFormerMetricLoc-cart-ch192-pyrmd-3lvls-featemb128-rad1.6-3stage-metloc-RR-gc5.0-5.0-5.0-noOT
 channels = 96,192,96
 num_blocks = 4,10
 num_heads = 6,12,6

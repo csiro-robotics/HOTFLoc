@@ -1,5 +1,5 @@
 [MODEL]
-model = HOTFormerMetricLoc-cart-ch256-3lvls-up4fine-featemb128-rad0.6-3stg-mloc-RR-gc5.0-2.0-0.4-noOT
+model = HOTFormerMetricLoc-cart-ch256-4lvls-up4fine-featemb128-rad0.6-3stg-mloc-RR-gc5.0-2.0-0.4-noOT
 channels = 128,256
 num_blocks = 4,10
 num_heads = 8,16
