@@ -74,6 +74,23 @@ Modify the `PYTHONPATH` environment variable to include the absolute path to the
 export PYTHONPATH=$PYTHONPATH:<path/to/HOTFLoc++>
 ```
 
+### Troubleshooting
+If you ever experience the following error:
+```
+File "<path>/HOTFLoc++/libs/geotransformer/geotransformer/utils/pointcloud.py", line 18, in get_nearest_neighbor
+    distances, indices = s_tree.query(q_points, k=1, n_jobs=-1)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "_ckdtree.pyx", line 786, in scipy.spatial._ckdtree.cKDTree.query
+  File "_ckdtree.pyx", line 388, in scipy.spatial._ckdtree.get_num_workers
+TypeError: Unexpected keyword argument {'n_jobs': -1}
+```
+This is caused from calls by Geotransformer to a deprecated argument in Scipy.
+
+You will need to edit line 18 of `libs/geotransformer/geotransformer/utils/pointcloud.py` to the following:
+```
+    distances, indices = s_tree.query(q_points, k=1, workers=-1)
+```
+
 ## Datasets
 
 ### Wild-Places
