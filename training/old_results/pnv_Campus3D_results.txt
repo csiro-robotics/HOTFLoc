@@ -1,5 +1,0 @@
-minkloc3dv2.txt, config_Campus3D.txt, MinkLoc_Campus3D_20240116_1359_final
-[umd]
-AR@1%: 85.55, AR@1: 63.93
-
-Mean AR@1%: 85.55, Mean AR@1: 63.93
