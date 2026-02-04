@@ -86,7 +86,11 @@ TypeError: Unexpected keyword argument {'n_jobs': -1}
 ```
 This is caused from calls by Geotransformer to a deprecated argument in Scipy.
 
-You will need to edit line 18 of `libs/geotransformer/geotransformer/utils/pointcloud.py` to the following:
+You will need to edit line 18 of `libs/geotransformer/geotransformer/utils/pointcloud.py` from this:
+```
+    distances, indices = s_tree.query(q_points, k=1, n_jobs=-1)
+```
+to the following:
 ```
     distances, indices = s_tree.query(q_points, k=1, workers=-1)
 ```
