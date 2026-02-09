@@ -181,7 +181,7 @@ python generate_evaluation_sets_combined_seqs.py --dataset_root '../../data/MulR
 To train **HOTFLoc++**, download the datasets and generate training pickles as described above for any dataset you wish to train on. 
 The configuration files for each dataset can be found in `config/`. 
 Set the `dataset_folder` parameter to the dataset root folder (only necessary if you have issues with the default relative path).
-If running out of GPU memory, decrease `batch_split_size` and `val_batch_size` parameter value (and possibly `local_batch_size` for stage 2 training). If running out of RAM, you may need to decrease the `batch_size` parameter or try reducing `num_workers` to 1, but note that a smaller batch size may slightly reduce performance. We use wandb for logging by default, but this can be disabled in the config.
+If running out of GPU memory, decrease `batch_split_size` and `val_batch_size` parameter value (and possibly `local_batch_size` for stage 2 training). If running out of RAM or shared memory (shm), you may need to decrease the `batch_size` parameter or try reducing `num_workers` to 1, but note that a smaller batch size may slightly reduce performance. We use wandb for logging by default, but this can be disabled in the config.
 
 We use a two-stage training protocol, where stage 1 initialises the place recognition backbone, and stage 2 fine-tunes the metric localisation and learnable re-ranking heads. To train stage 1, run:
 
