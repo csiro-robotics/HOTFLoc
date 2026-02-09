@@ -232,16 +232,16 @@ To evaluate the pretrained models run the following commands:
 ```bash
 cd eval
 # CS-Wild-Places
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 30
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
 # Wild-Places
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 30
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
 # MulRan
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 20
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
 # For the 4-stage version of HOTFLoc++:
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt> --local_max_eval_threshold 20
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
 ```
 
-Below are the results for all evaluated models on CS-Wild-Places:
+**TODO**: Below are the results for all evaluated models on CS-Wild-Places:
 
 ![CS-Wild-Places_baseline](media/dataset_cswp_baseline.png)
 *Comparison of SOTA on CS-Wild-Places Baseline evaluation set.*
