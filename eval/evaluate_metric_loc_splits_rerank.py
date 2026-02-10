@@ -1378,30 +1378,44 @@ def load_cached_embeddings(global_tmp_fp, local_tmp_fp):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate PR and metric localisation with SGV reranking')
-    parser.add_argument('--config', type=str, required=True, help='Path to configuration file')
-    parser.add_argument('--model_config', type=str, required=True, help='Path to the model-specific configuration file')
-    parser.add_argument('--radius', type=float, nargs='+', default=[5., 20.], help='True Positive thresholds in meters')
-    parser.add_argument('--icp_refine', action='store_true', help='Refine estimated pose with ICP (unlike EgoNN, which refines GT pose [we handle this in dataloader])')
-    parser.add_argument('--local_max_eval_threshold', type=float, default=np.inf,
-                        help=('Maximum nn threshold to continue with local eval step '
-                              'metric localisation not computed if distance to nearest retrieval is > thresh'))
-    parser.add_argument('--num_neighbors', type=int, default=20, help='Number of nearest neighbours to consider in evaluation and re-ranking')
-    parser.add_argument('--weights', type=str, required=False, help='Trained model weights')
+    parser.add_argument('--config', type=str, required=True,
+                        help='Path to configuration file')
+    parser.add_argument('--model_config', type=str, required=True,
+                        help='Path to the model-specific configuration file')
+    parser.add_argument('--radius', type=float, nargs='+', default=None,
+                        help='True Positive thresholds in meters (overrides config if set)')
+    parser.add_argument('--local_max_eval_threshold', type=float, default=None,
+                        help=('Maximum nn threshold to continue with local eval step metric localisation '
+                              'not computed if distance to nearest retrieval is > thresh (overrides config if set)'))
+    parser.add_argument('--icp_refine', action='store_true',
+                        help='Refine estimated pose with ICP (unlike EgoNN, which refines GT pose [we handle this in dataloader])')
+    parser.add_argument('--num_neighbors', type=int, default=20,
+                        help='Number of nearest neighbours to consider in evaluation and re-ranking')
+    parser.add_argument('--weights', type=str, required=False,
+                        help='Trained model weights')
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--visualize', action='store_true')
-    parser.add_argument('--log', action='store_true', help='Log false positives and top-5 retrievals')
-    parser.add_argument('--only_global', action='store_true', help='Only run global (PR) evaluation')
-    parser.add_argument('--use_ransac', action='store_true', help='Compare LGR with RANSAC in metric loc evaluation')
+    parser.add_argument('--log', action='store_true',
+                        help='Log false positives and top-5 retrievals')
+    parser.add_argument('--only_global', action='store_true',
+                        help='Only run global (PR) evaluation')
+    parser.add_argument('--use_ransac', action='store_true',
+                        help='Compare LGR with RANSAC in metric loc evaluation')
     parser.add_argument('--use_sgv', action='store_true', help='Use SGV for re-ranking')
-    parser.add_argument('--sgv_d_thresh', type=float, default=0.4, help='Distance threshold used in SGV re-ranking')
-    parser.add_argument('--save_embeddings', action='store_true', help='Save embeddings to disk')
+    parser.add_argument('--sgv_d_thresh', type=float, default=0.4,
+                        help='Distance threshold used in SGV re-ranking')
+    parser.add_argument('--save_embeddings', action='store_true',
+                        help='Save embeddings to disk')
     parser.add_argument('--load_embeddings', action='store_true',
                         help=('Load embeddings from disk. Note this script will only check if '
                               'weights paths match, not if the configs used match.'))
-    parser.add_argument('--print_false_positives', action='store_true', help='Print list of query and false positive retrieval indices')
-    parser.add_argument('--unfair_rte_rre', action='store_true', help='Use unfair RTE and RRE evaluation from EgoNN (only computed on metric localisation successes)')
-    parser.add_argument('--disable_reranking', action='store_true', help='Disable re-ranking evaluation to save time')
+    parser.add_argument('--print_false_positives', action='store_true',
+                        help='Print list of query and false positive retrieval indices')
+    parser.add_argument('--unfair_rte_rre', action='store_true',
+                        help='Use unfair RTE and RRE evaluation from EgoNN (only computed on metric localisation successes)')
+    parser.add_argument('--disable_reranking', action='store_true',
+                        help='Disable re-ranking evaluation to save time')
     args = parser.parse_args()
     print('Config path: {}'.format(args.config))
     print('Model config path: {}'.format(args.model_config))
@@ -1438,6 +1452,10 @@ if __name__ == "__main__":
     params = TrainingParams(
         args.config, args.model_config, debug=args.debug, verbose=args.verbose
     )
+    if args.radius is not None:
+        params.eval_radius = args.radius
+    if args.local_max_eval_threshold is not None:
+        params.local.max_eval_threshold = args.local_max_eval_threshold
     params.print()
 
     if torch.cuda.is_available():
@@ -1501,9 +1519,9 @@ if __name__ == "__main__":
         params,
         args.log,
         model_name,
-        radius=args.radius,
+        radius=params.eval_radius,
         icp_refine=args.icp_refine,
-        local_max_eval_threshold=args.local_max_eval_threshold,
+        local_max_eval_threshold=params.local.max_eval_threshold,
         num_neighbors=args.num_neighbors,
         show_progress=True,
         only_global=args.only_global,
