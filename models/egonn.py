@@ -21,7 +21,7 @@ def create_egonn_model(model_params: ModelParams):
     global_normalize = False
     local_normalize = True
 
-    if model_name == 'egonn':
+    if 'egonn' in model_name.lower():
         # THIS IS OUR BEST MODEL
         block = ECABasicBlock
         planes = [32, 64, 64, 128, 128, 128, 128]

@@ -737,27 +737,47 @@ def get_metrics(
             if isinstance(model, EgoNN):
                 assert params.model_params.rerank_mode == 'sgv'
                 query_keypoints = query_local_dict['keypoints'][query_idx][None, ...]
-                candidate_keypoints = torch.stack(
-                    [database_local_dict['keypoints'][nn_idx] for nn_idx in nn_indices],
-                    dim=0,
-                )
                 query_features = query_local_dict['local_embeddings'][query_idx][None, ...]
-                candidate_features = torch.stack(
-                    [database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices],
-                    dim=0,
-                )
-                query_keypoints, candidate_keypoints, query_features, candidate_features = to_device(
-                    (query_keypoints, candidate_keypoints, query_features, candidate_features),
-                    device=device,
-                )
-                tic_rr = time.perf_counter()
-                rerank_scores = torch.tensor(sgv_parallel(
-                    src_keypts=query_keypoints,
-                    tgt_keypts=candidate_keypoints,
-                    src_features=query_features,
-                    tgt_features=candidate_features,
-                    d_thresh=params.sgv_d_thresh,
-                ))
+                # If not all candidates have 128 keypoints, process sgv individually
+                try:
+                    candidate_keypoints = torch.stack(
+                        [database_local_dict['keypoints'][nn_idx] for nn_idx in nn_indices],
+                        dim=0,
+                    )
+                    candidate_features = torch.stack(
+                        [database_local_dict['local_embeddings'][nn_idx] for nn_idx in nn_indices],
+                        dim=0,
+                    )
+                    query_keypoints, candidate_keypoints, query_features, candidate_features = to_device(
+                        (query_keypoints, candidate_keypoints, query_features, candidate_features),
+                        device=device,
+                    )
+                    tic_rr = time.perf_counter()
+                    rerank_scores = torch.tensor(sgv_parallel(
+                        src_keypts=query_keypoints,
+                        tgt_keypts=candidate_keypoints,
+                        src_features=query_features,
+                        tgt_features=candidate_features,
+                        d_thresh=params.sgv_d_thresh,
+                    ))
+                except RuntimeError:  # Try without parallelisation
+                    tic_rr = time.perf_counter()
+                    rerank_scores = np.zeros(len(nn_indices))
+                    for ii, nn_idx in enumerate(nn_indices):
+                        candidate_keypoints = database_local_dict['keypoints'][nn_idx][None, ...]
+                        candidate_features = database_local_dict['local_embeddings'][nn_idx][None, ...]
+                        query_keypoints, candidate_keypoints, query_features, candidate_features = to_device(
+                            (query_keypoints, candidate_keypoints, query_features, candidate_features),
+                            device=device,
+                        )
+                        rerank_scores[ii] = sgv_parallel(
+                            src_keypts=query_keypoints,
+                            tgt_keypts=candidate_keypoints,
+                            src_features=query_features,
+                            tgt_features=candidate_features,
+                            d_thresh=params.sgv_d_thresh,
+                        )
+                    rerank_scores = torch.as_tensor(rerank_scores)
             # HOTFormerLoc-based re-ranking
             else:
                 # Move to GPU and do forward pass
