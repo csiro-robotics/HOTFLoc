@@ -63,7 +63,7 @@ def model_factory(params: TrainingParams, legacy: bool = False):
             return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
         )
     elif 'egonn' in model_params.model.lower():
-        model = create_egonn_model(model_params)
+        model = create_egonn_model(model_params, global_normalize=model_params.normalize_embeddings)
     elif any(model in model_params.model.lower() for model in ('hotformerloc', 'hotformermetricloc')):
         in_channels = get_in_channels(model_params.input_features)
         backbone = HOTFormer(

@@ -15,11 +15,8 @@ from models.layers.eca_block import ECABasicBlock
 from misc.utils import ModelParams
 
 
-def create_egonn_model(model_params: ModelParams):
+def create_egonn_model(model_params: ModelParams, global_normalize: bool = False, local_normalize: bool = True):
     model_name = model_params.model
-
-    global_normalize = False
-    local_normalize = True
 
     if 'egonn' in model_name.lower():
         # THIS IS OUR BEST MODEL
