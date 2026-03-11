@@ -1,4 +1,0 @@
-[submodule "libs/geotransformer"]
-	path = libs/geotransformer
-	url = git@github.com:qinzheng93/GeoTransformer.git
-    branch = main
