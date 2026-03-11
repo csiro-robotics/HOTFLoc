@@ -48,11 +48,6 @@ pages     = {todo} -->
 Code was tested using Python 3.11 with PyTorch 2.1.1 and CUDA 12.1 on a Linux system. We use conda to manage dependencies (although we recommend [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) for a much faster install).
 
 ### Installation
-Firstly, ensure you have initialised submodules:
-```bash
-git submodule update --init --recursive
-```
-
 ```bash
 # Note: replace 'mamba' with 'conda' if using a vanilla conda install
 mamba create -n hotfloc++ python=3.11 -c conda-forge -y
@@ -72,27 +67,6 @@ pip install --no-build-isolation -e libs/geotransformer/
 Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
 ```bash
 export PYTHONPATH=$PYTHONPATH:<path/to/HOTFLoc++>
-```
-
-### Troubleshooting
-If you ever experience the following error:
-```
-File "<path>/HOTFLoc++/libs/geotransformer/geotransformer/utils/pointcloud.py", line 18, in get_nearest_neighbor
-    distances, indices = s_tree.query(q_points, k=1, n_jobs=-1)
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "_ckdtree.pyx", line 786, in scipy.spatial._ckdtree.cKDTree.query
-  File "_ckdtree.pyx", line 388, in scipy.spatial._ckdtree.get_num_workers
-TypeError: Unexpected keyword argument {'n_jobs': -1}
-```
-This is caused from calls by Geotransformer to a deprecated argument in Scipy.
-
-You will need to edit line 18 of `libs/geotransformer/geotransformer/utils/pointcloud.py` from this:
-```
-    distances, indices = s_tree.query(q_points, k=1, n_jobs=-1)
-```
-to the following:
-```
-    distances, indices = s_tree.query(q_points, k=1, workers=-1)
 ```
 
 ## Datasets
