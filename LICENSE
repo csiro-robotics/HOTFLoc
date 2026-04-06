@@ -1,7 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Copyright (c) 2025, The Software is copyright (c) Commonwealth Scientific and Industrial Research Organisation (CSIRO) ABN 41 687 119 230.
-All rights reserved. CSIRO is willing to grant you a licence to this software (HOTFormerLoc) on the following terms, except where otherwise indicated for third party material.
+Copyright (c) 2026, The Software is copyright (c) Commonwealth Scientific and Industrial Research Organisation (CSIRO) ABN 41 687 119 230.
+All rights reserved. CSIRO is willing to grant you a licence to this software (HOTFLoc++) on the following terms, except where otherwise indicated for third party material.
 
 CSIRO hereby grants you a non-exclusive, non-transferable, free of charge right to copy, modify, merge, publish, distribute, 
 and sublicense the Software for the sole purpose of performing non-commercial scientific research, non-commercial education,
@@ -34,7 +34,8 @@ you have the necessary rights to such third party material.
 Third Party Components
 The following third party components are distributed with the Software.  You agree to comply with the licence terms for these components as part of accessing the Software.  Other third party software may also be identified in separate files distributed with the Software.
 ___________________________________________________________________
-PyTorch  https://pytorch.org/
+PyTorch https://pytorch.org/
+
 This software is licensed under a BSD-style license.
 ___________________________________________________________________
 ___________________________________________________________________
@@ -60,7 +61,7 @@ ___________________________________________________________________
 ___________________________________________________________________
 Tqdm https://tqdm.github.io/
 
-This software is licensed under the MIT licence license.
+This software is licensed under the MIT license.
 ___________________________________________________________________
 ___________________________________________________________________
 Matplotlib https://matplotlib.org/
@@ -73,24 +74,50 @@ Scikit-Learn https://github.com/scikit-learn/scikit-learn/
 This software license is based on the BSD-style license.
 ___________________________________________________________________
 ___________________________________________________________________
+Wandb https://github.com/wandb/wandb/
+
+This software is licensed under the MIT license.
+___________________________________________________________________
+___________________________________________________________________
+Pytorch-Metric-Learning https://github.com/KevinMusgrave/pytorch-metric-learning/
+
+This software is licensed under the MIT license.
+___________________________________________________________________
+___________________________________________________________________
+Numpy https://github.com/numpy/numpy/
+
+This software license is based on the BSD-style license.
+___________________________________________________________________
+___________________________________________________________________
+UMAP https://github.com/lmcinnes/umap/
+
+This software is licensed under a BSD-3-Clause license.
+___________________________________________________________________
+___________________________________________________________________
+GeoTransformer https://github.com/qinzheng93/GeoTransformer
+
+This software is licensed under the MIT license.
+___________________________________________________________________
+___________________________________________________________________
+MinkowskiEngine https://nvidia.github.io/MinkowskiEngine/
+
+This software is licensed under the MIT license.
+___________________________________________________________________
+___________________________________________________________________
 MinkLoc3Dv2 https://github.com/jac99/MinkLoc3Dv2/
 
-This software license is based on the MIT license.
+This software is licensed under the MIT license.
 ___________________________________________________________________
 ___________________________________________________________________
-Wandb https://github.com/wandb/
+EgoNN https://github.com/jac99/Egonn
 
-This software license is based on the MIT license.
+This software is licensed under the MIT license.
 ___________________________________________________________________
 ___________________________________________________________________
-Pytorch-Metric-Learning  https://github.com/KevinMusgrave/pytorch-metric-learning/
+SpectralGV https://github.com/csiro-robotics/SpectralGV 
 
-This software license is based on the MIT license.
+This software is licensed under the CSIRO Open Source Software License.
 ___________________________________________________________________
 ___________________________________________________________________
-Numpy  https://github.com/numpy/numpy/
 
-This software license is based on the MIT license.
-___________________________________________________________________
-  
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
