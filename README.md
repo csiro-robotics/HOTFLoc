@@ -1,44 +1,59 @@
 # HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests
 
-## NOTE:
-THIS REPOSITORY IS A WIP, GETTING THE CAMERA-READY VERSION COMPLETED. SOME INFORMATION STILL RELATES TO HOTFormerLoc.
-
 ### What's new ###
-* [2025-03-26] Training and evaluation code released. CS-Wild-Places dataset released.
+* [2026-04-06] Training and evaluation code for HOTFLoc++ released, with added support for re-ranking and 6-DoF metric localisation.
+* [2025-03-26] Training and evaluation code for [HOTFormerLoc](https://github.com/csiro-robotics/HOTFormerLoc) released. [CS-Wild-Places](https://data.csiro.au/collection/csiro:64896) dataset released.
 
-## Description (todo)
+## Description
 This is the official repository for the paper:
 
-**HOTFormerLoc: Hierarchical Octree Transformer for Versatile Lidar Place Recognition Across Ground and Aerial Views**, CVPR 2025 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*\
-[[**Website**](https://csiro-robotics.github.io/HOTFormerLoc)] <!-- [[**Paper**](https://cvpr.thecvf.com)] --> [[**arXiv**](https://arxiv.org/abs/2503.08140)] <!-- [[**Video**](https://youtube.com)] --> [[**CS-Wild-Places Dataset**](https://data.csiro.au/collection/csiro:64896)] [[**CS-Wild-Places README**](https://github.com/csiro-robotics/HOTFormerLoc/blob/main/media/CS_Wild_Places_README.pdf)]
+**HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests**, RA-L 2026 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*\
+[[**arXiv**](https://arxiv.org/abs/2511.09170)] <!-- [[**Video**](https://youtube.com)] --> [[**CS-Wild-Places Dataset**](https://data.csiro.au/collection/csiro:64896)] [[**CS-Wild-Places README**](https://github.com/csiro-robotics/HOTFormerLoc/blob/main/media/CS_Wild_Places_README.pdf)]
 
-![Network Architecture](media/hotformerloc_architecture.png)
-*HOTFormerLoc Architecture*
+![Network Architecture](media/pipeline_v4.png)
+*HOTFLoc++ Architecture*
 
-We present **HOTFormerLoc**, a novel and versatile **H**ierarchical **O**ctree-based **T**rans**Former** for large-scale 3D place recognition. We propose an octree-based multi-scale attention mechanism that captures spatial and semantic features across granularities, making it suitable for both ground-to-ground and ground-to-aerial scenarios across urban and forest environments.
+We present **HOTFLoc++**, an end-to-end
+hierarchical framework for LiDAR place recognition, re-ranking,
+and 6-DoF metric localisation in forests. Leveraging an octree-
+based transformer, our approach extracts features at multiple
+granularities to increase robustness to clutter, self-similarity, and
+viewpoint changes in challenging scenarios, including ground-to-
+ground and ground-to-aerial in forest and urban environments.
+We propose learnable multi-scale geometric verification to reduce
+re-ranking failures due to degraded single-scale correspondences.
+Our joint training protocol enforces multi-scale geometric consistency of the octree hierarchy via joint optimisation of place
+recognition with re-ranking and localisation, improving place
+recognition convergence. Our system achieves comparable or
+lower localisation errors to baselines, with runtime improvements
+of almost two orders of magnitude over RANSAC-based registration for dense point clouds. Experimental results on public
+datasets show the superiority of our approach compared to state-
+of-the-art methods, achieving an average Recall@1 of 90.7%
+on CS-Wild-Places: an improvement of 29.6 percentage points
+over baselines, while maintaining high performance on single-
+source benchmarks with an average Recall@1 of 91.7% and
+97.9% on Wild-Places and MulRan, respectively. Our method
+achieves under 2 m and 5◦ error for 97.2% of 6-DoF registration attempts, with our multi-scale re-ranking module reducing
+localisation errors by ∼2× on average.
 
-<!-- <img src="media/radar_plot.svg" alt="Hero Figure" width="50%" height="auto" style="float: right;"> -->
+<!-- ![Hero Figure](media/hero_fig_v2.png) -->
+<img src="media/hero_fig_v2.png" alt="Hero Figure" width="60%" height="auto" style="display: block; margin: auto;">
 
-In addition, we introduce our novel dataset: [**CS-Wild-Places**](https://data.csiro.au/collection/csiro:64896), a 3D cross-source dataset featuring point cloud data from aerial and ground lidar scans captured in four dense forests. Point clouds in CS-Wild-Places contain representational gaps and distinctive attributes such as varying point densities and noise patterns, making it a challenging benchmark for cross-view localisation in the wild.
+*HOTFLoc++ achieves Pareto-optimality for place recognition (top) and metric localisation (bottom) on CS-Wild-Places. Filled symbols denote results after re-ranking.*
 
-![CS-Wild-Places](media/CSWildPlaces_overview.png)
-*CS-Wild-Places dataset. (Top row) birds eye view of aerial global maps from all four forests. 
-(Bottom row) sample ground and aerial submap from each forest.*
-
-Our results demonstrate that HOTFormerLoc achieves a top-1 average recall improvement of 5.5% – 11.5% on the CS-Wild-Places benchmark. Furthermore, it consistently outperforms SOTA 3D place recognition methods, with an average performance gain of 4.9% on well established urban and forest datasets. 
-
-<!-- ![Hero Figure](media/radar_plot.svg) -->
-<img src="media/radar_plot.svg" alt="Hero Figure" width="50%" height="auto" style="display: block; margin: auto;">
-
-### Citation (todo)
+### Citation (TO-DO)
 If you find this work useful, please consider citing:
-```
-@InProceedings{HOTFormerLoc,
-	author    = {Griffiths, Ethan and Haghighat, Maryam and Denman, Simon and Fookes, Clinton and Ramezani, Milad},
-	title     = {{HOTFormerLoc}: {Hierarchical Octree Transformer} for {Versatile Lidar Place Recognition Across Ground} and {Aerial Views}},
-	booktitle = {2025 {IEEE}/{CVF Conference} on {Computer Vision} and {Pattern Recognition} ({CVPR})},
-	year      = {2025},
-	month     = {June},
+```bibtex
+@InProceedings{HOTFLoc,
+  author = {Griffiths, Ethan and Haghighat, Maryam and Denman, Simon and Fookes, Clinton and Ramezani, Milad},
+  title = {{{HOTFLoc}}++: {{End-to-End Hierarchical LiDAR Place Recognition}}, {{Re-Ranking}}, and 6-{{DoF Metric Localisation}} in {{Forests}}},
+  year = 2026,
+  month = apr,
+  journal = {IEEE Robotics and Automation Letters},
+  volume = {},
+  number = {},
+  pages = {},
+  doi = {},
 }
 ```
 <!-- month     = {todo},
@@ -60,8 +75,7 @@ pip install --no-build-isolation libs/dwconv
 # For metric loc:
 pip install --no-build-isolation -e libs/geotransformer/
 
-# NOTE: MinkowskiEngine can be optionally installed, but is only required for
-# evaluating Minkowski-based models (EgoNN, MinkLoc3Dv2).
+# NOTE: MinkowskiEngine can be optionally installed, but is only required for evaluating Minkowski-based models (EgoNN, MinkLoc3Dv2). See https://github.com/NVIDIA/MinkowskiEngine for installation instructions.
 ```
 
 Modify the `PYTHONPATH` environment variable to include the absolute path to the repository root folder (ensure this variable is set every time you open a new shell): 
@@ -74,7 +88,9 @@ export PYTHONPATH=$PYTHONPATH:<path/to/HOTFLoc++>
 ### Wild-Places
 We train on the Wild-Places dataset introduced in *Wild-Places: A Large-Scale Dataset for Lidar Place Recognition in Unstructured Natural Environments* ([link](https://arxiv.org/pdf/2211.12732)).
 
-Download the dataset [here](https://doi.org/10.25919/jm05-g895), and place or symlink the downloaded folder in `data/wild_places` (this should point to the top-level directory, with the `data/` and `metadata/` subdirectories). **IMPORTANT**: we use an older version of the Wild-Places dataset. When prompted to "Do you want to view the most recent version of this item?", please click "No" to ensure you download the correct version.
+Download the dataset [here](https://doi.org/10.25919/jm05-g895), and place or symlink the downloaded folder in `data/wild_places` (this should point to the top-level directory, with the `data/` and `metadata/` subdirectories).
+
+**IMPORTANT**: we use an older version of the Wild-Places dataset. When prompted to "Do you want to view the most recent version of this item?", please click "No" to ensure you download the correct version.
 
 Run the following to fix the broken timestamps in the poses files:
 ```bash
@@ -103,7 +119,10 @@ python generate_test_sets.py \
 ```
 
 ### CS-Wild-Places
-We train on our novel CS-Wild-Places dataset, introduced in further detail in our [paper](https://arxiv.org/abs/2503.08140). CS-Wild-Places is built upon the ground traversals introduced by Wild-Places, so it is required to download the Wild-Places dataset alongside our data following the instructions in the above section (generating train/test pickles for Wild-Places is not required for CS-Wild-Places, so this step can be skipped). Note that the full Wild-Places dataset must be downloaded as our post-processing utilises the full resolution submaps.
+We train on our novel CS-Wild-Places dataset, introduced in further detail in the [HOTFormerLoc paper](https://arxiv.org/abs/2503.08140). CS-Wild-Places is built upon the ground traversals introduced by Wild-Places, so it is required to download the Wild-Places dataset alongside our data following the instructions in the above section (generating train/test pickles for Wild-Places is not required for CS-Wild-Places, so this step can be skipped). Note that the full Wild-Places dataset must be downloaded as our post-processing utilises the full resolution submaps.
+
+![CS-Wild-Places Dataset](media/CSWildPlaces_overview.png)
+*CS-Wild-Places Dataset for Ground-to-Aerial LPR in Forest Environments*
 
 Download our dataset from [CSIRO's data access portal](https://data.csiro.au/collection/csiro:64896), and place or symlink the data in `data/CS-Wild-Places` (this should point to the top-level directory, with the `data/` and `metadata/` subdirectories). Note that our experiments only require the post-processed submaps (folder `postproc_voxel_0.40m_rmground`), so you can ignore the raw submaps if space is an issue. Check the [README](./media/CS_Wild_Places_README.pdf) for further information and installation instructions for CS-Wild-Places.
 
@@ -186,18 +205,26 @@ python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_co
 
 If training on a SLURM cluster, we provide the `submitit_train_job_single_node.py` script to automate training job submission, with support for automatic checkpointing and resubmission on job timeout. Make sure to set job parameters appropriately for your cluster.
 
-### Pre-trained Weights (todo)
+### Pre-trained Weights (TO-DO LINKS)
 
-Pre-trained weights for HOTFormerLoc and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below, or download and extract all from [this link](https://www.dropbox.com/scl/fi/qjyh966styqlye38a4c37/pretrained_weights.tar.gz?rlkey=qkuhupf3og7mfkfid8dts7xej&st=wx8q2v68&dl=0).
+Pre-trained weights for HOTFLoc++ and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below.
 | Model        | Dataset         | Weights Download                                                                                                                                                         |
 |--------------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| HOTFormerLoc | CS-Wild-Places  | [hotformerloc_cs-wild-places.pth](https://www.dropbox.com/scl/fi/bcgcmbyic591f3bviib64/hotformerloc_cs-wild-places.pth?rlkey=vrw0seq6nfbsihijbhqatll2u&st=d7enawjw&dl=0) |
-| HOTFormerLoc | CS-Campus3D     | [hotformerloc_cs-campus3D.pth](https://www.dropbox.com/scl/fi/l9jyn5310gjf80zw35v7z/hotformerloc_cs-campus3d.pth?rlkey=s0bpcysyc1xt2357shhclpnlw&st=zhh679b9&dl=0)       |
-| HOTFormerLoc | Wild-Places     | [hotformerloc_wild-places.pth](https://www.dropbox.com/scl/fi/yd94iy9dq6k1m312ifnyx/hotformerloc_wild-places.pth?rlkey=5ndv0p48c7hyjvah90eab1l1e&st=zl1716hh&dl=0)       |
-| HOTFormerLoc | Oxford RobotCar | [hotformerloc_oxford.pth](https://www.dropbox.com/scl/fi/4r3470zo9zomkyjys5nrm/hotformerloc_oxford.pth?rlkey=eocfo3yvmhuqqgsmjtypgf78s&st=ybhzcj6y&dl=0)                 |
-| MinkLoc3Dv2  | CS-Wild-Places  | [minkloc3dv2_cs-wild-places.pth](https://www.dropbox.com/scl/fi/2w4l8gv7qbmp0lh4eztsf/minkloc3dv2_cs-wild-places.pth?rlkey=udxvtkr6yfgdnyizra4gmw0qa&st=p0evrh61&dl=0)   |
-| CrossLoc3D   | CS-Wild-Places  | [crossloc3d_cs-wild-places.pth](https://www.dropbox.com/scl/fi/5ikt1jvr2fabiaw8mhqbb/crossloc3d_cs-wild-places.pth?rlkey=lb4gp2n814im3twy4zy5d67bd&st=znup5ewi&dl=0)     |
-| LoGG3D-Net   | CS-Wild-Places  | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=n5ytpnzc&dl=0)       |
+| HOTFLoc++ | CS-Wild-Places (0.4m voxels) | [hotfloc++_cs-wild-places_stage2_e60.ckpt]() |
+| HOTFLoc++ | Wild-Places     | [hotfloc++_wild-places_stage2_e60.ckpt]()       |
+| HOTFLoc++ | MulRan     | [hotfloc++_mulran_stage2_e60.ckpt]()       |
+| HOTFLoc++ (4 Levels) | MulRan     | [hotfloc++_4lvl_mulran_stage2_e60.ckpt]()       |
+| HOTFormerLoc | CS-Wild-Places (0.4m voxels) | [hotformerloc_cs-wild-places_voxel0.4m_e70.pth]()                 |
+| EgoNN  | CS-Wild-Places (0.4m voxels) | [egonn_cs-wild-places_e120.ckpt]()   |
+| EgoNN  | Wild-Places | [egonn_wild-places_e160.ckpt]()   |
+| EgoNN  | MulRan | [egonn_mulran_e160.ckpt]()   |
+| LoGG3D-Net (1024 dim)   | CS-Wild-Places (0.8m voxels) | [logg3dnet_cs-wild-places_dim32.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=yi7hvp1j&dl=0)       |
+| LoGG3D-Net (1024 dim)   | Wild-Places | [logg3dnet_wild-places_dim32.pth](https://www.dropbox.com/s/h1ic00tvfnstvfm/LoGG3D-Net.pth?dl=0)   |
+| LoGG3D-Net (1024 dim)   | MulRan | [logg3dnet_mulran_dim32.pth](https://www.dropbox.com/scl/fo/in698japw8hzgymg1y1u1/AHUm0blFTs3BF4rs2WAipsY/logg3d.pth?rlkey=rcofv0ouvf1gc22mj8r99dajq&dl=0)   |
+| MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m_e280.pth]()   |
+| MinkLoc3Dv2  | Wild-Places  | [minkloc3dv2_wild-places.pth](https://www.dropbox.com/s/8ijq9h99m1snzxn/MinkLoc3Dv2.pth?dl=0)   |
+
+If you wish to run any experiments with HOTFormerLoc (which can be done from this repo), please download the appropriate weights from the [HOTFormerLoc repo](https://github.com/csiro-robotics/HOTFormerLoc?tab=readme-ov-file#pre-trained-weights). Note that the CS-Wild-Places experiments in HOTFormerLoc used submaps downsampled with 0.8m voxels, rather than the 0.4m voxels used in HOTFLoc++.
 
 ## Evaluation
 
@@ -206,25 +233,31 @@ To evaluate the pretrained models run the following commands:
 ```bash
 cd eval
 # CS-Wild-Places
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_cs-wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_cs-wild-places_stage2_cfg.txt --weights ../weights/hotfloc++_cs-wild-places_stage2_e60.ckpt
 # Wild-Places
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_wild-places_stage2.txt --model_config ../models/cfg_files/hotfloc++_wild-places_stage2_cfg.txt --weights ../weights/hotfloc++_wild-places_stage2_e60.ckpt
 # MulRan
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_mulran_stage2_cfg.txt --weights ../weights/hotfloc++_mulran_stage2_e60.ckpt
 # For the 4-stage version of HOTFLoc++:
-python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/<path-to-stage2-ckpt>
+python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/hotfloc++_4lvl_mulran_stage2_e60.ckpt
 ```
 
-**TODO**: Below are the results for all evaluated models on CS-Wild-Places:
+MinkLoc-based models can also be evaluated within this repo (provided you have installed MinkowskiEngine, see [Installation](#installation)). For example:
+```bash
+# EgoNN
+python evaluate_metric_loc_splits_rerank.py --config ../config/other_models/config_egonn_cs-wild-places.txt --model_config ../models/cfg_files/egonn.txt --weights ../weights/egonn_cs-wild-places_e120.ckpt
+```
 
-![CS-Wild-Places_baseline](media/dataset_cswp_baseline.png)
+Below are the results for all evaluated models on CS-Wild-Places:
+
+![CS-Wild-Places_baseline](media/cswp_baseline_results.png)
 *Comparison of SOTA on CS-Wild-Places Baseline evaluation set.*
 
-![CS-Wild-Places_unseen](media/dataset_cswp_unseen.png)
+![CS-Wild-Places_unseen](media/cswp_unseen_results.png)
 *Comparison of SOTA on CS-Wild-Places Unseen evaluation set.*
 
 See the paper for full results and comparison with SOTA on all datasets.
 
 ## Acknowledgements
 
-Special thanks to the authors of [MinkLoc3Dv2](https://github.com/jac99/MinkLoc3Dv2), [OctFormer](https://github.com/octree-nn/octformer), and [SpectralGV](https://github.com/csiro-robotics/SpectralGV) for their excellent code, which formed the foundation of this codebase. We would also like to thank the authors of [Wild-Places](https://csiro-robotics.github.io/Wild-Places/) for their fantastic dataset which serves as the base that CS-Wild-Places is built upon.
+Special thanks to the authors of [MinkLoc3Dv2](https://github.com/jac99/MinkLoc3Dv2), [OctFormer](https://github.com/octree-nn/octformer), [SpectralGV](https://github.com/csiro-robotics/SpectralGV), and [GeoTransformer](https://github.com/qinzheng93/GeoTransformer) for their excellent code, which formed the foundation of this codebase.
