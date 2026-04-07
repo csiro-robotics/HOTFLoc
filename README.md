@@ -41,23 +41,19 @@ localisation errors by ∼2× on average.
 
 *HOTFLoc++ achieves Pareto-optimality for place recognition (top) and metric localisation (bottom) on CS-Wild-Places. Filled symbols denote results after re-ranking.*
 
-### Citation (TO-DO)
+### Citation
 If you find this work useful, please consider citing:
 ```bibtex
-@InProceedings{HOTFLoc,
-  author = {Griffiths, Ethan and Haghighat, Maryam and Denman, Simon and Fookes, Clinton and Ramezani, Milad},
+@article{HOTFLoc,
   title = {{{HOTFLoc}}++: {{End-to-End Hierarchical LiDAR Place Recognition}}, {{Re-Ranking}}, and 6-{{DoF Metric Localisation}} in {{Forests}}},
-  year = 2026,
-  month = apr,
-  journal = {IEEE Robotics and Automation Letters},
-  volume = {},
-  number = {},
-  pages = {},
-  doi = {},
+  author = {Griffiths, Ethan and Haghighat, Maryam and Denman, Simon and Fookes, Clinton and Ramezani, Milad},
+  year = 2025,
+  month = nov,
+  journal = {arXiv preprint arXiv:2511.09170},
+  eprint = {2511.09170},
+  archiveprefix = {arXiv},
 }
 ```
-<!-- month     = {todo},
-pages     = {todo} -->
 
 ## Environment and Dependencies
 Code was tested using Python 3.11 with PyTorch 2.1.1 and CUDA 12.1 on a Linux system. We use conda to manage dependencies (although we recommend [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html) for a much faster install).
