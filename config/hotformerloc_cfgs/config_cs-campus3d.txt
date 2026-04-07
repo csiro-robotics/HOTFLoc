@@ -3,12 +3,12 @@
 dataset_folder = ../data/benchmark_datasets_cs_campus3d/benchmark_datasets
 
 [TRAIN]
-num_workers = 3
+num_workers = 4
 batch_size = 2048
 batch_split_size = 128
 val_batch_size = 256
 save_freq = 10
-eval_freq = 5
+eval_freq = 10
 wandb = True
 
 lr = 5e-4

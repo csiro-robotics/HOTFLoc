@@ -207,21 +207,23 @@ If training on a SLURM cluster, we provide the `submitit_train_job_single_node.p
 
 ### Pre-trained Weights (TO-DO LINKS)
 
-Pre-trained weights for HOTFLoc++ and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below.
+Pre-trained weights for HOTFLoc++ and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below (note you may need to rename the downloaded file to match the names listed below).
 | Model        | Dataset         | Weights Download                                                                                                                                                         |
 |--------------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | HOTFLoc++ | CS-Wild-Places (0.4m voxels) | [hotfloc++_cs-wild-places_stage2_e60.ckpt]() |
 | HOTFLoc++ | Wild-Places     | [hotfloc++_wild-places_stage2_e60.ckpt]()       |
 | HOTFLoc++ | MulRan     | [hotfloc++_mulran_stage2_e60.ckpt]()       |
 | HOTFLoc++ (4 Levels) | MulRan     | [hotfloc++_4lvl_mulran_stage2_e60.ckpt]()       |
-| HOTFormerLoc | CS-Wild-Places (0.4m voxels) | [hotformerloc_cs-wild-places_voxel0.4m_e70.pth]()                 |
+| HOTFormerLoc | CS-Wild-Places (0.4m voxels) | [hotformerloc_cs-wild-places_voxel0.4m_e70.ckpt]()                 |
+| HOTFormerLoc | CS-Wild-Places (0.8m voxels) | [hotformerloc_cs-wild-places_voxel0.8m.pth](https://www.dropbox.com/scl/fi/bcgcmbyic591f3bviib64/hotformerloc_cs-wild-places.pth?rlkey=vrw0seq6nfbsihijbhqatll2u&st=d7enawjw&dl=0)                 |
 | EgoNN  | CS-Wild-Places (0.4m voxels) | [egonn_cs-wild-places_e120.ckpt]()   |
 | EgoNN  | Wild-Places | [egonn_wild-places_e160.ckpt]()   |
 | EgoNN  | MulRan | [egonn_mulran_e160.ckpt]()   |
 | LoGG3D-Net (1024 dim)   | CS-Wild-Places (0.8m voxels) | [logg3dnet_cs-wild-places_dim32.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=yi7hvp1j&dl=0)       |
 | LoGG3D-Net (1024 dim)   | Wild-Places | [logg3dnet_wild-places_dim32.pth](https://www.dropbox.com/s/h1ic00tvfnstvfm/LoGG3D-Net.pth?dl=0)   |
 | LoGG3D-Net (1024 dim)   | MulRan | [logg3dnet_mulran_dim32.pth](https://www.dropbox.com/scl/fo/in698japw8hzgymg1y1u1/AHUm0blFTs3BF4rs2WAipsY/logg3d.pth?rlkey=rcofv0ouvf1gc22mj8r99dajq&dl=0)   |
-| MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m_e280.pth]()   |
+| MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m.ckpt]()   |
+| MinkLoc3Dv2  | CS-Wild-Places (0.8m voxels) | [minkloc3dv2_cs-wild-places_voxel0.8m.pth](https://www.dropbox.com/scl/fi/2w4l8gv7qbmp0lh4eztsf/minkloc3dv2_cs-wild-places.pth?rlkey=udxvtkr6yfgdnyizra4gmw0qa&st=p0evrh61&dl=0)   |
 | MinkLoc3Dv2  | Wild-Places  | [minkloc3dv2_wild-places.pth](https://www.dropbox.com/s/8ijq9h99m1snzxn/MinkLoc3Dv2.pth?dl=0)   |
 
 If you wish to run any experiments with HOTFormerLoc (which can be done from this repo), please download the appropriate weights from the [HOTFormerLoc repo](https://github.com/csiro-robotics/HOTFormerLoc?tab=readme-ov-file#pre-trained-weights). Note that the CS-Wild-Places experiments in HOTFormerLoc used submaps downsampled with 0.8m voxels, rather than the 0.4m voxels used in HOTFLoc++.
@@ -246,6 +248,26 @@ MinkLoc-based models can also be evaluated within this repo (provided you have i
 ```bash
 # EgoNN
 python evaluate_metric_loc_splits_rerank.py --config ../config/other_models/config_egonn_cs-wild-places.txt --model_config ../models/cfg_files/egonn.txt --weights ../weights/egonn_cs-wild-places_e120.ckpt
+python evaluate_metric_loc_splits_rerank.py --config ../config/other_models/config_egonn_wild-places.txt --model_config ../models/cfg_files/egonn.txt --weights ../weights/egonn_wild-places_e160.ckpt
+python evaluate_metric_loc_splits_rerank.py --config ../config/other_models/config_egonn_mulran.txt --model_config ../models/cfg_files/egonn.txt --weights ../weights/egonn_mulran_e160.ckpt
+# MinkLoc3Dv2
+python pnv_evaluate_splits.py --config ../config/other_models/config_minkloc3dv2_cs-wild-places.txt --model_config ../models/cfg_files/minkloc3dv2.txt --weights ../weights/minkloc3dv2_cs-wild-places_voxel0.4m.ckpt
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_minkloc3dv2_cs-wild-places.txt --model_config ../models/cfg_files/minkloc3dv2.txt --weights ../weights/minkloc3dv2_cs-wild-places_voxel0.8m.pth
+python pnv_evaluate_splits.py --config ../config/other_models/config_minkloc3dv2_wild-places.txt --model_config ../models/cfg_files/minkloc3dv2_wild-places.txt --weights ../weights/minkloc3dv2_wild-places.pth
+```
+
+For [HOTFormerLoc](https://github.com/csiro-robotics/HOTFormerLoc) experiments:
+```bash
+# To evaluate HOTFormerLoc trained on CS-Wild-Places (0.4m voxels)
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_cs-wild-places_voxel0.4m.txt --model_config ../models/hotformerloc_cs-wild-places_cfg.txt --weights ../weights/hotformerloc_cs-wild-places_voxel0.4m_e70.ckpt
+# To evaluate HOTFormerLoc trained on CS-Wild-Places (0.8m voxels)
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_cs-wild-places.txt --model_config ../models/hotformerloc_cs-wild-places_cfg.txt --weights ../weights/hotformerloc_cs-wild-places_voxel0.8m.pth
+# To evaluate HOTFormerLoc trained on Wild-Places
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_wild-places.txt --model_config ../models/hotformerloc_wild-places_cfg.txt --weights ../weights/hotformerloc_wild-places.pth
+# To evaluate HOTFormerLoc trained on CS-Campus3D
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_cs-campus3d.txt --model_config ../models/hotformerloc_cs-campus3d_cfg.txt --weights ../weights/hotformerloc_cs-campus3d.pth
+# To evaluate HOTFormerLoc trained on Oxford RobotCar
+python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_oxford.txt --model_config ../models/hotformerloc_oxford_cfg.txt --weights ../weights/hotformerloc_oxford.pth
 ```
 
 Below are the results for all evaluated models on CS-Wild-Places:
