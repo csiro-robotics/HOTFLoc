@@ -37,7 +37,9 @@ achieves under 2 m and 5◦ error for 97.2% of 6-DoF registration attempts, with
 localisation errors by ∼2× on average.
 
 <!-- ![Hero Figure](media/hero_fig_v2.svg) -->
-<img src="media/hero_fig_v2.svg" alt="Hero Figure" width="50%" height="auto" style="display: block; margin: auto;">
+<div align="center">
+	<img src="media/hero_fig_v2.svg" alt="Hero Figure" width="50%" height="auto" style="display: block; margin: auto;">
+</div>
 
 *HOTFLoc++ achieves Pareto-optimality for place recognition (top) and metric localisation (bottom) on CS-Wild-Places. Filled symbols denote results after re-ranking.*
 
