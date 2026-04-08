@@ -203,24 +203,24 @@ python train.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_co
 
 If training on a SLURM cluster, we provide the `submitit_train_job_single_node.py` script to automate training job submission, with support for automatic checkpointing and resubmission on job timeout. Make sure to set job parameters appropriately for your cluster.
 
-### Pre-trained Weights (TO-DO LINKS)
+### Pre-trained Weights
 
 Pre-trained weights for HOTFLoc++ and other experiments can be downloaded and placed in the `weights` directory. You can download them individually below (note you may need to rename the downloaded file to match the names listed below).
 | Model        | Dataset         | Weights Download                                                                                                                                                         |
 |--------------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| HOTFLoc++ | CS-Wild-Places (0.4m voxels) | [hotfloc++_cs-wild-places_stage2_e60.ckpt]() |
-| HOTFLoc++ | Wild-Places     | [hotfloc++_wild-places_stage2_e60.ckpt]()       |
-| HOTFLoc++ | MulRan     | [hotfloc++_mulran_stage2_e60.ckpt]()       |
-| HOTFLoc++ (4 Levels) | MulRan     | [hotfloc++_4lvl_mulran_stage2_e60.ckpt]()       |
-| HOTFormerLoc | CS-Wild-Places (0.4m voxels) | [hotformerloc_cs-wild-places_voxel0.4m_e70.ckpt]()                 |
+| HOTFLoc++ | CS-Wild-Places (0.4m voxels) | [hotfloc++_cs-wild-places_stage1_e60.ckpt](https://drive.google.com/file/d/1O6WGp2QAN91MbXnV6jAfCGemj4zinY7v/view?usp=sharing) / [hotfloc++_cs-wild-places_stage2_e60.ckpt](https://drive.google.com/file/d/1KpTGRK3lalKAHJeUFdFB7UhDdvAdAMIi/view?usp=sharing) |
+| HOTFLoc++ | Wild-Places     | [hotfloc++_wild-places_stage1_e60.ckpt](https://drive.google.com/file/d/1jjEA5Eef48-ekPz-LO6M-_SrXTDjCgex/view?usp=sharing) / [hotfloc++_wild-places_stage2_e60.ckpt](https://drive.google.com/file/d/1_KfgWJara1kkBs7Pioci3r9QNuXymgGq/view?usp=sharing)       |
+| HOTFLoc++ | MulRan     | [hotfloc++_mulran_stage1_e60.ckpt](https://drive.google.com/file/d/1schcUtcoZ7UWNK0wYdJeB600eLdgF-Gl/view?usp=drive_link) / [hotfloc++_mulran_stage2_e60.ckpt](https://drive.google.com/file/d/1_PopwDxs6EOmkfT2Xzl4DTp-_ZYCePXQ/view?usp=sharing)       |
+| HOTFLoc++ (4 Levels) | MulRan     | [hotfloc++_4lvl_mulran_stage1_e70.ckpt](https://drive.google.com/file/d/1fW3lWEf6Gr3boc9bt1CTBAU8gT4B5ejz/view?usp=sharing) / [hotfloc++_4lvl_mulran_stage2_e60.ckpt](https://drive.google.com/file/d/1ORA_QreeSGH54FFO0F4kcQ5sa6KL4kaq/view?usp=sharing)       |
+| HOTFormerLoc | CS-Wild-Places (0.4m voxels) | [hotformerloc_cs-wild-places_voxel0.4m_e70.ckpt](https://drive.google.com/file/d/1BxkaHa-sGET1F9-BNDSEhMABtjQKlyRS/view?usp=sharing)                 |
 | HOTFormerLoc | CS-Wild-Places (0.8m voxels) | [hotformerloc_cs-wild-places_voxel0.8m.pth](https://www.dropbox.com/scl/fi/bcgcmbyic591f3bviib64/hotformerloc_cs-wild-places.pth?rlkey=vrw0seq6nfbsihijbhqatll2u&st=d7enawjw&dl=0)                 |
-| EgoNN  | CS-Wild-Places (0.4m voxels) | [egonn_cs-wild-places_e120.ckpt]()   |
-| EgoNN  | Wild-Places | [egonn_wild-places_e160.ckpt]()   |
-| EgoNN  | MulRan | [egonn_mulran_e160.ckpt]()   |
+| EgoNN  | CS-Wild-Places (0.4m voxels) | [egonn_cs-wild-places_e120.ckpt](https://drive.google.com/file/d/1Dwg2eu0Bp_tokaMZziUslAMqbY8gtbFG/view?usp=sharing)   |
+| EgoNN  | Wild-Places | [egonn_wild-places_e160.ckpt](https://drive.google.com/file/d/1fAUHXuvJwpoJ0drGnPzNkzLDpJ1sXgJS/view?usp=sharing)   |
+| EgoNN  | MulRan | [egonn_mulran_e160.ckpt](https://drive.google.com/file/d/1D96kMWikF0Egm6Mrc8UI_oK5MjeNV4Sf/view?usp=sharing)   |
 | LoGG3D-Net (1024 dim)   | CS-Wild-Places (0.8m voxels) | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=yi7hvp1j&dl=0)       |
 | LoGG3D-Net (1024 dim)   | Wild-Places | [logg3dnet_wild-places.pth](https://www.dropbox.com/s/h1ic00tvfnstvfm/LoGG3D-Net.pth?dl=0)   |
 | LoGG3D-Net (1024 dim)   | MulRan | [logg3dnet_mulran.pth](https://www.dropbox.com/scl/fo/in698japw8hzgymg1y1u1/AHUm0blFTs3BF4rs2WAipsY/logg3d.pth?rlkey=rcofv0ouvf1gc22mj8r99dajq&dl=0)   |
-| MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m.ckpt]()   |
+| MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m.ckpt](https://drive.google.com/file/d/19SRrrfryRRIq8B35xOgiV0QvbWvloJvm/view?usp=sharing)   |
 | MinkLoc3Dv2  | CS-Wild-Places (0.8m voxels) | [minkloc3dv2_cs-wild-places_voxel0.8m.pth](https://www.dropbox.com/scl/fi/2w4l8gv7qbmp0lh4eztsf/minkloc3dv2_cs-wild-places.pth?rlkey=udxvtkr6yfgdnyizra4gmw0qa&st=p0evrh61&dl=0)   |
 | MinkLoc3Dv2  | Wild-Places  | [minkloc3dv2_wild-places.pth](https://www.dropbox.com/s/8ijq9h99m1snzxn/MinkLoc3Dv2.pth?dl=0)   |
 
