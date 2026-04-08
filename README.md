@@ -2,6 +2,7 @@
 
 ### What's new ###
 * [2026-04-06] Training and evaluation code for HOTFLoc++ released, with added support for re-ranking and 6-DoF metric localisation.
+* [2025-07-31] HOTFormerLoc v1.1.0 release, fixing significant memory consumption and batch construction time in certain instances.
 * [2025-03-26] Training and evaluation code for [HOTFormerLoc](https://github.com/csiro-robotics/HOTFormerLoc) released. [CS-Wild-Places](https://data.csiro.au/collection/csiro:64896) dataset released.
 
 ## Description
