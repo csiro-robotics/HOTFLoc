@@ -241,6 +241,7 @@ python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_
 # For the 4-stage version of HOTFLoc++:
 python evaluate_metric_loc_splits_rerank.py --config ../config/config_hotfloc++_mulran_stage2.txt --model_config ../models/cfg_files/hotfloc++_4lvl_mulran_stage2_cfg.txt --weights ../weights/hotfloc++_4lvl_mulran_stage2_e60.ckpt
 ```
+By default, this will run evaluation for metric localisation under the 'success' protocol, where only successful retrievals are used for metric localisation evaluation. To run evaluation under the 'all' protocol, where both successes and failures are used, provide the `--local_max_eval_threshold 10000000000` flag to `evaluate_metric_loc_splits_rerank.py`.
 
 MinkLoc-based models can also be evaluated within this repo (provided you have installed MinkowskiEngine, see [Installation](#installation)). For example:
 ```bash
