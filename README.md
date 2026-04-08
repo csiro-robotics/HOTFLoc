@@ -269,6 +269,8 @@ python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_cs-cam
 python pnv_evaluate_splits.py --config ../config/hotformerloc_cfgs/config_oxford.txt --model_config ../models/hotformerloc_oxford_cfg.txt --weights ../weights/hotformerloc_oxford.pth
 ```
 
+For LoGG3D-Net experiments, we provide an altered version of the LoGG3D-Net repo capable of running on Wild-Places and CS-Wild-Places at [this link](https://drive.google.com/file/d/1tIf3-X51tLmCgn5fuUF1lCvYPWTF7syy/view?usp=sharing). Please follow the included README for instructions on re-producing our experimental results.
+
 Below are the results for all evaluated models on CS-Wild-Places:
 
 ![CS-Wild-Places_baseline](media/cswp_baseline_results.png)
