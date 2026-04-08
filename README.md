@@ -217,9 +217,9 @@ Pre-trained weights for HOTFLoc++ and other experiments can be downloaded and pl
 | EgoNN  | CS-Wild-Places (0.4m voxels) | [egonn_cs-wild-places_e120.ckpt]()   |
 | EgoNN  | Wild-Places | [egonn_wild-places_e160.ckpt]()   |
 | EgoNN  | MulRan | [egonn_mulran_e160.ckpt]()   |
-| LoGG3D-Net (1024 dim)   | CS-Wild-Places (0.8m voxels) | [logg3dnet_cs-wild-places_dim32.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=yi7hvp1j&dl=0)       |
-| LoGG3D-Net (1024 dim)   | Wild-Places | [logg3dnet_wild-places_dim32.pth](https://www.dropbox.com/s/h1ic00tvfnstvfm/LoGG3D-Net.pth?dl=0)   |
-| LoGG3D-Net (1024 dim)   | MulRan | [logg3dnet_mulran_dim32.pth](https://www.dropbox.com/scl/fo/in698japw8hzgymg1y1u1/AHUm0blFTs3BF4rs2WAipsY/logg3d.pth?rlkey=rcofv0ouvf1gc22mj8r99dajq&dl=0)   |
+| LoGG3D-Net (1024 dim)   | CS-Wild-Places (0.8m voxels) | [logg3dnet_cs-wild-places.pth](https://www.dropbox.com/scl/fi/51se5akdyg35xy2dsrosj/logg3dnet_cs-wild-places.pth?rlkey=4nvvp8gw656wdbj3081jzcn0i&st=yi7hvp1j&dl=0)       |
+| LoGG3D-Net (1024 dim)   | Wild-Places | [logg3dnet_wild-places.pth](https://www.dropbox.com/s/h1ic00tvfnstvfm/LoGG3D-Net.pth?dl=0)   |
+| LoGG3D-Net (1024 dim)   | MulRan | [logg3dnet_mulran.pth](https://www.dropbox.com/scl/fo/in698japw8hzgymg1y1u1/AHUm0blFTs3BF4rs2WAipsY/logg3d.pth?rlkey=rcofv0ouvf1gc22mj8r99dajq&dl=0)   |
 | MinkLoc3Dv2  | CS-Wild-Places (0.4m voxels) | [minkloc3dv2_cs-wild-places_voxel0.4m.ckpt]()   |
 | MinkLoc3Dv2  | CS-Wild-Places (0.8m voxels) | [minkloc3dv2_cs-wild-places_voxel0.8m.pth](https://www.dropbox.com/scl/fi/2w4l8gv7qbmp0lh4eztsf/minkloc3dv2_cs-wild-places.pth?rlkey=udxvtkr6yfgdnyizra4gmw0qa&st=p0evrh61&dl=0)   |
 | MinkLoc3Dv2  | Wild-Places  | [minkloc3dv2_wild-places.pth](https://www.dropbox.com/s/8ijq9h99m1snzxn/MinkLoc3Dv2.pth?dl=0)   |
