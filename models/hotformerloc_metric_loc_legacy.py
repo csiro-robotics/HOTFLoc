@@ -1,10 +1,7 @@
 """
-HOTFormerLoc class.
+HOTFormerLoc + metric localisation class.
 Author: Ethan Griffiths
 CSIRO Data61
-
-Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
-by Peng-Shuai Wang.
 
 LEGACY VERSION FOR RUNNING MODELS TRAINED PRE- MULTISTAGE RE-LOC CHANGES
 """
@@ -401,7 +398,6 @@ class HOTFormerMetricLoc(torch.nn.Module):
             output_dicts[batch_idx]['pos_points_fine'] = pos_points_fine_ii
 
             # 3. Generate ground truth node correspondences
-            # NOTE: step 3 should be achievable just from octree indices alone
             anc_point_to_node_ii, anc_node_masks_ii, anc_node_knn_indices_ii, anc_node_knn_masks_ii = point_to_node_partition(
                 anc_points_fine_ii, anc_points_coarse_ii, self.num_points_in_patch
             )
@@ -473,13 +469,6 @@ class HOTFormerMetricLoc(torch.nn.Module):
                             'this will cause NaNs to be logged'
                         )
                         logging.warning(log_str)
-
-        # # TODO: CONTINUE LOOP FROM HERE, BUT THINK ABOUT HOW TO HANDLE EVAL
-
-        # # TODO: Implement SpectralGV re-ranking based on refined coarse correspondences 
-        # if not self.training:
-        #     with torch.no_grad():
-        #         pass
 
         # NOTE: Temporarily just placing this inside the previous for loop, just
         #       to get training running

@@ -2,9 +2,6 @@
 HOTFormerLoc class, with metric localisation and re-ranking.
 Author: Ethan Griffiths
 CSIRO Data61
-
-Code adapted from OctFormer: Octree-based Transformers for 3D Point Clouds
-by Peng-Shuai Wang.
 """
 import time
 import logging
