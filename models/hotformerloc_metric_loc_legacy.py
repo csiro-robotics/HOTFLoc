@@ -88,7 +88,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             octree_partition (bool): Use the octree for partitioning patches, instead of KNN.
 
         Returns:
-            model_out (dict): Dict containing outputs from local and global stages
+            model_out (dict): Dict containing outputs from local and global stages.
 
         """
         super().__init__()

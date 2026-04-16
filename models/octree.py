@@ -626,7 +626,7 @@ def octant_to_parent_partition(
     point_limit: int,
 ):
     """
-    Octant-to-parent partition of the Octree (for single batch).
+    Octant-to-parent partition of the Octree (for single batch)
 
     Args:
         octree (Octree): Octree to use

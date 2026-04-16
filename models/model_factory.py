@@ -20,6 +20,7 @@ from misc.utils import TrainingParams
 def get_in_channels(input_features: str) -> int:
     in_channels = 0
     channel_num_dict = {'L': 3, 'P': 3, 'D': 1, 'N': 3, 'F': 1}  # https://ocnn-pytorch.readthedocs.io/en/latest/modules/octree.html#ocnn.octree.Octree.get_input_feature
+    # NOTE: Can change num channels for 'F' if using arbitrary point features (e.g. 1 for intensity, 3 for RGB)
     
     for feature in input_features:
         assert feature in channel_num_dict.keys(), "Invalid input features specified, must be in ['L','P','D','N','F']"

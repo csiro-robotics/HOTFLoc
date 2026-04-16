@@ -96,17 +96,17 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             geometric_consistency_d_thresh (tuple): Distance threshold to use in geometric consistency adjacency matrix, per relay token level
             rerank_geotransformer_refinement (bool): Use geotransformer layer to refine features for re-ranking
             rerank_num_correspondences (tuple): Total number of local correspondences for geometric consistency re-ranking, per coarse level.
-            rerank_sort_eigvec (bool): Sort eigenvector prior to MLP
-            rerank_scale_eigvec (bool): Scale eigenvector to range [0, 1] prior to MLP
-            rerank_eigvec_layernorm (bool): Instead apply layernorm to the eigvec priot to the MLP
+            rerank_sort_eigvec (bool): Sort eigenvector prior to MLP.
+            rerank_scale_eigvec (bool): Scale eigenvector to range [0, 1] prior to MLP.
+            rerank_eigvec_layernorm (bool): Instead apply layernorm to the eigvec priot to the MLP.
             rerank_num_sinkhorn_iterations (int): Number of sinkhorn iterations. Set to 0 to disable OT.
-            rerank_output_mlp_ratio (float): MLP ratio for rerank output (for hidden layer)
-            rerank_mutual_corr (bool): Mutual correspondence filtering
-            rerank_use_sc_score (bool): Add spatial consistency score as an additional feature to the MLP
-            rerank_adj_mat_dist (str): Distance type to use for adjacency matrix ('squared' or 'absolute')
+            rerank_output_mlp_ratio (float): MLP ratio for rerank output (for hidden layer).
+            rerank_mutual_corr (bool): Mutual correspondence filtering.
+            rerank_use_sc_score (bool): Add spatial consistency score as an additional feature to the MLP.
+            rerank_adj_mat_dist (str): Distance type to use for adjacency matrix ('squared' or 'absolute').
 
         Returns:
-            model_out (dict): Dict containing outputs from local and global stages
+            model_out (dict): Dict containing outputs from local and global stages.
         """
         super().__init__(
             hotformerloc_global=hotformerloc_global,
