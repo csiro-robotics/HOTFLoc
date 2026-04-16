@@ -181,6 +181,7 @@ def model_factory(params: TrainingParams, legacy: bool = False):
                 quantizer=model_params.quantizer,
                 grad_checkpoint=model_params.grad_checkpoint,
                 return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+                octree_partition=False,
             )
         else:
             model = HOTFormerMetricLocReRanking(
@@ -197,6 +198,7 @@ def model_factory(params: TrainingParams, legacy: bool = False):
                 quantizer=model_params.quantizer,
                 grad_checkpoint=model_params.grad_checkpoint,
                 return_feats_and_attn_maps=model_params.return_feats_and_attn_maps,
+                octree_partition=False,
                 rerank_mode=model_params.rerank_mode,
                 rerank_indices=model_params.rerank_indices,
                 rerank_feat_embed_dim=model_params.rerank_feat_embed_dim,

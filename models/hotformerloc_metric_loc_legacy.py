@@ -18,7 +18,7 @@ from ocnn.octree import Points, Octree
 
 from dataset.augmentation import Normalize
 from dataset.coordinate_utils import CoordinateSystem
-from models.octree import get_octant_centroids_from_points, split_and_pad_data, unpad_and_concat_data
+from models.octree import get_octant_centroids_from_points, split_and_pad_data, unpad_and_concat_data, octant_to_parent_partition
 from models.hotformerloc import HOTFormerLoc
 from misc.utils import ModelParams
 from misc.torch_utils import release_cuda
@@ -60,6 +60,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         quantizer: Optional[CoordinateSystem] = None,
         grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
+        octree_partition: bool = True,
         **kwargs,
     ):
         """
@@ -84,6 +85,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
             return_feats_and_attn_maps (bool): Returns intermediate features and attention maps from the backbone.
+            octree_partition (bool): Use the octree for partitioning patches, instead of KNN.
 
         Returns:
             model_out (dict): Dict containing outputs from local and global stages
@@ -104,6 +106,7 @@ class HOTFormerMetricLoc(torch.nn.Module):
         self.get_input_dim()
         self.quantizer = quantizer
         self.grad_checkpoint = grad_checkpoint
+        self.octree_partition = octree_partition
         self.return_feats_and_attn_maps = return_feats_and_attn_maps
         self.point_padding = 1e10
         self._benchmark = False
@@ -397,13 +400,22 @@ class HOTFormerMetricLoc(torch.nn.Module):
             output_dicts[batch_idx]['anc_points_fine'] = anc_points_fine_ii
             output_dicts[batch_idx]['pos_points_fine'] = pos_points_fine_ii
 
-            # 3. Generate ground truth node correspondences
-            anc_point_to_node_ii, anc_node_masks_ii, anc_node_knn_indices_ii, anc_node_knn_masks_ii = point_to_node_partition(
-                anc_points_fine_ii, anc_points_coarse_ii, self.num_points_in_patch
-            )
-            pos_point_to_node_ii, pos_node_masks_ii, pos_node_knn_indices_ii, pos_node_knn_masks_ii = point_to_node_partition(
-                pos_points_fine_ii, pos_points_coarse_ii, self.num_points_in_patch
-            )
+            # 3. Generate ground truth node correspondences via octree parents
+            if self.octree_partition:
+                anc_point_to_node_ii, anc_node_masks_ii, anc_node_knn_indices_ii, anc_node_knn_masks_ii = octant_to_parent_partition(
+                    anc_octree, anc_batch_mask_coarse, anc_batch_mask_fine, self.depth_fine, depth_coarse, self.num_points_in_patch
+                )
+                pos_point_to_node_ii, pos_node_masks_ii, pos_node_knn_indices_ii, pos_node_knn_masks_ii = octant_to_parent_partition(
+                    pos_octree, pos_batch_mask_coarse, pos_batch_mask_fine, self.depth_fine, depth_coarse, self.num_points_in_patch
+                )
+            
+            else:
+                anc_point_to_node_ii, anc_node_masks_ii, anc_node_knn_indices_ii, anc_node_knn_masks_ii = point_to_node_partition(
+                    anc_points_fine_ii, anc_points_coarse_ii, self.num_points_in_patch
+                )
+                pos_point_to_node_ii, pos_node_masks_ii, pos_node_knn_indices_ii, pos_node_knn_masks_ii = point_to_node_partition(
+                    pos_points_fine_ii, pos_points_coarse_ii, self.num_points_in_patch
+                )
             output_dicts[batch_idx]['anc_point_to_node'] = anc_point_to_node_ii
             output_dicts[batch_idx]['pos_point_to_node'] = pos_point_to_node_ii
 

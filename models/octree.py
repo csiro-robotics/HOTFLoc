@@ -615,3 +615,55 @@ def batch_construct_octree_neigh(batch: dict) -> dict:
     if 'octree' in batch:
         batch['octree'].construct_all_neigh()
     return batch
+
+@torch.no_grad()
+def octant_to_parent_partition(
+    octree: Octree,
+    batch_mask_coarse: torch.Tensor,
+    batch_mask_fine: torch.Tensor,
+    depth_fine: int,
+    depth_coarse: int,
+    point_limit: int,
+):
+    """
+    Octant-to-parent partition of the Octree (for single batch).
+
+    Args:
+        octree (Octree): Octree to use
+        batch_mask_fine (Tensor): (B*N,) mask for the current batch idx
+        batch_mask_coarse (Tensor): (B*M,) mask for the current batch idx
+        depth_fine (int): depth of fine points
+        depth_coarse (int): depth of coarse points
+        point_limit (int): max number of points to each coarse octant
+
+    Returns:
+        octant_to_parent (Tensor): (N,)
+        parent_masks (BoolTensor): (M,)
+        parent_child_indices (LongTensor): (M, K)
+        parent_child_masks (BoolTensor) (M, K)
+    """
+    # Remove batch idx bits (first 16 bits of int64)
+    batch_bit_mask = ((1 << 48) - 1)
+    coarse_key = octree.key(depth_coarse, nempty=True)[batch_mask_coarse] & batch_bit_mask
+    fine_key = octree.key(depth_fine, nempty=True)[batch_mask_fine] & batch_bit_mask
+    M, N = coarse_key.shape[0], fine_key.shape[0]
+    # Find parents of fine octants
+    fine_parents = fine_key >> 3 * (depth_fine - depth_coarse)
+    octant_to_parent = torch.searchsorted(coarse_key, fine_parents)
+    # Mask out unused parent octants (all should be used, but just in case)
+    parent_masks = torch.zeros(M, dtype=torch.bool).cuda()  # (M,)
+    parent_masks.index_fill_(0, octant_to_parent, True)
+
+    # Compute cumulative counts per parent (NOTE: can probably make this more efficient, but it works for now)
+    fine_indices = torch.arange(N, device=octree.device)
+    pos = torch.cumsum(
+        torch.nn.functional.one_hot(octant_to_parent, num_classes=M),
+        dim=0
+    )[fine_indices, octant_to_parent] - 1
+    # Limit num children to point limit
+    mask = pos < point_limit
+    parent_child_indices = torch.full((M, point_limit), fill_value=N, dtype=torch.long, device=octree.device)
+    parent_child_indices[octant_to_parent[mask], pos[mask]] = fine_indices[mask]
+    parent_child_masks = parent_child_indices != N
+
+    return octant_to_parent, parent_masks, parent_child_indices, parent_child_masks

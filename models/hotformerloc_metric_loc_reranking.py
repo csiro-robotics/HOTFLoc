@@ -50,6 +50,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
         quantizer: Optional[CoordinateSystem] = None,
         grad_checkpoint: bool = True,
         return_feats_and_attn_maps: bool = False,
+        octree_partition: bool = True,
         rerank_mode: Optional[str] = None,
         rerank_indices: Tuple[int] = (-1, -2),
         rerank_feat_embed_dim: Optional[Tuple[int]] = None,
@@ -88,6 +89,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             quantizer (CoordinateSystem): Optional quantizer class, used to undo conversion to cylindrical coordinates.
             grad_checkpoint: Use gradient checkpoint to save memory, at cost of extra computation time.
             return_feats_and_attn_maps (bool): Returns intermediate features and attention maps from the backbone.
+            octree_partition (bool): Use the octree for partitioning patches, instead of KNN.
             rerank_mode (str): Re-ranking method.
             rerank_indices (tuple): Indices of feature pyramid to use for re-ranking (negative indices accepted).
             coarse_feat_embed_dim (int): Embedding dim for reranking features (using MLP), set None to disable.
@@ -120,6 +122,7 @@ class HOTFormerMetricLocReRanking(HOTFormerMetricLoc):
             quantizer=quantizer,
             grad_checkpoint=grad_checkpoint,
             return_feats_and_attn_maps=return_feats_and_attn_maps,
+            octree_partition=octree_partition,
             **kwargs,
         )
         self.rerank_mode = rerank_mode
