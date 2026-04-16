@@ -8,8 +8,13 @@
 ## Description
 This is the official repository for the paper:
 
-**HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests**, RA-L 2026 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*\
-[[**arXiv**](https://arxiv.org/abs/2511.09170)] <!-- [[**Video**](https://youtube.com)] --> [[**CS-Wild-Places Dataset**](https://data.csiro.au/collection/csiro:64896)] [[**CS-Wild-Places README**](https://github.com/csiro-robotics/HOTFormerLoc/blob/main/media/CS_Wild_Places_README.pdf)]
+**HOTFLoc++: End-to-End Hierarchical LiDAR Place Recognition, Re-Ranking, and 6-DoF Metric Localisation in Forests**, RA-L 2026 by *Ethan Griffiths, Maryam Haghighat, Simon Denman, Clinton Fookes, and Milad Ramezani*
+<!-- [[**arXiv**](https://arxiv.org/abs/2511.09170)] [[**CS-Wild-Places Dataset**](https://data.csiro.au/collection/csiro:64896)] [[**CS-Wild-Places README**](https://github.com/csiro-robotics/HOTFormerLoc/blob/main/media/CS_Wild_Places_README.pdf)] -->
+
+[![arXiv](https://img.shields.io/badge/arXiv-2511.09170-b31b1b)](https://arxiv.org/abs/2511.09170)
+[![YouTube](https://img.shields.io/badge/YouTube-%23FF0000.svg?logo=YouTube&logoColor=white)](https://www.youtube.com/watch?v=IY9svscBJbE)
+[![Static Badge](https://img.shields.io/badge/CSWildPlaces%20Dataset-%23004d1a)](https://data.csiro.au/collection/csiro:64896)
+
 
 ![Network Architecture](media/pipeline_v4.png)
 *HOTFLoc++ Architecture*
